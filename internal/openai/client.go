@@ -143,11 +143,16 @@ func (c *Client) ResetStats() {
 }
 
 // CreateInitialMessages creates the initial message sequence for llmcmd
-func CreateInitialMessages(prompt, instructions string, inputFiles []string) []ChatMessage {
+func CreateInitialMessages(prompt, instructions string, inputFiles []string, customSystemPrompt string) []ChatMessage {
 	var messages []ChatMessage
 
-	// System message with tool descriptions and efficiency guidelines
-	systemContent := `You are an efficient command-line text processing assistant. You have access to these tools:
+	// Use custom system prompt if provided, otherwise use default
+	var systemContent string
+	if customSystemPrompt != "" {
+		systemContent = customSystemPrompt
+	} else {
+		// Default system message with tool descriptions and efficiency guidelines
+		systemContent = `You are an efficient command-line text processing assistant. You have access to these tools:
 
 1. read(fd, count=4096) - Read data from file descriptors
    Check the user message for available file descriptors
@@ -178,6 +183,7 @@ WORKFLOW:
 5. Call exit(0) when complete
 
 Security: Only built-in commands are available - no external command execution.`
+	}
 
 	messages = append(messages, ChatMessage{
 		Role:    "system",

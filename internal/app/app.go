@@ -139,6 +139,7 @@ func (a *App) executeTask() error {
 		a.config.Prompt, 
 		a.config.Instructions, 
 		a.config.InputFiles,
+		a.fileConfig.SystemPrompt,
 	)
 
 	if a.config.Verbose {
