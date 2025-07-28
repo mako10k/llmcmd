@@ -22,6 +22,7 @@ type Config struct {
 	InputFiles  []string // -i: Input file paths (can be specified multiple times)
 	OutputFile  string   // -o: Output file path
 	Verbose     bool     // -v: Verbose logging
+	ShowStats   bool     // --stats: Show detailed statistics
 	ConfigFile  string   // -c: Configuration file path
 
 	// Positional arguments
@@ -45,6 +46,7 @@ func ParseArgs(args []string) (*Config, error) {
 	fs.Var(&inputFiles, "i", "Input file path (can be specified multiple times)")
 	fs.StringVar(&config.OutputFile, "o", "", "Output file path")
 	fs.BoolVar(&config.Verbose, "v", false, "Enable verbose logging")
+	fs.BoolVar(&config.ShowStats, "stats", false, "Show detailed statistics after execution")
 	fs.StringVar(&config.ConfigFile, "c", "", "Configuration file path")
 	
 	// Handle help and version flags
@@ -151,6 +153,7 @@ OPTIONS:
     -o <file>           Output file path  
     -c <file>           Configuration file path (default: ~/.llmcmdrc)
     -v                  Enable verbose logging
+    --stats             Show detailed statistics after execution
     -h, --help          Show this help message
     -V, --version       Show version information
 

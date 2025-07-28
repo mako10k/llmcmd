@@ -200,13 +200,8 @@ Security: Only built-in commands are available - no external command execution.`
 // CreateToolResponseMessage creates a message from tool execution results
 func CreateToolResponseMessage(toolCallID, result string) ChatMessage {
 	return ChatMessage{
-		Role:    "tool",
-		Content: result,
-		ToolCalls: []ToolCall{
-			{
-				ID:   toolCallID,
-				Type: "function",
-			},
-		},
+		Role:       "tool",
+		Content:    result,
+		ToolCallID: toolCallID,
 	}
 }

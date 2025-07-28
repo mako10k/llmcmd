@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mako10k/llmcmd/internal/cli"
@@ -13,16 +16,21 @@ import (
 
 // App represents the main application
 type App struct {
-	config     *cli.Config
-	fileConfig *cli.ConfigFile
-	openaiClient *openai.Client
-	toolEngine   *tools.Engine
+	config         *cli.Config
+	fileConfig     *cli.ConfigFile
+	openaiClient   *openai.Client
+	toolEngine     *tools.Engine
+	startTime      time.Time
+	iterationCount int
+	exitRequested  bool
+	exitCode       int
 }
 
 // New creates a new application instance
 func New(config *cli.Config) *App {
 	return &App{
-		config: config,
+		config:    config,
+		startTime: time.Now(),
 	}
 }
 
@@ -65,6 +73,11 @@ func (a *App) Run() error {
 	// Execute LLM interaction
 	if err := a.executeTask(); err != nil {
 		return fmt.Errorf("task execution failed: %w", err)
+	}
+
+	// Show statistics if requested
+	if a.config.ShowStats {
+		a.showStatistics()
 	}
 
 	return nil
@@ -134,6 +147,8 @@ func (a *App) executeTask() error {
 
 	// Main interaction loop
 	for {
+		a.iterationCount++
+		
 		// Create request
 		request := openai.ChatCompletionRequest{
 			Model:       a.fileConfig.Model,
@@ -172,6 +187,11 @@ func (a *App) executeTask() error {
 		case "tool_calls":
 			// Execute tool calls
 			if err := a.executeToolCalls(choice.Message.ToolCalls, &messages); err != nil {
+				// Check if this is an exit request
+				if strings.HasPrefix(err.Error(), "EXIT_REQUESTED:") {
+					// Exit was requested, return without error
+					return nil
+				}
 				return fmt.Errorf("tool execution error: %w", err)
 			}
 
@@ -204,6 +224,20 @@ func (a *App) executeToolCalls(toolCalls []openai.ToolCall, messages *[]openai.C
 		// Execute the tool call
 		result, err := a.toolEngine.ExecuteToolCall(toolCallMap)
 		if err != nil {
+			// Check if this is an exit request
+			if strings.HasPrefix(err.Error(), "EXIT_REQUESTED:") {
+				// Extract exit code
+				exitCodeStr := strings.TrimPrefix(err.Error(), "EXIT_REQUESTED:")
+				if exitCode, parseErr := strconv.Atoi(exitCodeStr); parseErr == nil {
+					a.exitCode = exitCode
+					a.exitRequested = true
+					// Add tool response to messages
+					toolMessage := openai.CreateToolResponseMessage(toolCall.ID, result)
+					*messages = append(*messages, toolMessage)
+					// Return special error to indicate exit
+					return fmt.Errorf("EXIT_REQUESTED:%d", exitCode)
+				}
+			}
 			result = fmt.Sprintf("Error: %v", err)
 		}
 
@@ -217,6 +251,16 @@ func (a *App) executeToolCalls(toolCalls []openai.ToolCall, messages *[]openai.C
 	}
 
 	return nil
+}
+
+// GetExitCode returns the exit code requested by exit tool
+func (a *App) GetExitCode() int {
+	return a.exitCode
+}
+
+// IsExitRequested returns whether exit was requested by exit tool  
+func (a *App) IsExitRequested() bool {
+	return a.exitRequested
 }
 
 // validateConfig validates the loaded configuration
@@ -257,4 +301,100 @@ func (a *App) validateConfig() error {
 	}
 
 	return nil
+}
+
+// showStatistics displays detailed execution statistics
+func (a *App) showStatistics() {
+	duration := time.Since(a.startTime)
+	openaiStats := a.openaiClient.GetStats()
+	toolStats := a.toolEngine.GetStats()
+
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "=== LLMCMD EXECUTION STATISTICS ===\n")
+	fmt.Fprintf(os.Stderr, "\n")
+
+	// Timing Information
+	fmt.Fprintf(os.Stderr, "⏱️  TIMING:\n")
+	fmt.Fprintf(os.Stderr, "   Total Duration:     %v\n", duration.Round(time.Millisecond))
+	fmt.Fprintf(os.Stderr, "   Average per API:    %v\n", (openaiStats.TotalDuration / time.Duration(max(openaiStats.RequestCount, 1))).Round(time.Millisecond))
+	fmt.Fprintf(os.Stderr, "   LLM Iterations:     %d\n", a.iterationCount)
+	fmt.Fprintf(os.Stderr, "\n")
+
+	// OpenAI API Statistics
+	fmt.Fprintf(os.Stderr, "🤖 OPENAI API USAGE:\n")
+	fmt.Fprintf(os.Stderr, "   API Calls:          %d / %d (%.1f%%)\n", 
+		openaiStats.RequestCount, a.fileConfig.MaxAPICalls, 
+		float64(openaiStats.RequestCount)/float64(a.fileConfig.MaxAPICalls)*100)
+	fmt.Fprintf(os.Stderr, "   Total Tokens:       %d\n", openaiStats.TotalTokens)
+	fmt.Fprintf(os.Stderr, "   Prompt Tokens:      %d\n", openaiStats.PromptTokens)
+	fmt.Fprintf(os.Stderr, "   Completion Tokens:  %d\n", openaiStats.CompletionTokens)
+	fmt.Fprintf(os.Stderr, "   Error Count:        %d\n", openaiStats.ErrorCount)
+	if openaiStats.RequestCount > 0 {
+		fmt.Fprintf(os.Stderr, "   Avg Tokens/Call:    %.1f\n", float64(openaiStats.TotalTokens)/float64(openaiStats.RequestCount))
+	}
+	fmt.Fprintf(os.Stderr, "\n")
+
+	// Tool Usage Statistics
+	fmt.Fprintf(os.Stderr, "🔧 TOOL USAGE:\n")
+	fmt.Fprintf(os.Stderr, "   Read Calls:         %d\n", toolStats.ReadCalls)
+	fmt.Fprintf(os.Stderr, "   Write Calls:        %d\n", toolStats.WriteCalls)
+	fmt.Fprintf(os.Stderr, "   Pipe Calls:         %d\n", toolStats.PipeCalls)
+	fmt.Fprintf(os.Stderr, "   Exit Calls:         %d\n", toolStats.ExitCalls)
+	fmt.Fprintf(os.Stderr, "   Total Tool Calls:   %d\n", toolStats.ReadCalls+toolStats.WriteCalls+toolStats.PipeCalls+toolStats.ExitCalls)
+	fmt.Fprintf(os.Stderr, "\n")
+
+	// Data Transfer Statistics
+	fmt.Fprintf(os.Stderr, "📊 DATA TRANSFER:\n")
+	fmt.Fprintf(os.Stderr, "   Bytes Read:         %s\n", formatBytes(toolStats.BytesRead))
+	fmt.Fprintf(os.Stderr, "   Bytes Written:      %s\n", formatBytes(toolStats.BytesWritten))
+	fmt.Fprintf(os.Stderr, "   Error Count:        %d\n", toolStats.ErrorCount)
+	fmt.Fprintf(os.Stderr, "\n")
+
+	// Efficiency Metrics
+	if a.iterationCount > 0 && openaiStats.RequestCount > 0 {
+		fmt.Fprintf(os.Stderr, "⚡ EFFICIENCY METRICS:\n")
+		fmt.Fprintf(os.Stderr, "   API Calls/Iteration: %.2f\n", float64(openaiStats.RequestCount)/float64(a.iterationCount))
+		fmt.Fprintf(os.Stderr, "   Tools/API Call:      %.2f\n", float64(toolStats.ReadCalls+toolStats.WriteCalls+toolStats.PipeCalls+toolStats.ExitCalls)/float64(openaiStats.RequestCount))
+		
+		tokensPerSecond := float64(openaiStats.TotalTokens) / duration.Seconds()
+		fmt.Fprintf(os.Stderr, "   Tokens/Second:       %.1f\n", tokensPerSecond)
+		
+		if toolStats.BytesRead > 0 {
+			fmt.Fprintf(os.Stderr, "   Processing Rate:     %s/sec\n", formatBytes(int64(float64(toolStats.BytesRead)/duration.Seconds())))
+		}
+		fmt.Fprintf(os.Stderr, "\n")
+	}
+
+	// Model Information
+	fmt.Fprintf(os.Stderr, "🎯 CONFIGURATION:\n")
+	fmt.Fprintf(os.Stderr, "   Model:              %s\n", a.fileConfig.Model)
+	fmt.Fprintf(os.Stderr, "   Max Tokens:         %d\n", a.fileConfig.MaxTokens)
+	fmt.Fprintf(os.Stderr, "   Temperature:        %.1f\n", a.fileConfig.Temperature)
+	fmt.Fprintf(os.Stderr, "   Input Files:        %d\n", len(a.config.InputFiles))
+	fmt.Fprintf(os.Stderr, "   Buffer Size:        %s\n", formatBytes(int64(a.fileConfig.ReadBufferSize)))
+	fmt.Fprintf(os.Stderr, "\n")
+
+	fmt.Fprintf(os.Stderr, "=== END STATISTICS ===\n")
+}
+
+// formatBytes formats byte counts in human-readable format
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// max returns the maximum of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

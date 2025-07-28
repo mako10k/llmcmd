@@ -348,8 +348,8 @@ func (e *Engine) executeExit(args map[string]interface{}) (string, error) {
 		fmt.Fprintf(os.Stderr, "%s\n", message)
 	}
 
-	os.Exit(code)
-	return "", nil // Never reached
+	// Return a special error to indicate exit request instead of calling os.Exit directly
+	return fmt.Sprintf("Exit requested with code %d", code), fmt.Errorf("EXIT_REQUESTED:%d", code)
 }
 
 // GetStats returns current execution statistics
