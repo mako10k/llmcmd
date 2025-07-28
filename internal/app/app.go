@@ -86,13 +86,18 @@ func (a *App) Run() error {
 // initializeOpenAI initializes the OpenAI client
 func (a *App) initializeOpenAI() error {
 	config := openai.ClientConfig{
-		APIKey:  a.fileConfig.OpenAIAPIKey,
-		BaseURL: a.fileConfig.OpenAIBaseURL,
-		Timeout: time.Duration(a.fileConfig.TimeoutSeconds) * time.Second,
-		MaxCalls: a.fileConfig.MaxAPICalls,
+		APIKey:     a.fileConfig.OpenAIAPIKey,
+		BaseURL:    a.fileConfig.OpenAIBaseURL,
+		Timeout:    time.Duration(a.fileConfig.TimeoutSeconds) * time.Second,
+		MaxCalls:   a.fileConfig.MaxAPICalls,
+		MaxRetries: a.fileConfig.MaxRetries,
+		RetryDelay: time.Duration(a.fileConfig.RetryDelay) * time.Millisecond,
 	}
 
 	a.openaiClient = openai.NewClient(config)
+	
+	// Enable verbose mode in client stats
+	a.openaiClient.SetVerbose(a.config.Verbose)
 
 	if a.config.Verbose {
 		log.Printf("OpenAI client initialized (base URL: %s, model: %s)", 
@@ -159,8 +164,8 @@ func (a *App) executeTask() error {
 			Temperature: a.fileConfig.Temperature,
 		}
 
-		// Send request to OpenAI
-		response, err := a.openaiClient.ChatCompletion(ctx, request)
+		// Send request to OpenAI with retry mechanism
+		response, err := a.openaiClient.ChatCompletionWithRetry(ctx, request)
 		if err != nil {
 			return fmt.Errorf("OpenAI API error: %w", err)
 		}
@@ -171,8 +176,8 @@ func (a *App) executeTask() error {
 
 		if a.config.Verbose {
 			stats := a.openaiClient.GetStats()
-			log.Printf("API call completed (total: %d/%d, tokens: %d)", 
-				stats.RequestCount, a.fileConfig.MaxAPICalls, response.Usage.TotalTokens)
+			log.Printf("API call completed (total: %d/%d, retries: %d, tokens: %d)", 
+				stats.RequestCount, a.fileConfig.MaxAPICalls, stats.RetryCount, response.Usage.TotalTokens)
 		}
 
 		// Handle finish reason
@@ -325,6 +330,7 @@ func (a *App) showStatistics() {
 	fmt.Fprintf(os.Stderr, "   API Calls:          %d / %d (%.1f%%)\n", 
 		openaiStats.RequestCount, a.fileConfig.MaxAPICalls, 
 		float64(openaiStats.RequestCount)/float64(a.fileConfig.MaxAPICalls)*100)
+	fmt.Fprintf(os.Stderr, "   Total Retries:      %d\n", openaiStats.RetryCount)
 	fmt.Fprintf(os.Stderr, "   Total Tokens:       %d\n", openaiStats.TotalTokens)
 	fmt.Fprintf(os.Stderr, "   Prompt Tokens:      %d\n", openaiStats.PromptTokens)
 	fmt.Fprintf(os.Stderr, "   Completion Tokens:  %d\n", openaiStats.CompletionTokens)
