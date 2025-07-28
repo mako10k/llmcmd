@@ -199,9 +199,15 @@ Security: Only built-in commands are available - no external command execution.`
 
 // CreateToolResponseMessage creates a message from tool execution results
 func CreateToolResponseMessage(toolCallID, result string) ChatMessage {
+	// Ensure content is never empty to avoid OpenAI API errors
+	content := result
+	if content == "" {
+		content = "(no output)"
+	}
+	
 	return ChatMessage{
 		Role:       "tool",
-		Content:    result,
+		Content:    content,
 		ToolCallID: toolCallID,
 	}
 }

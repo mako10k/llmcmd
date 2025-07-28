@@ -7,6 +7,8 @@
 - **Phase 2**: OpenAI API統合 ✅ 
 - **Phase 3**: ツール機能（read、write、pipe、exit）✅
 - **Phase 4**: Built-inコマンド（cat、grep、sed、head、tail、sort、wc、tr）✅
+- **Built-inコマンド拡張**: cut、uniq、nl、tee、rev コマンド ✅
+- **環境変数サポート**: LLMCMD_* 系統の設定上書き機能 ✅
 - **統計機能**: 詳細統計表示（--stats フラグ）✅
 - **GitHub公開**: オープンソースプロジェクトとして公開 ✅
 
@@ -102,17 +104,21 @@ rev               # 各行の文字を逆順にする
 
 ## 実装優先度 2: 設定・環境変数サポート（中実用性）
 
-### 2.1 環境変数による設定読み込み
+### 2.1 環境変数による設定読み込み ✅ **完了**
 **実用性**: ★★★★☆ - CI/CD環境での利用に重要
 
-**実装項目**:
-- `OPENAI_API_KEY`: OpenAI APIキー
-- `LLMCMD_MODEL`: 使用モデル設定
-- `LLMCMD_MAX_TOKENS`: 最大トークン数
-- `LLMCMD_TEMPERATURE`: 温度設定
-- `LLMCMD_TIMEOUT`: タイムアウト設定
+**実装済み項目**:
+- ✅ `OPENAI_API_KEY`: OpenAI APIキー
+- ✅ `OPENAI_BASE_URL`: OpenAI API ベースURL
+- ✅ `LLMCMD_MODEL`: 使用モデル設定
+- ✅ `LLMCMD_MAX_TOKENS`: 最大トークン数
+- ✅ `LLMCMD_TEMPERATURE`: 温度設定
+- ✅ `LLMCMD_MAX_API_CALLS`: 最大API呼び出し回数
+- ✅ `LLMCMD_TIMEOUT_SECONDS`: タイムアウト設定
 
-**期間**: 0.5日
+**設定優先度**: デフォルト < 設定ファイル < 環境変数
+
+**期間**: 0.5日 → **実装済み**
 
 ### 2.2 設定テンプレート生成
 **実用性**: ★★★☆☆ - 初回利用者の利便性向上
@@ -199,9 +205,9 @@ rev               # 各行の文字を逆順にする
 
 ## 📋 **推奨実装順序**
 
-### Week 1: 高実用性機能完成
-1. **Day 1**: `cut` コマンド実装（0.5日）+ `uniq` コマンド実装（0.5日）
-2. **Day 2**: `nl`, `tee`, `rev` コマンド実装（0.8日）+ 環境変数サポート（0.5日）
+### Week 1: 高実用性機能完成 ✅ **完了**
+1. ✅ **Day 1**: `cut` コマンド実装（0.5日）+ `uniq` コマンド実装（0.5日）
+2. ✅ **Day 2**: `nl`, `tee`, `rev` コマンド実装（0.8日）+ 環境変数サポート（0.5日）
 3. **Day 3**: リトライメカニズム実装（0.7日）+ 設定テンプレート（0.3日）
 
 ### Week 2: 品質・保守性向上
@@ -212,30 +218,99 @@ rev               # 各行の文字を逆順にする
 ### Week 3: 継続開発基盤
 7. **Day 8**: CI/CD設定（1日）
 
-## 🎯 **Version 1.0.0 リリース基準**
+## 🐛 **Issues Found in Use Case Testing**
 
-### 必須要件
-- ✅ 全Built-inコマンド実装完了
-- ✅ 環境変数サポート
-- ✅ リトライメカニズム
-- ✅ テストカバレッジ 80%+
-- ✅ 基本ドキュメント完備
+### July 28th, 2025 - Production Testing Results
 
-### 推奨要件
-- CI/CD設定
-- クロスプラットフォームバイナリ
-- 詳細ユーザーガイド
+#### ✅ **Verified Working Features**
+- Basic file processing (read, write operations)
+- Simple CSV filtering (e.g., Tokyo residents extraction)
+- Built-in commands individual operations (cut, head, tail, etc.)
+- Environment variable configuration override (LLMCMD_MODEL, LLMCMD_MAX_TOKENS, etc.)
+- Statistics display functionality (--stats flag)
 
-## 📊 **実装効果予測**
+#### ❌ **Discovered Issues**
 
-| 機能 | 実装工数 | ユーザー満足度向上 | 保守性向上 |
-|------|----------|-------------------|-----------|
-| cut/uniq | 1日 | ★★★★★ | ★★★☆☆ |
-| 環境変数 | 0.5日 | ★★★★☆ | ★★★☆☆ |
-| リトライ | 0.7日 | ★★★★☆ | ★★★★☆ |
-| テスト | 3日 | ★★☆☆☆ | ★★★★★ |
-| ドキュメント | 1日 | ★★★☆☆ | ★★★☆☆ |
+##### 1. **OpenAI API Error (High Priority)** ✅ **FIXED**
+**Problem**: Complex tasks fail with "Invalid value for 'content': expected a string, got null" error
+```
+Error example: Occurred during complex CSV analysis requests
+- Basic operations: ✅ Working
+- Complex analysis: ❌ API Error → Now works!
+```
+**Root Cause**: Tool response message creation resulted in null content
+**Impact**: Cannot execute practical complex tasks
+**Solution**: ✅ Modified CreateToolResponseMessage to handle empty results with "(no output)" fallback
 
-**次の実装ターゲット**: `cut` コマンド（最高実用性・最短実装時間）
+##### 2. **Standard Input/Output Processing (Medium Priority)** ✅ **FIXED**
+**Problem**: Standard input/output specification not working
+```bash
+echo "data" | ./llmcmd -i - "process this"
+# Error: input file does not exist: -  → Now works!
 
-この計画により、実用性の高い機能から順次実装し、Version 1.0.0の完成度を段階的に向上させることができます。
+./llmcmd -i input.txt -o - "process and output to stdout"
+# Standard output specification was unsupported → Now works!
+```
+**Root Cause**: File existence check didn't consider stdin/stdout
+**Impact**: Pipeline processing was impossible
+**Solution**: 
+- ✅ `-i -` : Standard input specification
+- ✅ `-o -` : Standard output specification
+- ✅ No arguments defaults to `-i -` interpretation
+
+##### 3. **LLM解釈の確率的な性質（制限事項として受容）**
+**問題**: 「最初の3行」要求で4行表示される等の不一貫性
+```
+要求: "Show me the first 3 lines"
+実際: 4行出力（ヘッダー含む）
+期待: 3行のみ出力
+```
+**原因**: LLMの確率的性質（温度0.1でも発生）
+**影響**: 軽微（機能的には問題なし）
+**制限事項**: LLMを使用する以上の宿命として受容
+**軽減策**: プロンプト例示の充実化（完全解決は困難）
+
+##### 4. **プロンプト解釈の一貫性（中優先度）**
+**問題**: 同じ要求でも結果が不安定
+- 「最初の3行」→ 時々4行出力
+- 複雑な要求 → APIエラー率が高い
+
+**原因**: 
+- LLMの解釈のゆれ
+- エラー処理の不備
+- プロンプトの曖昧さ
+
+**対策**: 
+- システムプロンプトの改善
+- エラーハンドリング強化
+- 例示の追加
+
+#### 📋 **優先修正項目**
+
+##### Immediate Priority (Week 1) ✅ **COMPLETED**
+1. **OpenAI API Error Fix** (0.5 day) ✅ **FIXED**
+   - ✅ Message creation logic investigated
+   - ✅ Content null problem resolved
+   
+2. **Standard Input/Output Processing Implementation** (0.3 day) ✅ **FIXED**
+   - ✅ `-i -` : Standard input specification
+   - ✅ `-o -` : Standard output specification  
+   - ✅ No arguments interpreted as `-i -`
+   - ✅ Pipeline operation confirmed
+
+##### Continuous Improvement (Week 2)
+3. **Prompt Example Enhancement** (0.3 day)
+   - System prompt example addition
+   - Complete solution is difficult (accepted as LLM limitation)
+
+4. **Error Handling Enhancement** (0.5 day)
+   - Detailed error messages
+   - Retry mechanism
+   - Log improvements
+
+**次の実装ターゲット**: 
+1. 🔥 **OpenAI APIエラー修正**（最優先）
+2. **標準入力・標準出力処理**（-i -, -o -, 引数なし対応）  
+3. **プロンプト例示充実**（LLM制限事項の軽減）
+
+この問題点の修正により、実用レベルでの安定動作を実現します。

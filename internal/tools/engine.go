@@ -74,21 +74,31 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 
 	// Open input files and add to file descriptors
 	for _, filename := range config.InputFiles {
-		file, err := os.Open(filename)
-		if err != nil {
-			return nil, fmt.Errorf("failed to open input file %s: %w", filename, err)
+		if filename == "-" {
+			// Use stdin for "-"
+			engine.fileDescriptors = append(engine.fileDescriptors, os.Stdin)
+		} else {
+			file, err := os.Open(filename)
+			if err != nil {
+				return nil, fmt.Errorf("failed to open input file %s: %w", filename, err)
+			}
+			engine.inputFiles = append(engine.inputFiles, file)
+			engine.fileDescriptors = append(engine.fileDescriptors, file)
 		}
-		engine.inputFiles = append(engine.inputFiles, file)
-		engine.fileDescriptors = append(engine.fileDescriptors, file)
 	}
 
 	// Open output file if specified
 	if config.OutputFile != "" {
-		file, err := os.Create(config.OutputFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create output file %s: %w", config.OutputFile, err)
+		if config.OutputFile == "-" {
+			// Use stdout for "-"
+			engine.outputFile = os.Stdout
+		} else {
+			file, err := os.Create(config.OutputFile)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create output file %s: %w", config.OutputFile, err)
+			}
+			engine.outputFile = file
 		}
-		engine.outputFile = file
 	}
 
 	return engine, nil

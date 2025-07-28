@@ -72,6 +72,11 @@ func ParseArgs(args []string) (*Config, error) {
 
 	// Copy input files from the custom type
 	config.InputFiles = []string(inputFiles)
+	
+	// If no input files specified, default to stdin
+	if len(config.InputFiles) == 0 {
+		config.InputFiles = []string{"-"}
+	}
 
 	// Remaining arguments become instructions
 	remaining := fs.Args()
@@ -108,15 +113,19 @@ func validateConfig(config *Config) error {
 
 	// If both are provided, that's also fine - they will be combined
 
-	// Validate input files exist
+	// Validate input files exist (skip stdin)
 	for _, inputFile := range config.InputFiles {
+		// Skip validation for stdin
+		if inputFile == "-" {
+			continue
+		}
 		if _, err := os.Stat(inputFile); os.IsNotExist(err) {
 			return fmt.Errorf("input file does not exist: %s", inputFile)
 		}
 	}
 
-	// Validate output file directory exists if specified
-	if config.OutputFile != "" {
+	// Validate output file directory exists if specified (skip stdout)
+	if config.OutputFile != "" && config.OutputFile != "-" {
 		dir := filepath.Dir(config.OutputFile)
 		if dir != "." {
 			if _, err := os.Stat(dir); os.IsNotExist(err) {
