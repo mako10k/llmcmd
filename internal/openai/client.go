@@ -17,14 +17,17 @@ type Client struct {
 	baseURL    string
 	stats      ClientStats
 	maxCalls   int
+	retryConfig RetryConfig
 }
 
 // ClientConfig holds configuration for the OpenAI client
 type ClientConfig struct {
-	APIKey     string
-	BaseURL    string
-	Timeout    time.Duration
-	MaxCalls   int
+	APIKey      string
+	BaseURL     string
+	Timeout     time.Duration
+	MaxCalls    int
+	MaxRetries  int
+	RetryDelay  time.Duration
 }
 
 // NewClient creates a new OpenAI API client
@@ -38,6 +41,12 @@ func NewClient(config ClientConfig) *Client {
 	if config.MaxCalls == 0 {
 		config.MaxCalls = 50
 	}
+	if config.MaxRetries == 0 {
+		config.MaxRetries = 3
+	}
+	if config.RetryDelay == 0 {
+		config.RetryDelay = 1 * time.Second
+	}
 
 	return &Client{
 		httpClient: &http.Client{
@@ -46,6 +55,12 @@ func NewClient(config ClientConfig) *Client {
 		apiKey:   config.APIKey,
 		baseURL:  config.BaseURL,
 		maxCalls: config.MaxCalls,
+		retryConfig: RetryConfig{
+			MaxRetries:      config.MaxRetries,
+			BaseDelay:       config.RetryDelay,
+			MaxDelay:        30 * time.Second,
+			BackoffFactor:   2.0,
+		},
 	}
 }
 
@@ -210,4 +225,9 @@ func CreateToolResponseMessage(toolCallID, result string) ChatMessage {
 		Content:    content,
 		ToolCallID: toolCallID,
 	}
+}
+
+// SetVerbose enables or disables verbose logging
+func (c *Client) SetVerbose(verbose bool) {
+	c.stats.Verbose = verbose
 }

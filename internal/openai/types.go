@@ -91,6 +91,8 @@ type ClientStats struct {
 	TotalDuration    time.Duration `json:"total_duration"`
 	LastRequestTime  time.Time     `json:"last_request_time"`
 	ErrorCount       int           `json:"error_count"`
+	RetryCount       int           `json:"retry_count"`
+	Verbose          bool          `json:"-"` // Not serialized
 }
 
 // Reset resets the statistics
@@ -102,6 +104,7 @@ func (s *ClientStats) Reset() {
 	s.TotalDuration = 0
 	s.LastRequestTime = time.Time{}
 	s.ErrorCount = 0
+	s.RetryCount = 0
 }
 
 // AddRequest updates statistics with a new request

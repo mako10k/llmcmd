@@ -18,6 +18,8 @@ type ConfigFile struct {
 	TimeoutSeconds   int    `json:"timeout_seconds"`
 	MaxFileSize      int64  `json:"max_file_size"`
 	ReadBufferSize   int    `json:"read_buffer_size"`
+	MaxRetries       int    `json:"max_retries"`
+	RetryDelay       int    `json:"retry_delay_ms"`
 }
 
 // DefaultConfig returns default configuration values
@@ -31,6 +33,8 @@ func DefaultConfig() *ConfigFile {
 		TimeoutSeconds:   300,
 		MaxFileSize:      10 * 1024 * 1024, // 10MB
 		ReadBufferSize:   4096,             // 4KB
+		MaxRetries:       3,
+		RetryDelay:       1000, // 1 second
 	}
 }
 
