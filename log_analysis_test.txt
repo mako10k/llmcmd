@@ -1,0 +1,10 @@
+2025-01-15 10:30:15 INFO User login: user123
+2025-01-15 10:31:20 WARNING Failed login attempt: user456  
+2025-01-15 10:32:45 ERROR Database connection failed
+2025-01-15 10:33:12 INFO User logout: user123
+2025-01-15 10:34:55 ERROR API timeout occurred
+2025-01-15 10:35:22 INFO User login: user789
+2025-01-15 10:36:18 WARNING Memory usage high: 85%
+2025-01-15 10:37:44 INFO User logout: user789
+2025-01-15 10:38:01 ERROR Network connection lost
+2025-01-15 10:39:33 INFO System recovered
