@@ -20,6 +20,7 @@ type ConfigFile struct {
 	ReadBufferSize   int    `json:"read_buffer_size"`
 	MaxRetries       int    `json:"max_retries"`
 	RetryDelay       int    `json:"retry_delay_ms"`
+	SystemPrompt     string `json:"system_prompt"`
 }
 
 // DefaultConfig returns default configuration values
@@ -35,6 +36,7 @@ func DefaultConfig() *ConfigFile {
 		ReadBufferSize:   4096,             // 4KB
 		MaxRetries:       3,
 		RetryDelay:       1000, // 1 second
+		SystemPrompt:     "", // Empty means use default built-in prompt
 	}
 }
 
@@ -139,6 +141,20 @@ func setConfigValue(config *ConfigFile, key, value string) error {
 		} else {
 			config.ReadBufferSize = val
 		}
+	case "max_retries":
+		if val, err := parseInt(value); err != nil {
+			return fmt.Errorf("invalid max_retries: %w", err)
+		} else {
+			config.MaxRetries = val
+		}
+	case "retry_delay_ms":
+		if val, err := parseInt(value); err != nil {
+			return fmt.Errorf("invalid retry_delay_ms: %w", err)
+		} else {
+			config.RetryDelay = val
+		}
+	case "system_prompt":
+		config.SystemPrompt = value
 	default:
 		return fmt.Errorf("unknown config key: %s", key)
 	}
