@@ -172,35 +172,55 @@ func ToolDefinitions() []Tool {
 			Type: "function",
 			Function: ToolFunction{
 				Name:        "pipe",
-				Description: "Execute a built-in command with input/output redirection",
+				Description: "Execute pipeline of built-in commands with input/output processing",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
-						"command": map[string]interface{}{
-							"type":        "string",
-							"description": "Built-in command name (cat, grep, sed, head, tail, sort, wc, tr)",
-							"enum":        []string{"cat", "grep", "sed", "head", "tail", "sort", "wc", "tr"},
-						},
-						"args": map[string]interface{}{
+						"commands": map[string]interface{}{
 							"type":        "array",
-							"description": "Command arguments",
+							"description": "Array of commands to execute in pipeline",
 							"items": map[string]interface{}{
-								"type": "string",
+								"type": "object",
+								"properties": map[string]interface{}{
+									"name": map[string]interface{}{
+										"type":        "string",
+										"description": "Command name",
+										"enum":        []string{"cat", "grep", "sed", "head", "tail", "sort", "wc", "tr", "cut", "uniq", "nl", "tee", "rev"},
+									},
+									"args": map[string]interface{}{
+										"type":        "array",
+										"description": "Command arguments",
+										"items": map[string]interface{}{
+											"type": "string",
+										},
+									},
+								},
+								"required": []string{"name"},
 							},
 						},
-						"input_fd": map[string]interface{}{
-							"type":        "integer",
-							"description": "Input file descriptor (0=stdin, 3+=input files)",
-							"minimum":     0,
-						},
-						"output_fd": map[string]interface{}{
-							"type":        "integer",
-							"description": "Output file descriptor (1=stdout, 2=stderr)",
-							"minimum":     1,
-							"maximum":     2,
+						"input": map[string]interface{}{
+							"type":        "object",
+							"description": "Input source for pipeline",
+							"properties": map[string]interface{}{
+								"type": map[string]interface{}{
+									"type":        "string",
+									"description": "Input type",
+									"enum":        []string{"fd", "data"},
+								},
+								"fd": map[string]interface{}{
+									"type":        "integer",
+									"description": "File descriptor (0=stdin, 3+=input files)",
+									"minimum":     0,
+								},
+								"data": map[string]interface{}{
+									"type":        "string",
+									"description": "Raw input data",
+								},
+							},
+							"required": []string{"type"},
 						},
 					},
-					"required": []string{"command"},
+					"required": []string{"commands", "input"},
 				},
 			},
 		},
