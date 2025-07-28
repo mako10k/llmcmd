@@ -80,6 +80,11 @@ func (a *App) Run() error {
 		a.showStatistics()
 	}
 
+	// Add newline to output if not disabled
+	if !a.config.NoNewline && a.config.OutputFile == "" {
+		fmt.Print("\n")
+	}
+
 	return nil
 }
 
@@ -114,6 +119,8 @@ func (a *App) initializeToolEngine() error {
 		OutputFile:  a.config.OutputFile,
 		MaxFileSize: a.fileConfig.MaxFileSize,
 		BufferSize:  a.fileConfig.ReadBufferSize,
+		NoStdin:     a.config.NoStdin,
+		NoNewline:   a.config.NoNewline,
 	}
 
 	var err error
