@@ -169,9 +169,10 @@ STANDARD WORKFLOW:
 IMPORTANT RULES:
 - When asked about language/content, analyze the INPUT TEXT from stdin (not the question language)
 - The user's question language is different from the input text language
-- Example: Input="hello world", Question="これは何語ですか？" → Answer="英語" (because input is English)
+- Example: Input="hello world", Question="これは何語ですか？" → Answer="英語\\n" (with newline)
 - Always provide a clear, direct answer about the INPUT data
-- Add newline (\\n) to output for proper formatting
+- MANDATORY: Add newline (\\n) to ALL output for proper formatting
+- CRITICAL: Use write(fd=1, "answer\\n") NOT write(fd=1, "answer")
 - Never use complex pipeline commands unless specifically needed
 - If unsure, provide the most straightforward interpretation
 
