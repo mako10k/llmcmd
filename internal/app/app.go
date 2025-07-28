@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strconv"
@@ -147,6 +148,7 @@ func (a *App) executeTask() error {
 		a.config.Instructions, 
 		a.config.InputFiles,
 		a.fileConfig.SystemPrompt,
+		a.fileConfig.DisableTools,
 	)
 
 	if a.config.Verbose {
@@ -166,10 +168,14 @@ func (a *App) executeTask() error {
 		request := openai.ChatCompletionRequest{
 			Model:       a.fileConfig.Model,
 			Messages:    messages,
-			Tools:       openai.ToolDefinitions(),
-			ToolChoice:  "auto",
 			MaxTokens:   a.fileConfig.MaxTokens,
 			Temperature: a.fileConfig.Temperature,
+		}
+		
+		// Add tools only if not disabled
+		if !a.fileConfig.DisableTools {
+			request.Tools = openai.ToolDefinitions()
+			request.ToolChoice = "auto"
 		}
 
 		// Send request to OpenAI with retry mechanism
@@ -195,10 +201,43 @@ func (a *App) executeTask() error {
 			if a.config.Verbose {
 				log.Printf("LLM completed normally (no tool calls)")
 			}
+			
+			// Output the LLM response directly when tools are disabled
+			if a.fileConfig.DisableTools && choice.Message.Content != "" {
+				var output io.Writer
+				if a.config.OutputFile != "" {
+					// Output file is handled by tool engine, but when tools are disabled,
+					// we need to handle it ourselves
+					if a.config.OutputFile == "-" {
+						output = os.Stdout
+					} else {
+						file, err := os.Create(a.config.OutputFile)
+						if err != nil {
+							return fmt.Errorf("failed to create output file: %w", err)
+						}
+						defer file.Close()
+						output = file
+					}
+				} else {
+					output = os.Stdout
+				}
+				
+				if _, err := output.Write([]byte(choice.Message.Content)); err != nil {
+					return fmt.Errorf("failed to write output: %w", err)
+				}
+			}
+			
 			return nil
 
 		case "tool_calls":
-			// Execute tool calls
+			// Execute tool calls only if tools are enabled
+			if a.fileConfig.DisableTools {
+				if a.config.Verbose {
+					log.Printf("Tool calls requested but tools are disabled")
+				}
+				return nil
+			}
+			
 			if err := a.executeToolCalls(choice.Message.ToolCalls, &messages); err != nil {
 				// Check if this is an exit request
 				if strings.HasPrefix(err.Error(), "EXIT_REQUESTED:") {

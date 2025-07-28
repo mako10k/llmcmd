@@ -53,7 +53,7 @@ func TestToolDefinitions(t *testing.T) {
 }
 
 func TestCreateInitialMessages(t *testing.T) {
-	messages := CreateInitialMessages("test prompt", "test instruction", []string{"file1.txt"}, "")
+	messages := CreateInitialMessages("test prompt", "test instruction", []string{"file1.txt"}, "", false)
 	
 	if len(messages) != 2 {
 		t.Errorf("Expected 2 messages, got %d", len(messages))

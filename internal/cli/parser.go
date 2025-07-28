@@ -44,14 +44,29 @@ func ParseArgs(args []string) (*Config, error) {
 	fs := flag.NewFlagSet("llmcmd", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	
-	// Define flags
+	// Define flags with both short and long options where appropriate
 	fs.StringVar(&config.Prompt, "p", "", "LLM prompt/instructions")
+	fs.StringVar(&config.Prompt, "prompt", "", "LLM prompt/instructions")
+	
 	fs.Var(&inputFiles, "i", "Input file path (can be specified multiple times)")
+	fs.Var(&inputFiles, "input", "Input file path (can be specified multiple times)")
+	
 	fs.StringVar(&config.OutputFile, "o", "", "Output file path")
-	fs.BoolVar(&config.Verbose, "v", false, "Enable verbose logging")
-	fs.BoolVar(&config.ShowStats, "stats", false, "Show detailed statistics after execution")
+	fs.StringVar(&config.OutputFile, "output", "", "Output file path")
+	
 	fs.StringVar(&config.ConfigFile, "c", "", "Configuration file path")
+	fs.StringVar(&config.ConfigFile, "config", "", "Configuration file path")
+	
+	fs.BoolVar(&config.Verbose, "v", false, "Enable verbose logging")
+	fs.BoolVar(&config.Verbose, "verbose", false, "Enable verbose logging")
+	
+	fs.BoolVar(&config.ShowStats, "s", false, "Show detailed statistics after execution")
+	fs.BoolVar(&config.ShowStats, "stats", false, "Show detailed statistics after execution")
+	
+	fs.BoolVar(&config.NoStdin, "n", false, "Skip reading from stdin")
 	fs.BoolVar(&config.NoStdin, "no-stdin", false, "Skip reading from stdin")
+	
+	fs.BoolVar(&config.NoNewline, "N", false, "Don't add newline to output")
 	fs.BoolVar(&config.NoNewline, "no-newline", false, "Don't add newline to output")
 	
 	// Handle help and version flags
@@ -166,14 +181,14 @@ USAGE:
     llmcmd [OPTIONS] [INSTRUCTIONS]
 
 OPTIONS:
-    -p <prompt>         LLM prompt/instructions
-    -i <file>           Input file path (can be specified multiple times)
-    -o <file>           Output file path  
-    -c <file>           Configuration file path (default: ~/.llmcmdrc)
-    -v                  Enable verbose logging
-    --stats             Show detailed statistics after execution
-    --no-stdin          Skip reading from stdin
-    --no-newline        Don't add newline to output
+    -p, --prompt <text>     LLM prompt/instructions
+    -i, --input <file>      Input file path (can be specified multiple times)
+    -o, --output <file>     Output file path  
+    -c, --config <file>     Configuration file path (default: ~/.llmcmdrc)
+    -v, --verbose           Enable verbose logging
+    -s, --stats             Show detailed statistics after execution
+    -n, --no-stdin          Skip reading from stdin
+    -N, --no-newline        Don't add newline to output
     -h, --help          Show this help message
     -V, --version       Show version information
 
