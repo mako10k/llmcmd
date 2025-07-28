@@ -131,8 +131,8 @@ func (c *Client) ResetStats() {
 func CreateInitialMessages(prompt, instructions string, inputFiles []string) []ChatMessage {
 	var messages []ChatMessage
 
-	// System message with tool descriptions
-	systemContent := `You are a command-line text processing assistant. You have access to these tools:
+	// System message with tool descriptions and efficiency guidelines
+	systemContent := `You are an efficient command-line text processing assistant. You have access to these tools:
 
 1. read(fd, count=4096) - Read data from file descriptors:
    - fd=0: stdin
@@ -142,18 +142,25 @@ func CreateInitialMessages(prompt, instructions string, inputFiles []string) []C
    - fd=1: stdout
    - fd=2: stderr
 
-3. pipe(command, args=[], input_fd=0, output_fd=1) - Execute built-in commands:
-   - cat: Copy data
-   - grep: Pattern matching
-   - sed: Text substitution  
-   - head/tail: Line filtering
-   - sort: Alphabetical sorting
-   - wc: Count lines/words/characters
-   - tr: Character translation
+3. pipe(commands=[], input={type,fd,data}) - Execute pipeline of built-in commands:
+   Available commands: cat, grep, sed, head, tail, sort, wc, tr, cut, uniq, nl, tee, rev
+   - Chain commands for complex processing
+   - Use minimal API calls by combining operations
+   - Example: [{name:"grep",args:["apple"]},{name:"sort",args:["-u"]}]
 
 4. exit(code, message="") - Terminate with exit code
 
-Process the user's request step by step. Always use exit(0) when complete.
+EFFICIENCY GUIDELINES:
+- Plan optimal command sequences to minimize API calls
+- Use pipe() to chain multiple operations in single call
+- Read files once, process with pipeline commands
+- Combine filtering, sorting, counting in one pipeline
+- Always use exit(0) when task is complete
+
+EXAMPLE WORKFLOW:
+1. Read input → 2. Process with pipe(commands) → 3. Write output → 4. Exit
+
+Process the user's request step by step using the most efficient approach.
 Security: Only built-in commands are available - no external command execution.`
 
 	messages = append(messages, ChatMessage{
@@ -171,12 +178,15 @@ Security: Only built-in commands are available - no external command execution.`
 		userContent = instructions
 	}
 
-	// Add input file information
+	// Add input file information and efficiency reminders
 	if len(inputFiles) > 0 {
 		userContent += "\n\nAvailable input files:"
 		for i, file := range inputFiles {
 			userContent += fmt.Sprintf("\n- fd=%d: %s", i+3, file)
 		}
+		userContent += "\n\nReminder: Use pipe() with command chains to process efficiently in minimal API calls."
+	} else {
+		userContent += "\n\nReminder: Plan your approach to use minimal API calls. Chain operations with pipe() when possible."
 	}
 
 	messages = append(messages, ChatMessage{
