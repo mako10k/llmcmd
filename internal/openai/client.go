@@ -143,13 +143,16 @@ func (c *Client) ResetStats() {
 }
 
 // CreateInitialMessages creates the initial message sequence for llmcmd
-func CreateInitialMessages(prompt, instructions string, inputFiles []string, customSystemPrompt string) []ChatMessage {
+func CreateInitialMessages(prompt, instructions string, inputFiles []string, customSystemPrompt string, disableTools bool) []ChatMessage {
 	var messages []ChatMessage
 
 	// Use custom system prompt if provided, otherwise use default
 	var systemContent string
 	if customSystemPrompt != "" {
 		systemContent = customSystemPrompt
+	} else if disableTools {
+		// Simple system message when tools are disabled
+		systemContent = `You are a helpful assistant. Provide direct, clear answers to user questions without using any special tools or functions. Generate your response directly as plain text.`
 	} else {
 		// Default system message with tool descriptions and efficiency guidelines
 		systemContent = `You are a helpful command-line text processing assistant.

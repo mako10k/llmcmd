@@ -6,7 +6,7 @@ import (
 )
 
 func TestCreateInitialMessages_EfficiencyPrompt(t *testing.T) {
-	messages := CreateInitialMessages("", "process file efficiently", []string{"test.txt"}, "")
+	messages := CreateInitialMessages("", "process file efficiently", []string{"test.txt"}, "", false)
 	
 	if len(messages) != 2 {
 		t.Errorf("Expected 2 messages, got %d", len(messages))
@@ -40,7 +40,7 @@ func TestCreateInitialMessages_EfficiencyPrompt(t *testing.T) {
 }
 
 func TestCreateInitialMessages_PipelineExample(t *testing.T) {
-	messages := CreateInitialMessages("", "test", []string{}, "")
+	messages := CreateInitialMessages("", "test", []string{}, "", false)
 	systemMsg := messages[0].Content
 	
 	// Check for pipeline example

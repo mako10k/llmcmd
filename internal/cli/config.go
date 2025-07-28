@@ -21,6 +21,7 @@ type ConfigFile struct {
 	MaxRetries       int    `json:"max_retries"`
 	RetryDelay       int    `json:"retry_delay_ms"`
 	SystemPrompt     string `json:"system_prompt"`
+	DisableTools     bool   `json:"disable_tools"`
 }
 
 // DefaultConfig returns default configuration values
@@ -37,6 +38,7 @@ func DefaultConfig() *ConfigFile {
 		MaxRetries:       3,
 		RetryDelay:       1000, // 1 second
 		SystemPrompt:     "", // Empty means use default built-in prompt
+		DisableTools:     false, // Tools enabled by default
 	}
 }
 
@@ -155,6 +157,12 @@ func setConfigValue(config *ConfigFile, key, value string) error {
 		}
 	case "system_prompt":
 		config.SystemPrompt = value
+	case "disable_tools":
+		if val, err := parseBool(value); err != nil {
+			return fmt.Errorf("invalid disable_tools: %w", err)
+		} else {
+			config.DisableTools = val
+		}
 	default:
 		return fmt.Errorf("unknown config key: %s", key)
 	}
@@ -178,6 +186,17 @@ func parseFloat(s string) (float64, error) {
 	var val float64
 	_, err := fmt.Sscanf(s, "%f", &val)
 	return val, err
+}
+
+func parseBool(s string) (bool, error) {
+	switch strings.ToLower(s) {
+	case "true", "1", "yes", "on", "enable", "enabled":
+		return true, nil
+	case "false", "0", "no", "off", "disable", "disabled":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid boolean value: %s", s)
+	}
 }
 
 // LoadEnvironmentConfig loads configuration from environment variables
