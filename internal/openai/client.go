@@ -149,33 +149,34 @@ func CreateInitialMessages(prompt, instructions string, inputFiles []string) []C
 	// System message with tool descriptions and efficiency guidelines
 	systemContent := `You are an efficient command-line text processing assistant. You have access to these tools:
 
-1. read(fd, count=4096) - Read data from file descriptors:
-   - fd=0: stdin
-   - fd=3+: input files (in order specified)
+1. read(fd, count=4096) - Read data from file descriptors
+   Check the user message for available file descriptors
 
-2. write(fd, data) - Write data to output:
-   - fd=1: stdout
-   - fd=2: stderr
+2. write(fd, data) - Write data to file descriptors
+   - fd=1: stdout (main output)
+   - fd=2: stderr (error/debug output)
 
 3. pipe(commands=[], input={type,fd,data}) - Execute pipeline of built-in commands:
    Available commands: cat, grep, sed, head, tail, sort, wc, tr, cut, uniq, nl, tee, rev
    - Chain commands for complex processing
    - Use minimal API calls by combining operations
-   - Example: [{name:"grep",args:["apple"]},{name:"sort",args:["-u"]}]
 
 4. exit(code, message="") - Terminate with exit code
 
-EFFICIENCY GUIDELINES:
-- Plan optimal command sequences to minimize API calls
-- Use pipe() to chain multiple operations in single call
-- Read files once, process with pipeline commands
-- Combine filtering, sorting, counting in one pipeline
-- Always use exit(0) when task is complete
+STANDARD BEHAVIOR:
+When no specific input/output files are mentioned, follow standard Unix tool behavior:
+- Read from stdin (fd=0) 
+- Process the data according to user's request
+- Write results to stdout (fd=1)
+- Always call exit(0) when complete
 
-EXAMPLE WORKFLOW:
-1. Read input → 2. Process with pipe(commands) → 3. Write output → 4. Exit
+WORKFLOW:
+1. Check the file descriptor mapping in user message
+2. Read from available input sources (typically fd=0 for stdin)
+3. Process data according to user's request using pipe() commands if needed
+4. Write results to stdout (fd=1)
+5. Call exit(0) when complete
 
-Process the user's request step by step using the most efficient approach.
 Security: Only built-in commands are available - no external command execution.`
 
 	messages = append(messages, ChatMessage{
@@ -193,15 +194,32 @@ Security: Only built-in commands are available - no external command execution.`
 		userContent = instructions
 	}
 
-	// Add input file information and efficiency reminders
-	if len(inputFiles) > 0 {
-		userContent += "\n\nAvailable input files:"
-		for i, file := range inputFiles {
-			userContent += fmt.Sprintf("\n- fd=%d: %s", i+3, file)
+	// Add input source information with clear file descriptor mapping
+	var actualFiles []string
+	for _, file := range inputFiles {
+		if file != "-" {
+			actualFiles = append(actualFiles, file)
 		}
-		userContent += "\n\nReminder: Use pipe() with command chains to process efficiently in minimal API calls."
+	}
+
+	userContent += "\n\nFILE DESCRIPTOR MAPPING:"
+	userContent += "\n- fd=0: stdin (standard input)"
+	userContent += "\n- fd=1: stdout (standard output - write results here)"
+	userContent += "\n- fd=2: stderr (error output)"
+
+	if len(actualFiles) > 0 {
+		for i, file := range actualFiles {
+			userContent += fmt.Sprintf("\n- fd=%d: %s (input file)", i+3, file)
+		}
+		userContent += "\n\nAVAILABLE INPUT SOURCES:"
+		userContent += "\n✓ stdin (fd=0) - contains input data"
+		userContent += "\n✓ input files (fd=3+) - specified above"
+		userContent += "\nWORKFLOW: read(fd=0 or fd=3+) → pipe(commands) → write(fd=1) → exit(0)"
 	} else {
-		userContent += "\n\nReminder: Plan your approach to use minimal API calls. Chain operations with pipe() when possible."
+		userContent += "\n\nAVAILABLE INPUT SOURCES:"
+		userContent += "\n✓ stdin (fd=0) - contains input data"
+		userContent += "\n✗ input files - none specified (do NOT read fd=3+)"
+		userContent += "\nWORKFLOW: read(fd=0) → pipe(commands) → write(fd=1) → exit(0)"
 	}
 
 	messages = append(messages, ChatMessage{
