@@ -43,3 +43,9 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+
+# Test output files
+output.txt
+stats.txt
+test_*.txt
+test_*.conf
