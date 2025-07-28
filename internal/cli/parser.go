@@ -13,6 +13,7 @@ import (
 var (
 	ErrShowHelp    = errors.New("show help")
 	ErrShowVersion = errors.New("show version")
+	ErrInstall     = errors.New("install system")
 )
 
 // Config holds all configuration for the application
@@ -50,11 +51,12 @@ func ParseArgs(args []string) (*Config, error) {
 	fs.StringVar(&config.ConfigFile, "c", "", "Configuration file path")
 	
 	// Handle help and version flags
-	var showHelp, showVersion bool
+	var showHelp, showVersion, installSystem bool
 	fs.BoolVar(&showHelp, "h", false, "Show help")
 	fs.BoolVar(&showHelp, "help", false, "Show help")
 	fs.BoolVar(&showVersion, "V", false, "Show version")
 	fs.BoolVar(&showVersion, "version", false, "Show version")
+	fs.BoolVar(&installSystem, "install", false, "Install llmcmd system-wide")
 
 	// Parse arguments
 	err := fs.Parse(args)
@@ -68,6 +70,9 @@ func ParseArgs(args []string) (*Config, error) {
 	}
 	if showVersion {
 		return nil, ErrShowVersion
+	}
+	if installSystem {
+		return nil, ErrInstall
 	}
 
 	// Copy input files from the custom type

@@ -14,33 +14,64 @@ OpenAI ChatCompletion APIを使用して、LLMがコマンドラインツール�
 - **クロスプラットフォーム**: Linux、macOS、Windows対応
 - **単一バイナリ**: 依存関係を含む実行ファイル
 
-## インストール
+## Installation
 
-### バイナリダウンロード（推奨）
-
-最新のリリースから、お使いのプラットフォーム用のバイナリをダウンロードしてください：
+### Quick Install (Linux/macOS)
 
 ```bash
-# Linux
+curl -sSL https://raw.githubusercontent.com/mako10k/llmcmd/main/install.sh | bash
+```
+
+### Manual Installation
+
+#### Download Binary (Recommended)
+
+Download the latest release binary for your platform:
+
+```bash
+# Linux AMD64
 wget https://github.com/mako10k/llmcmd/releases/latest/download/llmcmd-linux-amd64
 chmod +x llmcmd-linux-amd64
 sudo mv llmcmd-linux-amd64 /usr/local/bin/llmcmd
 
-# macOS
+# Linux ARM64
+wget https://github.com/mako10k/llmcmd/releases/latest/download/llmcmd-linux-arm64
+chmod +x llmcmd-linux-arm64
+sudo mv llmcmd-linux-arm64 /usr/local/bin/llmcmd
+
+# macOS AMD64 (Intel)
 wget https://github.com/mako10k/llmcmd/releases/latest/download/llmcmd-darwin-amd64
 chmod +x llmcmd-darwin-amd64
 sudo mv llmcmd-darwin-amd64 /usr/local/bin/llmcmd
 
-# Windows
-# llmcmd-windows-amd64.exe をダウンロードしてPATHの通った場所に配置
+# macOS ARM64 (Apple Silicon)
+wget https://github.com/mako10k/llmcmd/releases/latest/download/llmcmd-darwin-arm64
+chmod +x llmcmd-darwin-arm64
+sudo mv llmcmd-darwin-arm64 /usr/local/bin/llmcmd
+
+# Windows AMD64
+# Download llmcmd-windows-amd64.exe and place it in your PATH
 ```
 
-### ソースからビルド
+#### Build from Source
 
 ```bash
 git clone https://github.com/mako10k/llmcmd.git
 cd llmcmd
+make build
+sudo make install
+```
+
+#### System Installation from Local Binary
+
+If you already have the binary built locally:
+
+```bash
+# Build first
 go build -o llmcmd ./cmd/llmcmd
+
+# Install system-wide (requires sudo)
+sudo ./llmcmd --install
 ```
 
 ## 設定
