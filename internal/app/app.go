@@ -217,7 +217,8 @@ func (a *App) executeToolCalls(toolCalls []openai.ToolCall, messages *[]openai.C
 
 	for _, toolCall := range toolCalls {
 		if a.config.Verbose {
-			log.Printf("Executing tool: %s (ID: %s)", toolCall.Function.Name, toolCall.ID)
+			log.Printf("Executing tool: %s (ID: %s) with args: %s", 
+				toolCall.Function.Name, toolCall.ID, toolCall.Function.Arguments)
 		}
 
 		// Convert to format expected by tool engine

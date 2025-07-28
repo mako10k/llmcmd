@@ -70,12 +70,11 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 	// 0=stdin, 1=stdout, 2=stderr, 3+=input files
 	engine.fileDescriptors = make([]io.Reader, 3)
 	engine.fileDescriptors[0] = os.Stdin
-	// stdout and stderr are not readers, so we leave them as nil
 
 	// Open input files and add to file descriptors
 	for _, filename := range config.InputFiles {
 		if filename == "-" {
-			// Use stdin for "-"
+			// "-" means stdin, so add stdin as an additional file descriptor
 			engine.fileDescriptors = append(engine.fileDescriptors, os.Stdin)
 		} else {
 			file, err := os.Open(filename)
@@ -190,19 +189,18 @@ func (e *Engine) executeRead(args map[string]interface{}) (string, error) {
 
 	// Get the appropriate reader
 	var reader io.Reader
-	switch fd {
-	case 0: // stdin
-		reader = os.Stdin
-	default: // input files (fd 3+)
-		fileIndex := fd - 3
-		if fileIndex < 0 || fileIndex >= len(e.inputFiles) {
-			e.stats.ErrorCount++
-			return "", fmt.Errorf("read: invalid file descriptor %d", fd)
-		}
-		reader = e.inputFiles[fileIndex]
+	if fd < 0 || fd >= len(e.fileDescriptors) {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("read: invalid file descriptor %d", fd)
+	}
+	
+	reader = e.fileDescriptors[fd]
+	if reader == nil {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("read: file descriptor %d not available", fd)
 	}
 
-	// Read data
+	// Read data with blocking I/O
 	buffer := make([]byte, count)
 	n, err := reader.Read(buffer)
 	if err != nil && err != io.EOF {
@@ -211,7 +209,10 @@ func (e *Engine) executeRead(args map[string]interface{}) (string, error) {
 	}
 
 	e.stats.BytesRead += int64(n)
-	return string(buffer[:n]), nil
+	result := string(buffer[:n])
+	
+	// Return empty string if no data, but don't treat it as error
+	return result, nil
 }
 
 // executeWrite implements the write tool
