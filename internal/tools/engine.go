@@ -38,6 +38,8 @@ type Engine struct {
 	maxFileSize     int64
 	bufferSize      int
 	stats           ExecutionStats
+	noStdin         bool // Skip reading from stdin
+	noNewline       bool // Don't add newline to output
 }
 
 // ExecutionStats tracks tool execution statistics
@@ -57,6 +59,8 @@ type EngineConfig struct {
 	OutputFile  string
 	MaxFileSize int64
 	BufferSize  int
+	NoStdin     bool // Skip reading from stdin
+	NoNewline   bool // Don't add newline to output
 }
 
 // NewEngine creates a new tool execution engine
@@ -64,12 +68,16 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 	engine := &Engine{
 		maxFileSize: config.MaxFileSize,
 		bufferSize:  config.BufferSize,
+		noStdin:     config.NoStdin,
+		noNewline:   config.NoNewline,
 	}
 
 	// Initialize file descriptors array
 	// 0=stdin, 1=stdout, 2=stderr, 3+=input files
 	engine.fileDescriptors = make([]io.Reader, 3)
-	engine.fileDescriptors[0] = os.Stdin
+	if !config.NoStdin {
+		engine.fileDescriptors[0] = os.Stdin
+	}
 
 	// Open input files and add to file descriptors
 	for _, filename := range config.InputFiles {

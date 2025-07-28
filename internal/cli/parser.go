@@ -25,6 +25,8 @@ type Config struct {
 	Verbose     bool     // -v: Verbose logging
 	ShowStats   bool     // --stats: Show detailed statistics
 	ConfigFile  string   // -c: Configuration file path
+	NoStdin     bool     // --no-stdin: Skip reading from stdin
+	NoNewline   bool     // --no-newline: Don't add newline to output
 
 	// Positional arguments
 	Instructions string // Remaining arguments as instructions
@@ -49,6 +51,8 @@ func ParseArgs(args []string) (*Config, error) {
 	fs.BoolVar(&config.Verbose, "v", false, "Enable verbose logging")
 	fs.BoolVar(&config.ShowStats, "stats", false, "Show detailed statistics after execution")
 	fs.StringVar(&config.ConfigFile, "c", "", "Configuration file path")
+	fs.BoolVar(&config.NoStdin, "no-stdin", false, "Skip reading from stdin")
+	fs.BoolVar(&config.NoNewline, "no-newline", false, "Don't add newline to output")
 	
 	// Handle help and version flags
 	var showHelp, showVersion, installSystem bool
@@ -168,6 +172,8 @@ OPTIONS:
     -c <file>           Configuration file path (default: ~/.llmcmdrc)
     -v                  Enable verbose logging
     --stats             Show detailed statistics after execution
+    --no-stdin          Skip reading from stdin
+    --no-newline        Don't add newline to output
     -h, --help          Show this help message
     -V, --version       Show version information
 
