@@ -1,1 +1,5 @@
-Hello World
+apple
+banana
+cherry
+apple
+date

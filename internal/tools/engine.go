@@ -1,19 +1,43 @@
 package tools
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"strings"
+
+	"github.com/mako10k/llmcmd/internal/tools/builtin"
 )
+
+// PipeArgs represents arguments for pipe command
+type PipeArgs struct {
+	Commands []PipeCommand `json:"commands"`
+	Input    PipeInput     `json:"input"`
+}
+
+// PipeCommand represents a single command in a pipeline
+type PipeCommand struct {
+	Name string   `json:"name"`
+	Args []string `json:"args"`
+}
+
+// PipeInput represents input source for pipeline
+type PipeInput struct {
+	Type string `json:"type"` // "fd" or "data"
+	FD   int    `json:"fd"`   // file descriptor number
+	Data string `json:"data"` // raw input data
+}
 
 // Engine handles tool execution for llmcmd
 type Engine struct {
-	inputFiles   []*os.File
-	outputFile   *os.File
-	maxFileSize  int64
-	bufferSize   int
-	stats        ExecutionStats
+	inputFiles      []*os.File
+	outputFile      *os.File
+	fileDescriptors []io.Reader
+	maxFileSize     int64
+	bufferSize      int
+	stats           ExecutionStats
 }
 
 // ExecutionStats tracks tool execution statistics
@@ -42,13 +66,20 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 		bufferSize:  config.BufferSize,
 	}
 
-	// Open input files
+	// Initialize file descriptors array
+	// 0=stdin, 1=stdout, 2=stderr, 3+=input files
+	engine.fileDescriptors = make([]io.Reader, 3)
+	engine.fileDescriptors[0] = os.Stdin
+	// stdout and stderr are not readers, so we leave them as nil
+
+	// Open input files and add to file descriptors
 	for _, filename := range config.InputFiles {
 		file, err := os.Open(filename)
 		if err != nil {
 			return nil, fmt.Errorf("failed to open input file %s: %w", filename, err)
 		}
 		engine.inputFiles = append(engine.inputFiles, file)
+		engine.fileDescriptors = append(engine.fileDescriptors, file)
 	}
 
 	// Open output file if specified
@@ -219,20 +250,80 @@ func (e *Engine) executeWrite(args map[string]interface{}) (string, error) {
 	return fmt.Sprintf("wrote %d bytes to fd %d", n, fd), nil
 }
 
-// executePipe implements the pipe tool (placeholder)
+// executePipe implements the pipe tool for executing built-in commands
 func (e *Engine) executePipe(args map[string]interface{}) (string, error) {
 	e.stats.PipeCalls++
 
-	// Extract command
-	command, ok := args["command"].(string)
-	if !ok {
+	// Parse JSON arguments
+	var pipeArgs PipeArgs
+	jsonBytes, err := json.Marshal(args)
+	if err != nil {
 		e.stats.ErrorCount++
-		return "", fmt.Errorf("pipe: command parameter must be a string")
+		return "", fmt.Errorf("pipe: failed to marshal arguments: %w", err)
 	}
 
-	// TODO: Phase 4 - Implement built-in commands
-	// For now, return a placeholder
-	return fmt.Sprintf("pipe: %s command not yet implemented", command), nil
+	if err := json.Unmarshal(jsonBytes, &pipeArgs); err != nil {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("pipe: failed to parse arguments: %w", err)
+	}
+
+	if len(pipeArgs.Commands) == 0 {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("pipe: no commands specified")
+	}
+
+	// Parse input source
+	var input io.Reader
+	if pipeArgs.Input.Type == "fd" {
+		fd := pipeArgs.Input.FD
+		if fd < 0 || fd >= len(e.fileDescriptors) {
+			e.stats.ErrorCount++
+			return "", fmt.Errorf("pipe: invalid file descriptor: %d", fd)
+		}
+		if e.fileDescriptors[fd] == nil {
+			e.stats.ErrorCount++
+			return "", fmt.Errorf("pipe: file descriptor %d not open", fd)
+		}
+		input = e.fileDescriptors[fd]
+	} else if pipeArgs.Input.Type == "data" {
+		input = strings.NewReader(pipeArgs.Input.Data)
+	} else {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("pipe: invalid input type: %s", pipeArgs.Input.Type)
+	}
+
+	// Execute pipeline
+	currentInput := input
+	for i, cmd := range pipeArgs.Commands {
+		cmdName := cmd.Name
+		cmdArgs := cmd.Args
+
+		// Check if command is supported
+		commandFunc, exists := builtin.Commands[cmdName]
+		if !exists {
+			e.stats.ErrorCount++
+			return "", fmt.Errorf("pipe: unsupported command: %s", cmdName)
+		}
+
+		// Prepare output buffer
+		var output bytes.Buffer
+		
+		// Execute command
+		if err := commandFunc(cmdArgs, currentInput, &output); err != nil {
+			e.stats.ErrorCount++
+			return "", fmt.Errorf("pipe: command '%s' failed: %w", cmdName, err)
+		}
+
+		// Use output as input for next command
+		if i < len(pipeArgs.Commands)-1 {
+			currentInput = strings.NewReader(output.String())
+		} else {
+			// Last command - return the result
+			return strings.TrimSuffix(output.String(), "\n"), nil
+		}
+	}
+
+	return "", nil
 }
 
 // executeExit implements the exit tool
