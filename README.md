@@ -9,7 +9,8 @@ A secure command-line tool that enables Large Language Models to execute text pr
 ## Features
 
 - **Natural Language Interface**: Instruct tasks in plain language
-- **Secure Built-in Tools**: File reading/writing, text processing, statistics
+- **Smart File Analysis**: Automatic file information pre-loading and size/type detection
+- **Secure Built-in Tools**: File reading/writing, text processing pipelines
 - **No External Commands**: All operations use built-in functions only
 - **Cross-platform**: Linux, macOS, Windows support
 - **Single Binary**: Self-contained executable with no dependencies
@@ -226,6 +227,19 @@ cat data.txt | llmcmd "データを分析し、重要な情報を抽出してく
 find . -name "*.log" | llmcmd "ログファイルのリストから、エラーを含むファイルを特定してください"
 ```
 
+### スマートファイル分析の活用
+
+```bash
+# 大きなファイルの効率的な分析（自動でファイル情報が事前読み込みされます）
+llmcmd -i large_data.csv "このCSVファイルの構造を分析し、適切な処理方法を提案してください"
+
+# 複数ファイルの統合処理（各ファイルの情報が事前に把握されます）
+llmcmd -i config.json -o settings.conf "JSONファイルを設定ファイル形式に変換してください"
+
+# ファイル形式の自動判定とカスタム処理
+llmcmd -i unknown_format.txt "ファイルの内容と形式を判定し、適切な処理を行ってください"
+```
+
 ## Available Tools for LLM
 
 ### read(fd, count|lines)
@@ -273,24 +287,6 @@ Executes pipeline of built-in commands.
 }
 ```
 
-### fstat(fd)
-Gets file information and statistics for a file descriptor.
-
-**Parameters**:
-- `fd`: File descriptor number
-
-**Response example**:
-```json
-{
-  "fd": 3,
-  "type": "file",
-  "name": "input.txt",
-  "size": 1024,
-  "readable": true,
-  "writable": false
-}
-```
-
 ### exit(code)
 Terminates the program.
 
@@ -304,6 +300,29 @@ Terminates the program.
   "message": "Exit requested with code 0"
 }
 ```
+
+## Smart File Information Pre-loading
+
+`llmcmd` automatically analyzes input files and provides comprehensive file information upfront to help the LLM make informed decisions about processing large or binary files.
+
+### File Descriptor Mapping with Pre-loaded Information
+
+```
+FILE DESCRIPTOR MAPPING:
+- fd=0: stdin <- large_data.csv [2.1 MB, text, large]
+- fd=1: stdout -> output.txt
+- fd=2: stderr (error output)
+- fd=3: archive.tar.gz (input file #1) [15.0 MB, archive, very_large]
+```
+
+### File Information Categories
+
+- **Size Display**: Automatic conversion to appropriate units (bytes/KB/MB/GB)
+- **File Type Detection**: text, binary, archive, structured_text, image, etc.
+- **Size Categories**: small, medium, large, very_large
+- **Stream Detection**: Identifies pipes, terminals, and file redirections
+
+This feature helps prevent expensive API calls with inappropriate content and enables smarter processing strategies for large files.
 
 ## セキュリティ
 
