@@ -118,7 +118,6 @@ type ExecutionStats struct {
 	WriteCalls   int   `json:"write_calls"`
 	SpawnCalls   int   `json:"spawn_calls"`
 	TeeCalls     int   `json:"tee_calls"`
-	CloseCalls   int   `json:"close_calls"`
 	ExitCalls    int   `json:"exit_calls"`
 	BytesRead    int64 `json:"bytes_read"`
 	BytesWritten int64 `json:"bytes_written"`
@@ -204,25 +203,6 @@ func (e *Engine) addFdDependency(source int, targets []int, toolType string) {
 }
 
 // checkCloseDependencies checks if an input fd can be closed based on dependency rules
-func (e *Engine) checkCloseDependencies(inFd int) error {
-	e.chainMutex.RLock()
-	defer e.chainMutex.RUnlock()
-
-	// Find dependencies where this fd is the source
-	for _, dep := range e.fdDependencies {
-		if dep.Source == inFd {
-			// Check if all target fds have been closed
-			for _, targetFd := range dep.Targets {
-				if !e.closedFds[targetFd] {
-					return fmt.Errorf("cannot close input fd %d: output fd %d (from %s) must be closed first",
-						inFd, targetFd, dep.ToolType)
-				}
-			}
-		}
-	}
-	return nil
-}
-
 // markFdClosed marks a file descriptor as closed
 func (e *Engine) markFdClosed(fd int) {
 	e.chainMutex.Lock()
@@ -650,8 +630,6 @@ func (e *Engine) ExecuteToolCall(toolCall map[string]interface{}) (string, error
 		return e.executeSpawn(args)
 	case "tee":
 		return e.executeTee(args)
-	case "close":
-		return e.executeClose(args)
 	case "exit":
 		return e.executeExit(args)
 	default:
@@ -1052,85 +1030,6 @@ func (e *Engine) executeTee(args map[string]interface{}) (string, error) {
 	e.stats.BytesWritten += int64(totalWritten)
 
 	return fmt.Sprintf("tee: copied %d bytes from fd %d to %d outputs", len(inputData), inFd, len(outFds)), nil
-}
-
-// executeClose implements the close tool
-func (e *Engine) executeClose(args map[string]interface{}) (string, error) {
-	e.stats.CloseCalls++
-
-	// Extract file descriptor
-	fdFloat, ok := args["fd"].(float64)
-	if !ok {
-		e.stats.ErrorCount++
-		return "", fmt.Errorf("close: fd parameter must be a number")
-	}
-	fd := int(fdFloat)
-
-	// Check dependency constraints before closing
-	if err := e.checkCloseDependencies(fd); err != nil {
-		e.stats.ErrorCount++
-		return "", err
-	}
-
-	// For now, implement basic fd closing
-	// TODO: Track running commands and wait for termination
-	if fd < 0 {
-		e.stats.ErrorCount++
-		return "", fmt.Errorf("close: invalid file descriptor: %d", fd)
-	}
-
-	// Close the file descriptor if it exists
-	if fd < len(e.fileDescriptors) && e.fileDescriptors[fd] != nil {
-		// For basic implementation, just mark as closed
-		e.fileDescriptors[fd] = nil
-		e.markFdClosed(fd)
-		return fmt.Sprintf("File descriptor %d closed", fd), nil
-	}
-
-	// Check if this is a running command
-	e.commandsMutex.RLock()
-	runningCmd, exists := e.runningCommands[fd]
-	e.commandsMutex.RUnlock()
-
-	if exists {
-		// Close appropriate pipe based on fd type
-		if runningCmd.inputFd == fd {
-			// Closing input fd - close stdin and wait for command completion
-			if runningCmd.stdin != nil {
-				runningCmd.stdin.Close()
-			}
-
-			// Wait for command to complete
-			<-runningCmd.done
-
-			runningCmd.mu.RLock()
-			exitCode := runningCmd.exitCode
-			cmdName := runningCmd.commandName
-			runningCmd.mu.RUnlock()
-
-			// Clean up
-			e.commandsMutex.Lock()
-			delete(e.runningCommands, runningCmd.inputFd)
-			delete(e.runningCommands, runningCmd.outputFd)
-			e.commandsMutex.Unlock()
-
-			e.markFdClosed(fd)
-			return fmt.Sprintf("Command '%s' on fd %d terminated with exit code %d",
-				cmdName, fd, exitCode), nil
-		} else if runningCmd.outputFd == fd {
-			// Closing output fd - close stdout
-			if runningCmd.stdout != nil {
-				runningCmd.stdout.Close()
-			}
-			e.markFdClosed(fd)
-			return fmt.Sprintf("Output fd %d closed", fd), nil
-		}
-	}
-
-	// If it's a command fd, wait for command termination and return exit code
-	// For now, return a mock exit code
-	e.markFdClosed(fd)
-	return fmt.Sprintf("File descriptor %d closed", fd), nil
 }
 
 // GetStats returns current execution statistics

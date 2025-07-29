@@ -33,7 +33,7 @@ func TestToolDefinitions(t *testing.T) {
 	expectedTools := map[string]bool{
 		"read":  false,
 		"write": false,
-		"pipe":  false,
+		"spawn": false,
 		"exit":  false,
 	}
 

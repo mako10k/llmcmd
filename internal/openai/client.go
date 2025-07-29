@@ -384,7 +384,7 @@ TOOLS AVAILABLE:
    - count: number of bytes to read (optional)
 
 2. write(fd, data, [newline], [eof]) - Write to output
-   - fd: 1=stdout, 2=stderr, or pipe input fd
+   - fd: 1=stdout, 2=stderr, or spawn input fd
    - data: text content to write
    - newline: add newline (default false)
    - eof: signal end of file and trigger chain cleanup (default false)
@@ -428,7 +428,7 @@ ANALYSIS APPROACH:
 
 - For data processing tasks:
   * Read input data, process with built-in commands, output results
-  * Use pipe() for complex processing chains
+  * Use spawn() for complex processing chains
   * Follow proper fd management and close() ordering
 
 - Answer user questions directly and clearly based on available information
@@ -576,7 +576,7 @@ ANALYSIS APPROACH:
 		} else {
 			fdMappingContent += "\n✗ stdin (fd=0) - ignore, no input data here"
 		}
-		fdMappingContent += "\nWORKFLOW: read(fd=3+) → pipe(commands) → write(fd=1) → exit(0)"
+		fdMappingContent += "\nWORKFLOW: read(fd=3+) → spawn(commands) → write(fd=1) → exit(0)"
 		fdMappingContent += "\n\nFILE REFERENCES: Use $1 for first file, $2 for second file, etc."
 	} else {
 		fdMappingContent += "\n\nAVAILABLE INPUT SOURCES:"
@@ -586,7 +586,7 @@ ANALYSIS APPROACH:
 			fdMappingContent += "\n✓ stdin (fd=0) - contains input data"
 		}
 		fdMappingContent += "\n✗ input files - none specified (do NOT read fd=3+)"
-		fdMappingContent += "\nWORKFLOW: read(fd=0) → pipe(commands) → write(fd=1) → exit(0)"
+		fdMappingContent += "\nWORKFLOW: read(fd=0) → spawn(commands) → write(fd=1) → exit(0)"
 	}
 
 	messages = append(messages, ChatMessage{
