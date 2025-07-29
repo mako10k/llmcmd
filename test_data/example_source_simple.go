@@ -29,7 +29,7 @@ func (um *UserManager) CreateUser(id int, name, email string) error {
 	if _, exists := um.users[id]; exists {
 		return fmt.Errorf("user already exists: %d", id)
 	}
-	
+
 	um.users[id] = &User{
 		ID:    id,
 		Name:  name,
@@ -49,20 +49,20 @@ func (um *UserManager) GetUser(id int) (*User, error) {
 
 func main() {
 	um := NewUserManager()
-	
+
 	// Example usage
 	err := um.CreateUser(1, "Alice", "alice@example.com")
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	
+
 	user, err := um.GetUser(1)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	
+
 	fmt.Printf("User: %+v\n", user)
 	fmt.Printf("Current time: %v\n", time.Now())
 }

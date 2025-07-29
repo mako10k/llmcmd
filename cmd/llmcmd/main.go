@@ -27,6 +27,26 @@ func main() {
 		case cli.ErrShowVersion:
 			fmt.Printf("%s version %s\n", AppName, AppVersion)
 			os.Exit(0)
+		case cli.ErrListPresets:
+			// Start with default configuration
+			defaultConfig := cli.DefaultConfig()
+			
+			// If a config file is specified, try to load and merge it
+			if config.ConfigFile != "" {
+				fileConfig, loadErr := cli.LoadConfigFile(config.ConfigFile)
+				if loadErr == nil && fileConfig.PromptPresets != nil {
+					// Merge file config with defaults (presets from file take precedence)
+					for k, v := range fileConfig.PromptPresets {
+						defaultConfig.PromptPresets[k] = v
+					}
+				}
+			}
+			
+			fmt.Println("Available prompt presets:")
+			for key, preset := range defaultConfig.PromptPresets {
+				fmt.Printf("  %-12s - %s\n", key, preset.Description)
+			}
+			os.Exit(0)
 		case cli.ErrInstall:
 			installer := install.NewSystemInstaller(true)
 			if err := installer.Install(); err != nil {

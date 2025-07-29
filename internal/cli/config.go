@@ -7,21 +7,30 @@ import (
 	"strings"
 )
 
+// PromptPreset represents a predefined prompt configuration
+type PromptPreset struct {
+	Key         string `json:"key"`
+	Description string `json:"description"`
+	Content     string `json:"content"`
+}
+
 // ConfigFile represents configuration loaded from file
 type ConfigFile struct {
-	OpenAIAPIKey   string  `json:"openai_api_key"`
-	OpenAIBaseURL  string  `json:"openai_base_url"`
-	Model          string  `json:"model"`
-	MaxTokens      int     `json:"max_tokens"`
-	Temperature    float64 `json:"temperature"`
-	MaxAPICalls    int     `json:"max_api_calls"`
-	TimeoutSeconds int     `json:"timeout_seconds"`
-	MaxFileSize    int64   `json:"max_file_size"`
-	ReadBufferSize int     `json:"read_buffer_size"`
-	MaxRetries     int     `json:"max_retries"`
-	RetryDelay     int     `json:"retry_delay_ms"`
-	SystemPrompt   string  `json:"system_prompt"`
-	DisableTools   bool    `json:"disable_tools"`
+	OpenAIAPIKey    string                   `json:"openai_api_key"`
+	OpenAIBaseURL   string                   `json:"openai_base_url"`
+	Model           string                   `json:"model"`
+	MaxTokens       int                      `json:"max_tokens"`
+	Temperature     float64                  `json:"temperature"`
+	MaxAPICalls     int                      `json:"max_api_calls"`
+	TimeoutSeconds  int                      `json:"timeout_seconds"`
+	MaxFileSize     int64                    `json:"max_file_size"`
+	ReadBufferSize  int                      `json:"read_buffer_size"`
+	MaxRetries      int                      `json:"max_retries"`
+	RetryDelay      int                      `json:"retry_delay_ms"`
+	SystemPrompt    string                   `json:"system_prompt"`
+	DefaultPrompt   string                   `json:"default_prompt"`
+	DisableTools    bool                     `json:"disable_tools"`
+	PromptPresets   map[string]PromptPreset  `json:"prompt_presets"`
 }
 
 // DefaultConfig returns default configuration values
@@ -38,7 +47,9 @@ func DefaultConfig() *ConfigFile {
 		MaxRetries:     3,
 		RetryDelay:     1000,  // 1 second
 		SystemPrompt:   "",    // Empty means use default built-in prompt
+		DefaultPrompt:  "general", // Default preset key
 		DisableTools:   false, // Tools enabled by default
+		PromptPresets:  getDefaultPromptPresets(),
 	}
 }
 
@@ -96,6 +107,59 @@ func LoadConfigFile(path string) (*ConfigFile, error) {
 	}
 
 	return config, nil
+}
+
+// getDefaultPromptPresets returns the default prompt presets
+func getDefaultPromptPresets() map[string]PromptPreset {
+	return map[string]PromptPreset{
+		"general": {
+			Key:         "general",
+			Description: "General-purpose prompt for various tasks",
+			Content: `You are an intelligent assistant that can execute text processing tasks using built-in commands.
+Process the user's request step by step and provide clear, helpful responses.
+When using tools, explain what you're doing and show the results.`,
+		},
+		"diff_patch": {
+			Key:         "diff_patch",
+			Description: "Specialized prompt for diff/patch operations and file comparison",
+			Content: `You are a specialized tool for diff and patch operations. Your role is to:
+
+1. ALWAYS execute diff/patch commands when requested
+2. REPORT EXACTLY what the tools output - do not interpret or modify the results
+3. If tools output nothing, report "No output from command" - do not assume "no differences"
+4. For diff operations: show the actual diff output, line by line
+5. For patch operations: report success/failure and any error messages
+6. When comparing files: use the exact output from built-in diff commands
+
+Execute the requested diff/patch operations and provide the raw tool output without interpretation.`,
+		},
+		"code_review": {
+			Key:         "code_review",
+			Description: "Focused prompt for code analysis and review tasks",
+			Content: `You are a code analysis specialist. Your role is to:
+
+1. Analyze code structure, patterns, and quality
+2. Identify potential issues, bugs, or improvements
+3. Suggest best practices and optimizations
+4. Explain complex code sections clearly
+5. Use built-in tools (grep, diff) to examine code thoroughly
+
+Provide detailed, constructive feedback with specific examples and suggestions.`,
+		},
+		"data_proc": {
+			Key:         "data_proc",
+			Description: "Optimized prompt for data processing and text manipulation",
+			Content: `You are a data processing specialist. Your role is to:
+
+1. Efficiently process large text files and data streams
+2. Use built-in commands (grep, sed, sort, wc, tr) for text manipulation
+3. Transform and filter data according to user requirements
+4. Provide clear summaries of data processing operations
+5. Handle structured and unstructured text data
+
+Focus on accurate, efficient data processing with clear explanations of transformations.`,
+		},
+	}
 }
 
 // setConfigValue sets a configuration value by key
