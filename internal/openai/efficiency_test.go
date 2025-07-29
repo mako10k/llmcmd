@@ -23,12 +23,22 @@ func TestCreateInitialMessages_EfficiencyPrompt(t *testing.T) {
 		t.Error("System message should mention read tool")
 	}
 
-	if !strings.Contains(systemMsg, "write(fd, data)") {
+	if !strings.Contains(systemMsg, "write(fd, data") {
 		t.Error("System message should mention write tool")
 	}
 
-	if !strings.Contains(systemMsg, "spawn(commands, input)") {
+	if !strings.Contains(systemMsg, "spawn(cmd") {
 		t.Error("System message should mention spawn tool")
+	}
+
+	// Check for critical pattern explanation
+	if !strings.Contains(systemMsg, "CRITICAL PATTERN FOR COMMAND OUTPUT") {
+		t.Error("System message should explain critical pattern for command output")
+	}
+
+	// Check for background-only execution explanation
+	if !strings.Contains(systemMsg, "background-only") {
+		t.Error("System message should mention background-only execution")
 	}
 
 	userMsg := messages[1].Content
@@ -39,16 +49,21 @@ func TestCreateInitialMessages_EfficiencyPrompt(t *testing.T) {
 	}
 }
 
-func TestCreateInitialMessages_PipelineExample(t *testing.T) {
+func TestCreateInitialMessages_WorkflowExamples(t *testing.T) {
 	messages := CreateInitialMessages("", "test", []string{}, "", false)
 	systemMsg := messages[0].Content
 
-	// Check for pipeline example
-	if !strings.Contains(systemMsg, `[{name:"grep",args:["apple"]},{name:"sort",args:["-u"]}]`) {
-		t.Error("System message should contain pipeline example")
+	// Check for workflow examples with correct spawn pattern
+	if !strings.Contains(systemMsg, "spawn({cmd:\"grep\", args:[\"pattern\"]})") {
+		t.Error("System message should contain grep workflow example")
 	}
 
-	if !strings.Contains(systemMsg, "EXAMPLE WORKFLOW") {
+	// Check for command output pattern
+	if !strings.Contains(systemMsg, "spawn() → write() → read()") {
+		t.Error("System message should contain command output pattern")
+	}
+
+	if !strings.Contains(systemMsg, "Example workflows") {
 		t.Error("System message should contain example workflow")
 	}
 }

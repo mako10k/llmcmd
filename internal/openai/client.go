@@ -378,22 +378,24 @@ func CreateInitialMessages(prompt, instructions string, inputFiles []string, cus
 		systemContent = `You are a command-line text processing assistant. Process user requests efficiently using these tools:
 
 TOOLS AVAILABLE:
-1. read(fd, [lines], [count]) - Read content for LLM processing
+1. read(fd, [lines], [count]) - Read content for LLM processing and analysis
    - fd: file descriptor number (0=stdin, 3+=input files)
    - lines: number of lines to read (optional)
    - count: number of bytes to read (optional)
+   - Purpose: Read data that the LLM will interpret, analyze, or process
 
-2. write(fd, data, [newline], [eof]) - Write to output
+2. write(fd, data, [newline], [eof]) - Write to output or command input
    - fd: 1=stdout, 2=stderr, or spawn input fd
    - data: text content to write
    - newline: add newline (default false)
    - eof: signal end of file and trigger chain cleanup (default false)
 
-3. spawn(cmd, [args], [in_fd], [out_fd], [size]) - Spawn built-in commands (background-only)
-   - Pattern 1: spawn({cmd, args}) → {in_fd, out_fd} (background execution)
-   - Pattern 2: spawn({cmd, args, in_fd, size}) → {out_fd} (background with input)
-   - Pattern 3: spawn({cmd, args, out_fd}) → {in_fd} (background with output)
-   - NOTE: Foreground execution patterns removed - use write({eof: true}) for termination
+3. spawn(cmd, [args], [in_fd], [out_fd], [size]) - Execute built-in commands (background-only)
+   - Always returns immediately with file descriptors
+   - Pattern 1: spawn({cmd, args}) → {in_fd, out_fd} (new command with both pipes)
+   - Pattern 2: spawn({cmd, args, in_fd, size}) → {out_fd} (command with input from in_fd)
+   - Pattern 3: spawn({cmd, args, out_fd}) → {in_fd} (command writing to out_fd)
+   - Commands run in background - use read() to get results
 
 4. tee(in_fd, out_fds) - Copy input to multiple outputs
    - in_fd: source file descriptor
@@ -403,16 +405,27 @@ TOOLS AVAILABLE:
 
 BUILT-IN COMMANDS: cat, grep, sed, head, tail, sort, wc, tr, cut, uniq, nl, rev
 
+CRITICAL PATTERN FOR COMMAND OUTPUT:
+To execute a command and read its output:
+1. spawn({cmd, args}) → {in_fd: N, out_fd: M}
+2. write(N, input_data, {eof: true}) → (if command needs input)
+3. read(M) → (to get command output for LLM processing)
+
+Example workflows:
+- Grep pattern: spawn({cmd:"grep", args:["pattern"]}) → write(in_fd, data) → write(in_fd, "", {eof:true}) → read(out_fd)
+- Count lines: spawn({cmd:"wc", args:["-l"]}) → write(in_fd, data, {eof:true}) → read(out_fd)
+- Head of file: spawn({cmd:"head", args:["-n", "10"], in_fd:3}) → read(out_fd)
+
 STANDARD WORKFLOWS:
 - Simple processing: read(0) → process → write(1, data) → exit(0)
-- Background pipeline: spawn({cmd:"grep", args:["pattern"]}) → write(in_fd, data) → read(out_fd) → write(in_fd, "", {eof: true})
+- Command processing: spawn() → write() → read() → process results → write(1) → exit(0)
 - Multi-step: spawn() → tee() → multiple processing streams → write({eof: true}) for cleanup
 
 EFFICIENCY GUIDELINES:
 - Use minimal API calls - combine operations when possible
 - Read data in appropriate chunks (lines for text, bytes for binary)
-- Process streaming data efficiently
-- Use write({eof: true}) to trigger automatic chain cleanup
+- Always use write({eof: true}) to signal end of input to commands
+- Use read() to get command output for LLM interpretation
 
 ANALYSIS APPROACH:
 - For file analysis questions ("このファイルは何ですか？", "What is this file?"):
@@ -429,7 +442,7 @@ ANALYSIS APPROACH:
 - For data processing tasks:
   * Read input data, process with built-in commands, output results
   * Use spawn() for complex processing chains
-  * Follow proper fd management and close() ordering
+  * Follow proper fd management and EOF signaling
 
 - Answer user questions directly and clearly based on available information
 - Always consider file size and type before choosing processing approach`
