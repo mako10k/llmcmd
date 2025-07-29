@@ -247,7 +247,6 @@ PRIVACY WARNING:
 BUILT-IN TOOLS:
     - read: Read from files or stdin with line/count controls
     - write: Write to files or stdout with newline options
-    - fstat: Get file statistics and metadata
     - pipe: Execute secure built-in text processing commands
     - exit: Clean program termination
 

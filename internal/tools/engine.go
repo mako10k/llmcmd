@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/mako10k/llmcmd/internal/tools/builtin"
@@ -31,6 +32,61 @@ type PipeInput struct {
 	Data string `json:"data"` // raw input data
 }
 
+// isBinaryFile checks if a file is binary by examining its extension and content
+func isBinaryFile(filename string) bool {
+	// Check common binary file extensions
+	ext := strings.ToLower(filepath.Ext(filename))
+	binaryExts := []string{
+		".exe", ".dll", ".so", ".dylib", ".a", ".o", ".obj",
+		".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
+		".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".ico",
+		".mp3", ".wav", ".ogg", ".flac", ".aac", ".wma",
+		".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv",
+		".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+		".bin", ".iso", ".img", ".dmg",
+	}
+
+	for _, binaryExt := range binaryExts {
+		if ext == binaryExt {
+			return true
+		}
+	}
+
+	// Check file content for binary data
+	file, err := os.Open(filename)
+	if err != nil {
+		// If we can't open it, assume it's text and let the error be handled later
+		return false
+	}
+	defer file.Close()
+
+	// Read first 512 bytes to check for binary content
+	buffer := make([]byte, 512)
+	n, err := file.Read(buffer)
+	if err != nil && err != io.EOF {
+		return false
+	}
+
+	// Check for null bytes or high percentage of non-printable characters
+	nullBytes := 0
+	nonPrintable := 0
+	for i := 0; i < n; i++ {
+		if buffer[i] == 0 {
+			nullBytes++
+		}
+		if buffer[i] < 32 && buffer[i] != 9 && buffer[i] != 10 && buffer[i] != 13 {
+			nonPrintable++
+		}
+	}
+
+	// If more than 30% non-printable characters or any null bytes, consider binary
+	if nullBytes > 0 || (float64(nonPrintable)/float64(n)) > 0.30 {
+		return true
+	}
+
+	return false
+}
+
 // Engine handles tool execution for llmcmd
 type Engine struct {
 	inputFiles      []*os.File
@@ -48,7 +104,6 @@ type ExecutionStats struct {
 	WriteCalls   int   `json:"write_calls"`
 	PipeCalls    int   `json:"pipe_calls"`
 	ExitCalls    int   `json:"exit_calls"`
-	FstatCalls   int   `json:"fstat_calls"`
 	BytesRead    int64 `json:"bytes_read"`
 	BytesWritten int64 `json:"bytes_written"`
 	ErrorCount   int   `json:"error_count"`
@@ -84,6 +139,11 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 			// "-" means stdin, so add stdin as an additional file descriptor
 			engine.fileDescriptors = append(engine.fileDescriptors, os.Stdin)
 		} else {
+			// Check if file is binary before opening
+			if isBinaryFile(filename) {
+				return nil, fmt.Errorf("binary file detected: %s - llmcmd only supports text files for security and cost reasons", filename)
+			}
+
 			file, err := os.Open(filename)
 			if err != nil {
 				return nil, fmt.Errorf("failed to open input file %s: %w", filename, err)
@@ -166,8 +226,6 @@ func (e *Engine) ExecuteToolCall(toolCall map[string]interface{}) (string, error
 		return e.executePipe(args)
 	case "exit":
 		return e.executeExit(args)
-	case "fstat":
-		return e.executeFstat(args)
 	default:
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("unknown function: %s", functionName)
@@ -432,87 +490,4 @@ func (e *Engine) readLines(fd int, lines int) (string, error) {
 	resultStr := result.String()
 	e.stats.BytesRead += int64(len(resultStr))
 	return resultStr, nil
-}
-
-// executeFstat implements the fstat tool
-func (e *Engine) executeFstat(args map[string]interface{}) (string, error) {
-	e.stats.FstatCalls++
-
-	// Extract file descriptor
-	fdFloat, ok := args["fd"].(float64)
-	if !ok {
-		e.stats.ErrorCount++
-		return "", fmt.Errorf("fstat: fd parameter must be a number")
-	}
-	fd := int(fdFloat)
-
-	// Check if file descriptor is valid
-	if fd < 0 || fd >= len(e.fileDescriptors) {
-		e.stats.ErrorCount++
-		return "", fmt.Errorf("fstat: invalid file descriptor %d", fd)
-	}
-
-	// Build file information response
-	var info map[string]interface{}
-
-	switch fd {
-	case 0:
-		info = map[string]interface{}{
-			"fd":       0,
-			"type":     "stdin",
-			"name":     "stdin",
-			"readable": true,
-			"writable": false,
-		}
-	case 1:
-		info = map[string]interface{}{
-			"fd":       1,
-			"type":     "stdout",
-			"name":     "stdout",
-			"readable": false,
-			"writable": true,
-		}
-	case 2:
-		info = map[string]interface{}{
-			"fd":       2,
-			"type":     "stderr",
-			"name":     "stderr",
-			"readable": false,
-			"writable": true,
-		}
-	default:
-		// Input files (fd >= 3)
-		fileIndex := fd - 3
-		if fileIndex < len(e.inputFiles) && e.inputFiles[fileIndex] != nil {
-			file := e.inputFiles[fileIndex]
-			stat, err := file.Stat()
-			if err != nil {
-				e.stats.ErrorCount++
-				return "", fmt.Errorf("fstat: could not stat file: %w", err)
-			}
-
-			info = map[string]interface{}{
-				"fd":       fd,
-				"type":     "file",
-				"name":     file.Name(),
-				"readable": true,
-				"writable": false,
-				"size":     stat.Size(),
-				"mode":     stat.Mode().String(),
-				"modtime":  stat.ModTime().Unix(),
-			}
-		} else {
-			e.stats.ErrorCount++
-			return "", fmt.Errorf("fstat: file descriptor %d not open", fd)
-		}
-	}
-
-	// Convert to JSON string
-	jsonBytes, err := json.Marshal(info)
-	if err != nil {
-		e.stats.ErrorCount++
-		return "", fmt.Errorf("fstat: failed to marshal response: %w", err)
-	}
-
-	return string(jsonBytes), nil
 }

@@ -261,23 +261,5 @@ func ToolDefinitions() []Tool {
 				},
 			},
 		},
-		{
-			Type: "function",
-			Function: ToolFunction{
-				Name:        "fstat",
-				Description: "Get file information and statistics for a file descriptor",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"fd": map[string]interface{}{
-							"type":        "integer",
-							"description": "File descriptor number (0=stdin, 3+=input files)",
-							"minimum":     0,
-						},
-					},
-					"required": []string{"fd"},
-				},
-			},
-		},
 	}
 }
