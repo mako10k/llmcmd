@@ -43,7 +43,11 @@ jobs:
           output_name="${output_name}.exe"
         fi
         
-        go build -ldflags="-w -s" -o "$output_name" ./cmd/llmcmd
+        # Ensure the directory exists
+        ls -la cmd/
+        ls -la cmd/llmcmd/
+        
+        go build -ldflags="-w -s" -o "$output_name" ./cmd/llmcmd/main.go
         
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
