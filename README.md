@@ -144,6 +144,34 @@ Settings are applied in this order (highest to lowest priority):
 3. Environment variables
 4. Default values
 
+## Security Considerations
+
+⚠️ **Important Privacy Notice**
+
+When using llmcmd, be aware that:
+
+- **All input data is sent to OpenAI's API** for processing
+- **Sensitive information** (passwords, API keys, personal data) in your input files or stdin will be transmitted to OpenAI
+- **Configuration files** containing secrets should not be processed directly
+- **Log files** may contain sensitive data - use `-v` (verbose) option with caution
+
+### Best Practices
+
+```bash
+# ❌ DON'T: Process files containing sensitive data
+llmcmd -i ~/.ssh/private_key "analyze this file"
+llmcmd -i database_passwords.txt "summarize this"
+
+# ✅ DO: Sanitize or exclude sensitive content first
+grep -v "password\|secret\|key" config.txt | llmcmd "analyze this configuration"
+```
+
+### Data Handling
+
+- **Your responsibility**: Ensure no sensitive data is sent to the API
+- **OpenAI's policies**: Refer to [OpenAI's Privacy Policy](https://openai.com/privacy) for data handling details
+- **Logging**: Disable verbose logging (`-v`) when processing sensitive content
+
 ## Usage
 
 ### 基本的な使い方
