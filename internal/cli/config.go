@@ -108,61 +108,25 @@ func setConfigValue(config *ConfigFile, key, value string) error {
 	case "model":
 		config.Model = value
 	case "max_tokens":
-		if val, err := parseInt(value); err != nil {
-			return fmt.Errorf("invalid max_tokens: %w", err)
-		} else {
-			config.MaxTokens = val
-		}
+		return parseAndAssignInt(value, "max_tokens", func(val int) { config.MaxTokens = val })
 	case "temperature":
-		if val, err := parseFloat(value); err != nil {
-			return fmt.Errorf("invalid temperature: %w", err)
-		} else {
-			config.Temperature = val
-		}
+		return parseAndAssignFloat(value, "temperature", func(val float64) { config.Temperature = val })
 	case "max_api_calls":
-		if val, err := parseInt(value); err != nil {
-			return fmt.Errorf("invalid max_api_calls: %w", err)
-		} else {
-			config.MaxAPICalls = val
-		}
+		return parseAndAssignInt(value, "max_api_calls", func(val int) { config.MaxAPICalls = val })
 	case "timeout_seconds":
-		if val, err := parseInt(value); err != nil {
-			return fmt.Errorf("invalid timeout_seconds: %w", err)
-		} else {
-			config.TimeoutSeconds = val
-		}
+		return parseAndAssignInt(value, "timeout_seconds", func(val int) { config.TimeoutSeconds = val })
 	case "max_file_size":
-		if val, err := parseInt64(value); err != nil {
-			return fmt.Errorf("invalid max_file_size: %w", err)
-		} else {
-			config.MaxFileSize = val
-		}
+		return parseAndAssignInt64(value, "max_file_size", func(val int64) { config.MaxFileSize = val })
 	case "read_buffer_size":
-		if val, err := parseInt(value); err != nil {
-			return fmt.Errorf("invalid read_buffer_size: %w", err)
-		} else {
-			config.ReadBufferSize = val
-		}
+		return parseAndAssignInt(value, "read_buffer_size", func(val int) { config.ReadBufferSize = val })
 	case "max_retries":
-		if val, err := parseInt(value); err != nil {
-			return fmt.Errorf("invalid max_retries: %w", err)
-		} else {
-			config.MaxRetries = val
-		}
+		return parseAndAssignInt(value, "max_retries", func(val int) { config.MaxRetries = val })
 	case "retry_delay_ms":
-		if val, err := parseInt(value); err != nil {
-			return fmt.Errorf("invalid retry_delay_ms: %w", err)
-		} else {
-			config.RetryDelay = val
-		}
+		return parseAndAssignInt(value, "retry_delay_ms", func(val int) { config.RetryDelay = val })
 	case "system_prompt":
 		config.SystemPrompt = value
 	case "disable_tools":
-		if val, err := parseBool(value); err != nil {
-			return fmt.Errorf("invalid disable_tools: %w", err)
-		} else {
-			config.DisableTools = val
-		}
+		return parseAndAssignBool(value, "disable_tools", func(val bool) { config.DisableTools = val })
 	default:
 		return fmt.Errorf("unknown config key: %s", key)
 	}
@@ -197,6 +161,46 @@ func parseBool(s string) (bool, error) {
 	default:
 		return false, fmt.Errorf("invalid boolean value: %s", s)
 	}
+}
+
+// parseAndAssignInt parses an integer value and assigns it via a setter function
+func parseAndAssignInt(value string, fieldName string, setter func(int)) error {
+	if val, err := parseInt(value); err != nil {
+		return fmt.Errorf("invalid %s: %w", fieldName, err)
+	} else {
+		setter(val)
+	}
+	return nil
+}
+
+// parseAndAssignInt64 parses an int64 value and assigns it via a setter function
+func parseAndAssignInt64(value string, fieldName string, setter func(int64)) error {
+	if val, err := parseInt64(value); err != nil {
+		return fmt.Errorf("invalid %s: %w", fieldName, err)
+	} else {
+		setter(val)
+	}
+	return nil
+}
+
+// parseAndAssignFloat parses a float value and assigns it via a setter function
+func parseAndAssignFloat(value string, fieldName string, setter func(float64)) error {
+	if val, err := parseFloat(value); err != nil {
+		return fmt.Errorf("invalid %s: %w", fieldName, err)
+	} else {
+		setter(val)
+	}
+	return nil
+}
+
+// parseAndAssignBool parses a boolean value and assigns it via a setter function
+func parseAndAssignBool(value string, fieldName string, setter func(bool)) error {
+	if val, err := parseBool(value); err != nil {
+		return fmt.Errorf("invalid %s: %w", fieldName, err)
+	} else {
+		setter(val)
+	}
+	return nil
 }
 
 // LoadEnvironmentConfig loads configuration from environment variables

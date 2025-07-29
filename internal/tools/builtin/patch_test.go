@@ -56,8 +56,8 @@ line 3
 line 3`,
 		},
 		{
-			name: "validation mode success",
-			args: []string{"--validate"},
+			name: "dry-run mode success",
+			args: []string{"--dry-run"},
 			input: `line 1
 line 2
 line 3
@@ -65,11 +65,11 @@ line 3
 @@ -2,1 +2,1 @@
 -line 2
 +modified line 2`,
-			expectedOutput: "VALIDATION SUCCESS: patch can be applied cleanly\n",
+			expectedOutput: "DRY-RUN SUCCESS: patch can be applied cleanly\n",
 		},
 		{
-			name: "validation mode failure",
-			args: []string{"--validate"},
+			name: "dry-run mode failure",
+			args: []string{"--dry-run"},
 			input: `line 1
 line 2
 line 3
@@ -77,7 +77,7 @@ line 3
 @@ -2,1 +2,1 @@
 -line 4
 +modified line 2`,
-			expectedOutput: "VALIDATION FAILED: chunk 1 validation failed: delete mismatch at line 2: expected \"line 4\", got \"line 2\"\n",
+			expectedOutput: "DRY-RUN FAILED: chunk 1 validation failed: delete mismatch at line 2: expected \"line 4\", got \"line 2\"\n",
 		},
 		{
 			name:          "missing separator",
@@ -103,10 +103,10 @@ line 3
 			input: "",
 			expectedOutput: `patch - Apply unified diff patches to text
 
-Usage: patch [--validate]
+Usage: patch [--dry-run]
 
 Options:
-  --validate, -v    Validate patch without applying (pre-validation mode)
+  --dry-run         Don't actually apply patch (validation only)
   --help, -h        Show this help message
 
 Input format: original_text + ---LLMCMD_PATCH_SEPARATOR--- + patch_content

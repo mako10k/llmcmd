@@ -290,6 +290,37 @@ func (e *Engine) allocateFd() int {
 	return fd
 }
 
+// spawnError creates a standardized spawn error with stats increment
+func (e *Engine) spawnError(message string, err error) (string, error) {
+	e.stats.ErrorCount++
+	return "", fmt.Errorf("spawn: %s: %w", message, err)
+}
+
+// spawnSuccess creates a standardized spawn success result
+func (e *Engine) spawnSuccess(result map[string]interface{}) (string, error) {
+	resultBytes, _ := json.Marshal(result)
+	return string(resultBytes), nil
+}
+
+// createRunningCommand creates and stores a new RunningCommand
+func (e *Engine) createRunningCommand(cmd string, args []string, fd int, inputFd, outputFd int, stdin io.WriteCloser, stdout io.ReadCloser) *RunningCommand {
+	runningCmd := &RunningCommand{
+		stdin:       stdin,
+		stdout:      stdout,
+		done:        make(chan error, 1),
+		inputFd:     inputFd,
+		outputFd:    outputFd,
+		pid:         fd, // Use fd as pseudo-pid
+		commandName: fmt.Sprintf("%s %v", cmd, args),
+	}
+	
+	e.commandsMutex.Lock()
+	e.runningCommands[fd] = runningCmd
+	e.commandsMutex.Unlock()
+	
+	return runningCmd
+}
+
 // startBackgroundCommand starts a built-in command in the background and returns file descriptors
 func (e *Engine) startBackgroundCommand(cmd string, args []string) (int, int, error) {
 	// Create pipes for communication
@@ -386,20 +417,8 @@ func (e *Engine) startBackgroundCommandWithInput(cmd string, args []string, inpu
 	// Allocate output file descriptor
 	outFd := e.allocateFd()
 
-	// Create running command tracker
-	runningCmd := &RunningCommand{
-		stdout:      outReader,
-		done:        make(chan error, 1),
-		inputFd:     inputFd,
-		outputFd:    outFd,
-		pid:         outFd, // Use fd as pseudo-pid
-		commandName: fmt.Sprintf("%s %v", cmd, args),
-	}
-
-	// Store the command
-	e.commandsMutex.Lock()
-	e.runningCommands[outFd] = runningCmd
-	e.commandsMutex.Unlock()
+	// Create and store running command tracker
+	runningCmd := e.createRunningCommand(cmd, args, outFd, inputFd, outFd, nil, outReader)
 
 	// Extend file descriptors array if needed
 	for len(e.fileDescriptors) <= outFd {
@@ -483,19 +502,8 @@ func (e *Engine) startBackgroundCommandWithOutput(cmd string, args []string, out
 		return 0, fmt.Errorf("invalid output file descriptor: %d", outputFd)
 	}
 
-	// Create running command tracker
-	runningCmd := &RunningCommand{
-		stdin:       inWriter,
-		done:        make(chan error, 1),
-		inputFd:     inFd,
-		outputFd:    outputFd,
-		pid:         inFd, // Use fd as pseudo-pid
-		commandName: fmt.Sprintf("%s %v", cmd, args),
-	}
-
-	// Store the command
-	e.commandsMutex.Lock()
-	e.runningCommands[inFd] = runningCmd
+	// Create and store running command tracker
+	runningCmd := e.createRunningCommand(cmd, args, inFd, inFd, outputFd, inWriter, nil)
 	e.commandsMutex.Unlock()
 
 	// Start goroutine to execute built-in command
@@ -690,6 +698,16 @@ func (e *Engine) executeWrite(args map[string]interface{}) (string, error) {
 	// Get the appropriate writer
 	var writer io.Writer
 	switch fd {
+	case 0: // stdin - check if it's a running command's input fd
+		e.commandsMutex.RLock()
+		if runningCmd, exists := e.runningCommands[fd]; exists && runningCmd.stdin != nil {
+			writer = runningCmd.stdin
+			e.commandsMutex.RUnlock()
+		} else {
+			e.commandsMutex.RUnlock()
+			e.stats.ErrorCount++
+			return "", fmt.Errorf("write: stdin (fd 0) is not available for writing")
+		}
 	case 1: // stdout
 		if e.outputFile != nil {
 			writer = e.outputFile
@@ -811,8 +829,7 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 		// Start background command with real pipes
 		realInFd, realOutFd, err := e.startBackgroundCommand(cmd, cmdArgs)
 		if err != nil {
-			e.stats.ErrorCount++
-			return "", fmt.Errorf("spawn: failed to start background command: %w", err)
+			return e.spawnError("failed to start background command", err)
 		}
 
 		// Record the dependency relationship
@@ -820,8 +837,7 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 
 		result["in_fd"] = realInFd
 		result["out_fd"] = realOutFd
-		return fmt.Sprintf("Background command '%s' started with pid %d", cmd,
-			e.runningCommands[realInFd].pid), nil
+		return e.spawnSuccess(result)
 	}
 
 	// Pattern 2: spawn({cmd:...,args:...,in_fd:...,size:1234}) -> {success:true,out_fd:...}
@@ -830,13 +846,12 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 		// Start background command that reads from existing in_fd
 		realOutFd, err := e.startBackgroundCommandWithInput(cmd, cmdArgs, *inFd, *size)
 		if err != nil {
-			e.stats.ErrorCount++
-			return "", fmt.Errorf("spawn: failed to start background command with input: %w", err)
+			return e.spawnError("failed to start background command with input", err)
 		}
 
 		result["out_fd"] = realOutFd
 		result["in_size"] = *size
-		return fmt.Sprintf("Command '%s' started with input from fd %d", cmd, *inFd), nil
+		return e.spawnSuccess(result)
 	}
 
 	// Pattern 3: spawn({cmd:...,args:...,out_fd:...}) -> {success:true,in_fd:...}
@@ -845,24 +860,33 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 		// Start background command that writes to existing out_fd
 		realInFd, err := e.startBackgroundCommandWithOutput(cmd, cmdArgs, *outFd)
 		if err != nil {
-			e.stats.ErrorCount++
-			return "", fmt.Errorf("spawn: failed to start background command with output: %w", err)
+			return e.spawnError("failed to start background command with output", err)
 		}
 
 		result["in_fd"] = realInFd
-		return fmt.Sprintf("Command '%s' started with output to fd %d", cmd, *outFd), nil
+		return e.spawnSuccess(result)
 	}
 
 	// Pattern 4: spawn({cmd:...,args:...,in_fd:...,out_fd:...}) -> Error (removed foreground execution)
 	// Foreground execution patterns are no longer supported
 	if inFd != nil && outFd != nil {
-		e.stats.ErrorCount++
-		return "", fmt.Errorf("spawn: foreground execution patterns are not supported - use background-only execution and write({eof: true}) for termination")
+		return e.spawnError("foreground execution patterns are not supported - use background-only execution and write({eof: true}) for termination", fmt.Errorf("invalid pattern"))
 	}
 
-	// Invalid parameter combination
-	e.stats.ErrorCount++
-	return "", fmt.Errorf("spawn: invalid parameter combination")
+	// If we reach here, it means we have a valid parameter combination that should work
+	// Let the builtin command handle its own validation
+	// Fall back to Pattern 1 for any remaining cases
+	realInFd, realOutFd, err := e.startBackgroundCommand(cmd, cmdArgs)
+	if err != nil {
+		return e.spawnError("failed to start background command", err)
+	}
+
+	// Record the dependency relationship
+	e.addFdDependency(realInFd, []int{realOutFd}, "spawn")
+
+	result["in_fd"] = realInFd
+	result["out_fd"] = realOutFd
+	return e.spawnSuccess(result)
 }
 
 // executeBuiltinCommand executes a single built-in command

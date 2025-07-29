@@ -13,7 +13,7 @@ func executeTool(engine *tools.Engine, functionName string, args map[string]inte
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal arguments: %w", err)
 	}
-	
+
 	toolCall := map[string]interface{}{
 		"name":      functionName,
 		"arguments": string(argsBytes),
@@ -54,8 +54,8 @@ func main() {
 
 	// Wait a moment for command to process
 	fmt.Println("Waiting for command to process...")
-	
-	// Check all file descriptors 
+
+	// Check all file descriptors
 	fmt.Println("\n2. Checking all file descriptors...")
 	for fd := 0; fd <= 20; fd++ {
 		output, err := executeTool(engine, "read", map[string]interface{}{
