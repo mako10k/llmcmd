@@ -1,14 +1,21 @@
 # llmcmd - LLM Command Line Tool
 
-A secure command-line tool that enables Large Language Models to execute text processing tasks using the OpenAI ChatCompletion API.
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/mako10k/llmcmd/releases)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/go-1.21+-blue.svg)](https://golang.org/)
+
+A secure command-line tool that enables Large Language Models to execute text processing tasks using the OpenAI ChatCompletion API with specialized prompt presets.
 
 ## Overview
 
 `llmcmd` is a command-line tool that allows you to instruct large language models (LLMs) to perform tasks using built-in tools for file operations and text processing. All operations are sandboxed and secure, with no external command execution.
 
+**Version 2.0.0** introduces the **Preset Prompt System** - specialized prompts optimized for different task types, enabling more accurate and context-appropriate responses for technical operations, code analysis, data processing, and general tasks.
+
 ## Features
 
 - **Natural Language Interface**: Instruct tasks in plain language
+- **Preset Prompt System**: Specialized prompts for different task types (general, diff/patch, code review, data processing)
 - **Smart File Analysis**: Automatic file information pre-loading and size/type detection
 - **Secure Built-in Tools**: File reading/writing, text processing pipelines
 - **No External Commands**: All operations use built-in functions only
@@ -119,9 +126,32 @@ read_buffer_size=4096     # 4KB
 max_retries=3
 retry_delay_ms=1000
 
+# Prompt Configuration
+default_prompt=general     # Default preset to use when no --prompt or --preset specified
+
 # Advanced Options
 # system_prompt=           # Custom system prompt
 # disable_tools=false      # Disable LLM tools
+```
+
+#### Custom Preset Configuration
+
+You can define custom presets in your configuration file using JSON format:
+
+```ini
+# Custom presets (JSON format)
+prompt_presets={
+  "my_custom": {
+    "key": "my_custom",
+    "description": "My custom prompt for specific tasks",
+    "content": "You are a specialist for my specific use case..."
+  },
+  "debug": {
+    "key": "debug", 
+    "description": "Debug-focused prompt with detailed logging",
+    "content": "You are a debugging assistant. Provide detailed step-by-step analysis..."
+  }
+}
 ```
 
 ### Environment Variables
@@ -175,62 +205,131 @@ grep -v "password\|secret\|key" config.txt | llmcmd "analyze this configuration"
 
 ## Usage
 
-### 基本的な使い方
+### Basic Usage
 
 ```bash
-llmcmd "指示内容"
+# Use default general-purpose prompt
+llmcmd "your instructions here"
+
+# Use specific preset for specialized tasks
+llmcmd --preset diff_patch "compare these files"
+llmcmd -r code_review "analyze this code"
 ```
 
-### オプション
+### Command Line Options
 
 ```bash
 llmcmd [options] <instructions>
 
 Options:
-  -p, --prompt string   LLMへの指示
-  -i, --input string    入力ファイル
-  -o, --output string   出力ファイル
-  -v, --verbose         冗長出力
-  -V, --version         バージョン表示
-  -h, --help            ヘルプ表示
+  -p, --prompt <text>     LLM prompt/instructions (free text)
+  -r, --preset <key>      Use predefined prompt preset (see --list-presets)
+  --list-presets          List available prompt presets and exit
+  -i, --input <file>      Input file path (can be specified multiple times)
+  -o, --output <file>     Output file path  
+  -c, --config <file>     Configuration file path (default: ~/.llmcmdrc)
+  -v, --verbose           Enable verbose logging
+  -s, --stats             Show detailed statistics after execution
+  -n, --no-stdin          Skip reading from stdin
+  -h, --help              Show this help message
+  -V, --version           Show version information
 ```
 
-## 使用例
+### Preset Prompt System
 
-### ファイル変換
+llmcmd includes specialized prompts optimized for different task types:
 
 ```bash
-# CSVをJSON形式に変換
-llmcmd -i data.csv -o data.json "CSVファイルをJSON形式に変換してください"
+# List available presets
+llmcmd --list-presets
 
-# テキストファイルを整形
-llmcmd -i input.txt -o output.txt "テキストを整形し、重複行を削除してください"
+# Available presets:
+#   general      - General-purpose prompt for various tasks
+#   diff_patch   - Specialized prompt for diff/patch operations and file comparison
+#   code_review  - Focused prompt for code analysis and review tasks
+#   data_proc    - Optimized prompt for data processing and text manipulation
 ```
 
-### データ分析
+#### Preset Usage Examples
 
 ```bash
-# ログファイルの分析
-llmcmd -i access.log "ログファイルを分析し、エラーの統計を出力してください"
+# File comparison with specialized diff prompt
+llmcmd --preset diff_patch -i file1.txt -i file2.txt "Compare these files"
 
-# CSVデータの統計
-llmcmd -i sales.csv "売上データの月別統計を計算し、グラフ用のデータを生成してください"
+# Code analysis with review-focused prompt  
+llmcmd --preset code_review -i main.go "Analyze this code for potential issues"
+
+# Data processing with specialized prompt
+llmcmd --preset data_proc -i data.csv "Process this CSV and extract unique values"
+
+# General tasks (default behavior)
+llmcmd --preset general "Help me with this text transformation"
+# or simply:
+llmcmd "Help me with this text transformation"
 ```
 
-### 標準入出力の使用
+## Examples
+
+### File Operations
 
 ```bash
-# パイプライン処理
-cat data.txt | llmcmd "データを分析し、重要な情報を抽出してください"
+# Data conversion with general preset
+llmcmd -i data.csv -o data.json "Convert this CSV file to JSON format"
 
-# 複数ファイルの処理
-find . -name "*.log" | llmcmd "ログファイルのリストから、エラーを含むファイルを特定してください"
+# Text processing with data processing preset
+llmcmd --preset data_proc -i input.txt -o output.txt "Clean up text and remove duplicates"
 ```
 
-### スマートファイル分析の活用
+### Code Analysis
 
 ```bash
-# 大きなファイルの効率的な分析（自動でファイル情報が事前読み込みされます）
+# Code review with specialized preset
+llmcmd --preset code_review -i main.go "Analyze this code for potential issues and improvements"
+
+# Multiple file code analysis
+llmcmd --preset code_review -i *.go "Review all Go files for security vulnerabilities"
+```
+
+### File Comparison & Diff Operations
+
+```bash
+# File comparison with specialized diff preset
+llmcmd --preset diff_patch -i file1.txt -i file2.txt "Compare these files and show differences"
+
+# Apply patch with diff preset
+llmcmd --preset diff_patch -i changes.patch -i original.txt "Apply this patch to the file"
+
+# Generate patch file
+llmcmd --preset diff_patch -i old.txt -i new.txt -o changes.patch "Generate a patch file"
+```
+
+### Data Processing Tasks
+
+```bash
+# Log analysis with data processing preset
+llmcmd --preset data_proc -i access.log "Analyze log file and extract error statistics"
+
+# CSV data analysis with specialized preset
+llmcmd --preset data_proc -i sales.csv "Calculate monthly statistics and generate summary"
+```
+
+### Pipeline Operations
+
+```bash
+# Standard input/output processing
+cat data.txt | llmcmd --preset data_proc "Analyze and extract important information"
+
+# Multi-file processing
+find . -name "*.log" | llmcmd --preset data_proc "Identify files containing errors"
+```
+
+### Smart File Analysis
+
+```bash
+# Large file analysis (automatic file info preloading)
+llmcmd --preset data_proc -i large_dataset.csv "Summarize this dataset without loading all content"
+
+# Multiple file types with appropriate presets
 llmcmd -i large_data.csv "このCSVファイルの構造を分析し、適切な処理方法を提案してください"
 
 # 複数ファイルの統合処理（各ファイルの情報が事前に把握されます）

@@ -122,39 +122,45 @@
 
 ### Phase 1: Foundation (Days 1-3)
 - [x] Project structure and documentation
-- [ ] Go module initialization  
-- [ ] Basic CLI argument parsing
-- [ ] Configuration file loading
-- [ ] Logging infrastructure
+- [x] Go module initialization  
+- [x] Basic CLI argument parsing
+- [x] Configuration file loading
+- [x] Logging infrastructure
 
 ### Phase 2: OpenAI Integration (Days 4-7)
-- [ ] HTTP client implementation
-- [ ] OpenAI API type definitions
-- [ ] Authentication and error handling
-- [ ] Response parsing
-- [ ] Retry mechanisms
+- [x] HTTP client implementation
+- [x] OpenAI API type definitions
+- [x] Authentication and error handling
+- [x] Response parsing
+- [x] Retry mechanisms
 
 ### Phase 3: Tool Implementation (Days 8-13)
-- [ ] read tool: File/stream reading with fd management
-- [ ] write tool: File/stream writing with size tracking
-- [ ] spawn tool: Background-only command execution and data transfer
-- [ ] exit tool: Program termination with cleanup
+- [x] read tool: File/stream reading with fd management
+- [x] write tool: File/stream writing with size tracking
+- [x] spawn tool: Background-only command execution and data transfer
+- [x] exit tool: Program termination with cleanup
 
 ### Phase 4: Built-in Commands (Days 14-17)
-- [ ] cat: Data copying
-- [ ] grep: Pattern matching (basic regex)
-- [ ] sed: Text substitution (basic functionality)
-- [ ] head/tail: Line-based filtering
-- [ ] sort: Alphabetical sorting
-- [ ] wc: Counting (lines, words, characters)
-- [ ] tr: Character translation
+- [x] cat: Data copying
+- [x] grep: Pattern matching (basic regex)
+- [x] sed: Text substitution (basic functionality)
+- [x] head/tail: Line-based filtering
+- [x] sort: Alphabetical sorting
+- [x] wc: Counting (lines, words, characters)
+- [x] tr: Character translation
 
 ### Phase 5: Integration & Testing (Days 18-22)
-- [ ] Main application logic
-- [ ] Tool orchestration
-- [ ] Comprehensive error handling
-- [ ] Security feature integration
-- [ ] Performance optimization
+- [x] Main application logic
+- [x] Tool orchestration
+- [x] Comprehensive error handling
+- [x] Security feature integration
+- [x] Performance optimization
+
+### Additional Enhancement: Preset Prompt System
+- [x] Stage 1: CLI extension with --preset/-r flags
+- [x] Stage 2: Configuration file extension with preset definitions
+- [x] Stage 3: Preset resolution in application initialization
+- [x] Built-in diff/patch commands for technical operations
 
 ## Project Structure
 

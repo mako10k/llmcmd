@@ -20,6 +20,26 @@ retry_delay_ms=1000
 max_file_size=10485760    # 10MB
 read_buffer_size=4096     # 4KB
 
+# Prompt Configuration
+default_prompt=general    # Default preset: general, diff_patch, code_review, data_proc
+
+# Advanced Options
+# system_prompt=           # Override system prompt (advanced users only)
+# disable_tools=false      # Set to true to disable LLM function calling
+
+# Custom Presets (JSON format - optional)
+# prompt_presets={"my_preset":{"key":"my_preset","description":"My custom prompt","content":"You are..."}}
+
+# Example of a custom preset (uncomment and customize):
+# prompt_presets={
+#   "debug": {
+#     "key": "debug",
+#     "description": "Debugging-focused prompt with detailed analysis", 
+#     "content": "You are a debugging expert. Provide detailed step-by-step analysis with clear explanations of each operation and potential issues."
+#   }
+# }
+read_buffer_size=4096     # 4KB
+
 # Advanced Options
 # system_prompt=           # Custom system prompt (empty = default)
 # disable_tools=false      # Disable LLM tool usage
