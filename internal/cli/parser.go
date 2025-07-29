@@ -19,14 +19,13 @@ var (
 // Config holds all configuration for the application
 type Config struct {
 	// Command line options
-	Prompt      string   // -p: LLM prompt/instructions
-	InputFiles  []string // -i: Input file paths (can be specified multiple times)
-	OutputFile  string   // -o: Output file path
-	Verbose     bool     // -v: Verbose logging
-	ShowStats   bool     // --stats: Show detailed statistics
-	ConfigFile  string   // -c: Configuration file path
-	NoStdin     bool     // --no-stdin: Skip reading from stdin
-	NoNewline   bool     // --no-newline: Don't add newline to output
+	Prompt     string   // -p: LLM prompt/instructions
+	InputFiles []string // -i: Input file paths (can be specified multiple times)
+	OutputFile string   // -o: Output file path
+	Verbose    bool     // -v: Verbose logging
+	ShowStats  bool     // --stats: Show detailed statistics
+	ConfigFile string   // -c: Configuration file path
+	NoStdin    bool     // --no-stdin: Skip reading from stdin
 
 	// Positional arguments
 	Instructions string // Remaining arguments as instructions
@@ -43,32 +42,29 @@ func ParseArgs(args []string) (*Config, error) {
 	// Create a custom FlagSet to handle our specific requirements
 	fs := flag.NewFlagSet("llmcmd", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	
+
 	// Define flags with both short and long options where appropriate
 	fs.StringVar(&config.Prompt, "p", "", "LLM prompt/instructions")
 	fs.StringVar(&config.Prompt, "prompt", "", "LLM prompt/instructions")
-	
+
 	fs.Var(&inputFiles, "i", "Input file path (can be specified multiple times)")
 	fs.Var(&inputFiles, "input", "Input file path (can be specified multiple times)")
-	
+
 	fs.StringVar(&config.OutputFile, "o", "", "Output file path")
 	fs.StringVar(&config.OutputFile, "output", "", "Output file path")
-	
+
 	fs.StringVar(&config.ConfigFile, "c", "", "Configuration file path")
 	fs.StringVar(&config.ConfigFile, "config", "", "Configuration file path")
-	
+
 	fs.BoolVar(&config.Verbose, "v", false, "Enable verbose logging")
 	fs.BoolVar(&config.Verbose, "verbose", false, "Enable verbose logging")
-	
+
 	fs.BoolVar(&config.ShowStats, "s", false, "Show detailed statistics after execution")
 	fs.BoolVar(&config.ShowStats, "stats", false, "Show detailed statistics after execution")
-	
+
 	fs.BoolVar(&config.NoStdin, "n", false, "Skip reading from stdin")
 	fs.BoolVar(&config.NoStdin, "no-stdin", false, "Skip reading from stdin")
-	
-	fs.BoolVar(&config.NoNewline, "N", false, "Don't add newline to output")
-	fs.BoolVar(&config.NoNewline, "no-newline", false, "Don't add newline to output")
-	
+
 	// Handle help and version flags
 	var showHelp, showVersion, installSystem bool
 	fs.BoolVar(&showHelp, "h", false, "Show help")
@@ -96,7 +92,7 @@ func ParseArgs(args []string) (*Config, error) {
 
 	// Copy input files from the custom type
 	config.InputFiles = []string(inputFiles)
-	
+
 	// If no input files specified, default to stdin
 	if len(config.InputFiles) == 0 {
 		config.InputFiles = []string{"-"}
@@ -188,7 +184,6 @@ OPTIONS:
     -v, --verbose           Enable verbose logging
     -s, --stats             Show detailed statistics after execution
     -n, --no-stdin          Skip reading from stdin
-    -N, --no-newline        Don't add newline to output
     -h, --help          Show this help message
     -V, --version       Show version information
 

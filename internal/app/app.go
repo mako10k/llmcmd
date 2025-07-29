@@ -81,11 +81,6 @@ func (a *App) Run() error {
 		a.showStatistics()
 	}
 
-	// Add newline to output if not disabled
-	if !a.config.NoNewline && a.config.OutputFile == "" {
-		fmt.Print("\n")
-	}
-
 	return nil
 }
 
@@ -101,19 +96,19 @@ func (a *App) initializeOpenAI() error {
 	}
 
 	a.openaiClient = openai.NewClient(config)
-	
+
 	// Enable verbose mode in client stats
 	a.openaiClient.SetVerbose(a.config.Verbose)
 
 	if a.config.Verbose {
-		log.Printf("OpenAI client initialized (base URL: %s, model: %s)", 
+		log.Printf("OpenAI client initialized (base URL: %s, model: %s)",
 			a.fileConfig.OpenAIBaseURL, a.fileConfig.Model)
 	}
 
 	return nil
 }
 
-// initializeToolEngine initializes the tool execution engine  
+// initializeToolEngine initializes the tool execution engine
 func (a *App) initializeToolEngine() error {
 	config := tools.EngineConfig{
 		InputFiles:  a.config.InputFiles,
@@ -121,7 +116,6 @@ func (a *App) initializeToolEngine() error {
 		MaxFileSize: a.fileConfig.MaxFileSize,
 		BufferSize:  a.fileConfig.ReadBufferSize,
 		NoStdin:     a.config.NoStdin,
-		NoNewline:   a.config.NoNewline,
 	}
 
 	var err error
@@ -131,7 +125,7 @@ func (a *App) initializeToolEngine() error {
 	}
 
 	if a.config.Verbose {
-		log.Printf("Tool engine initialized (input files: %d, buffer size: %d)", 
+		log.Printf("Tool engine initialized (input files: %d, buffer size: %d)",
 			len(a.config.InputFiles), a.fileConfig.ReadBufferSize)
 	}
 
@@ -144,8 +138,8 @@ func (a *App) executeTask() error {
 
 	// Create initial messages
 	messages := openai.CreateInitialMessages(
-		a.config.Prompt, 
-		a.config.Instructions, 
+		a.config.Prompt,
+		a.config.Instructions,
 		a.config.InputFiles,
 		a.fileConfig.SystemPrompt,
 		a.fileConfig.DisableTools,
@@ -156,14 +150,14 @@ func (a *App) executeTask() error {
 	}
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 
+	ctx, cancel := context.WithTimeout(context.Background(),
 		time.Duration(a.fileConfig.TimeoutSeconds)*time.Second)
 	defer cancel()
 
 	// Main interaction loop
 	for {
 		a.iterationCount++
-		
+
 		// Create request
 		request := openai.ChatCompletionRequest{
 			Model:       a.fileConfig.Model,
@@ -171,7 +165,7 @@ func (a *App) executeTask() error {
 			MaxTokens:   a.fileConfig.MaxTokens,
 			Temperature: a.fileConfig.Temperature,
 		}
-		
+
 		// Add tools only if not disabled
 		if !a.fileConfig.DisableTools {
 			request.Tools = openai.ToolDefinitions()
@@ -190,7 +184,7 @@ func (a *App) executeTask() error {
 
 		if a.config.Verbose {
 			stats := a.openaiClient.GetStats()
-			log.Printf("API call completed (total: %d/%d, retries: %d, tokens: %d)", 
+			log.Printf("API call completed (total: %d/%d, retries: %d, tokens: %d)",
 				stats.RequestCount, a.fileConfig.MaxAPICalls, stats.RetryCount, response.Usage.TotalTokens)
 		}
 
@@ -201,7 +195,7 @@ func (a *App) executeTask() error {
 			if a.config.Verbose {
 				log.Printf("LLM completed normally (no tool calls)")
 			}
-			
+
 			// Output the LLM response directly when tools are disabled
 			if a.fileConfig.DisableTools && choice.Message.Content != "" {
 				var output io.Writer
@@ -221,12 +215,19 @@ func (a *App) executeTask() error {
 				} else {
 					output = os.Stdout
 				}
-				
+
 				if _, err := output.Write([]byte(choice.Message.Content)); err != nil {
 					return fmt.Errorf("failed to write output: %w", err)
 				}
+			} else if !a.fileConfig.DisableTools && choice.Message.Content != "" {
+				// Tools are enabled but LLM returned direct text instead of using tools
+				// This is usually an error in LLM behavior - log it in verbose mode
+				if a.config.Verbose {
+					log.Printf("Warning: LLM returned direct text instead of using tools: %s", choice.Message.Content)
+				}
+				// Don't output the content as it's likely instruction text, not the actual result
 			}
-			
+
 			return nil
 
 		case "tool_calls":
@@ -237,7 +238,7 @@ func (a *App) executeTask() error {
 				}
 				return nil
 			}
-			
+
 			if err := a.executeToolCalls(choice.Message.ToolCalls, &messages); err != nil {
 				// Check if this is an exit request
 				if strings.HasPrefix(err.Error(), "EXIT_REQUESTED:") {
@@ -264,7 +265,7 @@ func (a *App) executeToolCalls(toolCalls []openai.ToolCall, messages *[]openai.C
 
 	for _, toolCall := range toolCalls {
 		if a.config.Verbose {
-			log.Printf("Executing tool: %s (ID: %s) with args: %s", 
+			log.Printf("Executing tool: %s (ID: %s) with args: %s",
 				toolCall.Function.Name, toolCall.ID, toolCall.Function.Arguments)
 		}
 
@@ -311,7 +312,7 @@ func (a *App) GetExitCode() int {
 	return a.exitCode
 }
 
-// IsExitRequested returns whether exit was requested by exit tool  
+// IsExitRequested returns whether exit was requested by exit tool
 func (a *App) IsExitRequested() bool {
 	return a.exitRequested
 }
@@ -375,8 +376,8 @@ func (a *App) showStatistics() {
 
 	// OpenAI API Statistics
 	fmt.Fprintf(os.Stderr, "🤖 OPENAI API USAGE:\n")
-	fmt.Fprintf(os.Stderr, "   API Calls:          %d / %d (%.1f%%)\n", 
-		openaiStats.RequestCount, a.fileConfig.MaxAPICalls, 
+	fmt.Fprintf(os.Stderr, "   API Calls:          %d / %d (%.1f%%)\n",
+		openaiStats.RequestCount, a.fileConfig.MaxAPICalls,
 		float64(openaiStats.RequestCount)/float64(a.fileConfig.MaxAPICalls)*100)
 	fmt.Fprintf(os.Stderr, "   Total Retries:      %d\n", openaiStats.RetryCount)
 	fmt.Fprintf(os.Stderr, "   Total Tokens:       %d\n", openaiStats.TotalTokens)
@@ -409,10 +410,10 @@ func (a *App) showStatistics() {
 		fmt.Fprintf(os.Stderr, "⚡ EFFICIENCY METRICS:\n")
 		fmt.Fprintf(os.Stderr, "   API Calls/Iteration: %.2f\n", float64(openaiStats.RequestCount)/float64(a.iterationCount))
 		fmt.Fprintf(os.Stderr, "   Tools/API Call:      %.2f\n", float64(toolStats.ReadCalls+toolStats.WriteCalls+toolStats.PipeCalls+toolStats.ExitCalls)/float64(openaiStats.RequestCount))
-		
+
 		tokensPerSecond := float64(openaiStats.TotalTokens) / duration.Seconds()
 		fmt.Fprintf(os.Stderr, "   Tokens/Second:       %.1f\n", tokensPerSecond)
-		
+
 		if toolStats.BytesRead > 0 {
 			fmt.Fprintf(os.Stderr, "   Processing Rate:     %s/sec\n", formatBytes(int64(float64(toolStats.BytesRead)/duration.Seconds())))
 		}

@@ -1,18 +1,19 @@
 # llmcmd - LLM Command Line Tool
 
-OpenAI ChatCompletion APIを使用して、LLMがコマンドラインツールとして動作するためのプログラムです。
+A secure command-line tool that enables Large Language Models to execute text processing tasks using the OpenAI ChatCompletion API.
 
-## 概要
+## Overview
 
-`llmcmd`は、大規模言語モデル（LLM）に対してタスクを指示し、LLMが提供されたツールを使ってファイル操作やコマンド実行を行うことができるコマンドラインツールです。
+`llmcmd` is a command-line tool that allows you to instruct large language models (LLMs) to perform tasks using built-in tools for file operations and text processing. All operations are sandboxed and secure, with no external command execution.
 
-## 特徴
+## Features
 
-- **シンプルな使用方法**: 自然言語でタスクを指示
-- **豊富なツール**: ファイルの読み書き、外部コマンド実行、パイプ処理
-- **セキュリティ**: コマンド制限、ファイルサイズ制限
-- **クロスプラットフォーム**: Linux、macOS、Windows対応
-- **単一バイナリ**: 依存関係を含む実行ファイル
+- **Natural Language Interface**: Instruct tasks in plain language
+- **Secure Built-in Tools**: File reading/writing, text processing, statistics
+- **No External Commands**: All operations use built-in functions only
+- **Cross-platform**: Linux, macOS, Windows support
+- **Single Binary**: Self-contained executable with no dependencies
+- **API Integration**: Powered by OpenAI ChatCompletion API with function calling
 
 ## Installation
 
@@ -149,45 +150,84 @@ cat data.txt | llmcmd "データを分析し、重要な情報を抽出してく
 find . -name "*.log" | llmcmd "ログファイルのリストから、エラーを含むファイルを特定してください"
 ```
 
-## LLMが使用できるツール
+## Available Tools for LLM
 
-### read(in_id, offset, size)
-ファイルまたは入力ストリームからデータを読み取ります。
+### read(fd, count|lines)
+Reads data from file descriptors or streams.
 
+**Parameters**:
+- `fd`: File descriptor number (0=stdin, 3+=input files)
+- `count`: Number of bytes to read (1-4096, default: 4096)
+- `lines`: Number of lines to read (1-1000, default: 40) - alternative to count
+
+**Response example**:
 ```json
 {
-  "input": "読み取ったデータ",
-  "next_offset": 1024,
-  "eof": true,
+  "input": "read data content",
+  "size": 1024
+}
+```
+
+### write(fd, data, newline)
+Writes data to file descriptors or output streams.
+
+**Parameters**:
+- `fd`: File descriptor number (1=stdout, 2=stderr)
+- `data`: Data to write
+- `newline`: Whether to add newline at the end (true/false, default: false)
+
+**Response example**:
+```json
+{
+  "success": true,
+  "size": 1024
+}
+```
+
+### pipe(commands, input)
+Executes pipeline of built-in commands.
+
+**Supported commands**: cat, grep, sed, head, tail, sort, wc, tr, cut, uniq, nl, tee, rev
+
+**Response example**:
+```json
+{
+  "success": true,
+  "output": "processed result"
+}
+```
+
+### fstat(fd)
+Gets file information and statistics for a file descriptor.
+
+**Parameters**:
+- `fd`: File descriptor number
+
+**Response example**:
+```json
+{
+  "fd": 3,
+  "type": "file",
+  "name": "input.txt",
   "size": 1024,
-  "error": null
+  "readable": true,
+  "writable": false
 }
 ```
 
-### write(out_id, data)
-ファイルまたは出力ストリームにデータを書き込みます。
+### exit(code)
+Terminates the program.
 
+**Parameters**:
+- `code`: Exit code (0=success, 1-255=error)
+
+**Response example**:
 ```json
 {
   "success": true,
-  "error": null
+  "message": "Exit requested with code 0"
 }
 ```
-
-### pipe(cmd, in_id, out_id)
-外部コマンドを実行し、パイプで接続します。
-
-```json
-{
-  "success": true,
-  "in_id": 2,
-  "out_id": 3,
-  "error": null
-}
-```
-
-### exit(exitcode)
-プログラムを終了します。
 
 ## セキュリティ
 

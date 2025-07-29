@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -39,7 +40,6 @@ type Engine struct {
 	bufferSize      int
 	stats           ExecutionStats
 	noStdin         bool // Skip reading from stdin
-	noNewline       bool // Don't add newline to output
 }
 
 // ExecutionStats tracks tool execution statistics
@@ -48,6 +48,7 @@ type ExecutionStats struct {
 	WriteCalls   int   `json:"write_calls"`
 	PipeCalls    int   `json:"pipe_calls"`
 	ExitCalls    int   `json:"exit_calls"`
+	FstatCalls   int   `json:"fstat_calls"`
 	BytesRead    int64 `json:"bytes_read"`
 	BytesWritten int64 `json:"bytes_written"`
 	ErrorCount   int   `json:"error_count"`
@@ -60,7 +61,6 @@ type EngineConfig struct {
 	MaxFileSize int64
 	BufferSize  int
 	NoStdin     bool // Skip reading from stdin
-	NoNewline   bool // Don't add newline to output
 }
 
 // NewEngine creates a new tool execution engine
@@ -69,7 +69,6 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 		maxFileSize: config.MaxFileSize,
 		bufferSize:  config.BufferSize,
 		noStdin:     config.NoStdin,
-		noNewline:   config.NoNewline,
 	}
 
 	// Initialize file descriptors array
@@ -167,6 +166,8 @@ func (e *Engine) ExecuteToolCall(toolCall map[string]interface{}) (string, error
 		return e.executePipe(args)
 	case "exit":
 		return e.executeExit(args)
+	case "fstat":
+		return e.executeFstat(args)
 	default:
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("unknown function: %s", functionName)
@@ -185,6 +186,16 @@ func (e *Engine) executeRead(args map[string]interface{}) (string, error) {
 	}
 	fd := int(fdFloat)
 
+	// Check for lines parameter (alternative to count)
+	if linesFloat, hasLines := args["lines"].(float64); hasLines {
+		lines := int(linesFloat)
+		if lines <= 0 || lines > 1000 {
+			e.stats.ErrorCount++
+			return "", fmt.Errorf("read: lines must be between 1 and 1000")
+		}
+		return e.readLines(fd, lines)
+	}
+
 	// Extract count (optional, default to buffer size)
 	count := e.bufferSize
 	if countFloat, ok := args["count"].(float64); ok {
@@ -201,7 +212,7 @@ func (e *Engine) executeRead(args map[string]interface{}) (string, error) {
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("read: invalid file descriptor %d", fd)
 	}
-	
+
 	reader = e.fileDescriptors[fd]
 	if reader == nil {
 		e.stats.ErrorCount++
@@ -218,7 +229,7 @@ func (e *Engine) executeRead(args map[string]interface{}) (string, error) {
 
 	e.stats.BytesRead += int64(n)
 	result := string(buffer[:n])
-	
+
 	// Return empty string if no data, but don't treat it as error
 	return result, nil
 }
@@ -242,6 +253,12 @@ func (e *Engine) executeWrite(args map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("write: data parameter must be a string")
 	}
 
+	// Extract newline parameter (optional, default false)
+	addNewline := false
+	if newlineVal, ok := args["newline"].(bool); ok {
+		addNewline = newlineVal
+	}
+
 	// Get the appropriate writer
 	var writer io.Writer
 	switch fd {
@@ -256,6 +273,11 @@ func (e *Engine) executeWrite(args map[string]interface{}) (string, error) {
 	default:
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("write: invalid file descriptor %d (only 1=stdout, 2=stderr allowed)", fd)
+	}
+
+	// Add newline if requested
+	if addNewline {
+		data += "\n"
 	}
 
 	// Write data
@@ -326,7 +348,7 @@ func (e *Engine) executePipe(args map[string]interface{}) (string, error) {
 
 		// Prepare output buffer
 		var output bytes.Buffer
-		
+
 		// Execute command
 		if err := commandFunc(cmdArgs, currentInput, &output); err != nil {
 			e.stats.ErrorCount++
@@ -374,4 +396,123 @@ func (e *Engine) executeExit(args map[string]interface{}) (string, error) {
 // GetStats returns current execution statistics
 func (e *Engine) GetStats() ExecutionStats {
 	return e.stats
+}
+
+// readLines reads a specified number of lines from a file descriptor
+func (e *Engine) readLines(fd int, lines int) (string, error) {
+	// Get the appropriate reader
+	if fd < 0 || fd >= len(e.fileDescriptors) {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("read: invalid file descriptor %d", fd)
+	}
+
+	reader := e.fileDescriptors[fd]
+	if reader == nil {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("read: file descriptor %d not available", fd)
+	}
+
+	var result strings.Builder
+	scanner := bufio.NewScanner(reader)
+	lineCount := 0
+
+	for scanner.Scan() && lineCount < lines {
+		if lineCount > 0 {
+			result.WriteString("\n")
+		}
+		result.WriteString(scanner.Text())
+		lineCount++
+	}
+
+	if err := scanner.Err(); err != nil {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("read: %w", err)
+	}
+
+	resultStr := result.String()
+	e.stats.BytesRead += int64(len(resultStr))
+	return resultStr, nil
+}
+
+// executeFstat implements the fstat tool
+func (e *Engine) executeFstat(args map[string]interface{}) (string, error) {
+	e.stats.FstatCalls++
+
+	// Extract file descriptor
+	fdFloat, ok := args["fd"].(float64)
+	if !ok {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("fstat: fd parameter must be a number")
+	}
+	fd := int(fdFloat)
+
+	// Check if file descriptor is valid
+	if fd < 0 || fd >= len(e.fileDescriptors) {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("fstat: invalid file descriptor %d", fd)
+	}
+
+	// Build file information response
+	var info map[string]interface{}
+
+	switch fd {
+	case 0:
+		info = map[string]interface{}{
+			"fd":       0,
+			"type":     "stdin",
+			"name":     "stdin",
+			"readable": true,
+			"writable": false,
+		}
+	case 1:
+		info = map[string]interface{}{
+			"fd":       1,
+			"type":     "stdout",
+			"name":     "stdout",
+			"readable": false,
+			"writable": true,
+		}
+	case 2:
+		info = map[string]interface{}{
+			"fd":       2,
+			"type":     "stderr",
+			"name":     "stderr",
+			"readable": false,
+			"writable": true,
+		}
+	default:
+		// Input files (fd >= 3)
+		fileIndex := fd - 3
+		if fileIndex < len(e.inputFiles) && e.inputFiles[fileIndex] != nil {
+			file := e.inputFiles[fileIndex]
+			stat, err := file.Stat()
+			if err != nil {
+				e.stats.ErrorCount++
+				return "", fmt.Errorf("fstat: could not stat file: %w", err)
+			}
+
+			info = map[string]interface{}{
+				"fd":       fd,
+				"type":     "file",
+				"name":     file.Name(),
+				"readable": true,
+				"writable": false,
+				"size":     stat.Size(),
+				"mode":     stat.Mode().String(),
+				"modtime":  stat.ModTime().Unix(),
+			}
+		} else {
+			e.stats.ErrorCount++
+			return "", fmt.Errorf("fstat: file descriptor %d not open", fd)
+		}
+	}
+
+	// Convert to JSON string
+	jsonBytes, err := json.Marshal(info)
+	if err != nil {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("fstat: failed to marshal response: %w", err)
+	}
+
+	return string(jsonBytes), nil
 }
