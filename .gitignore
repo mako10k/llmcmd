@@ -49,3 +49,4 @@ output.txt
 stats.txt
 test_*.txt
 test_*.conf
+dist/

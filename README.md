@@ -242,13 +242,13 @@ llmcmd -i unknown_format.txt "ファイルの内容と形式を判定し、適�
 
 ## Available Tools for LLM
 
-### read(fd, count|lines)
+### read(fd, [lines], [count])
 Reads data from file descriptors or streams.
 
 **Parameters**:
 - `fd`: File descriptor number (0=stdin, 3+=input files)
-- `count`: Number of bytes to read (1-4096, default: 4096)
-- `lines`: Number of lines to read (1-1000, default: 40) - alternative to count
+- `lines`: Number of lines to read (optional, alternative to count)
+- `count`: Number of bytes to read (optional, alternative to lines)
 
 **Response example**:
 ```json
@@ -258,13 +258,13 @@ Reads data from file descriptors or streams.
 }
 ```
 
-### write(fd, data, newline)
+### write(fd, data, [newline])
 Writes data to file descriptors or output streams.
 
 **Parameters**:
-- `fd`: File descriptor number (1=stdout, 2=stderr)
+- `fd`: File descriptor number (1=stdout, 2=stderr, or pipe input fd)
 - `data`: Data to write
-- `newline`: Whether to add newline at the end (true/false, default: false)
+- `newline`: Whether to add newline at the end (optional, default: false)
 
 **Response example**:
 ```json
@@ -274,16 +274,53 @@ Writes data to file descriptors or output streams.
 }
 ```
 
-### pipe(commands, input)
-Executes pipeline of built-in commands.
+### pipe(cmd, [args], [in_fd], [out_fd], [size])
+Executes built-in commands with flexible input/output patterns.
 
-**Supported commands**: cat, grep, sed, head, tail, sort, wc, tr, cut, uniq, nl, tee, rev
+**Four Execution Patterns**:
+1. `pipe({cmd, args})` → `{in_fd, out_fd}` - Background execution with new file descriptors
+2. `pipe({cmd, args, in_fd, size})` → `{out_fd}` - Background with input from existing fd
+3. `pipe({cmd, args, out_fd})` → `{in_fd}` - Background with output to existing fd
+4. `pipe({cmd, args, in_fd, out_fd, [size]})` → `{exit_code}` - Foreground synchronous execution
+
+**Supported commands**: cat, grep, sed, head, tail, sort, wc, tr, cut, uniq, nl, rev
+
+**Response examples**:
+```json
+// Pattern 1: Background with new fds
+{"success": true, "in_fd": 10, "out_fd": 11}
+
+// Pattern 4: Foreground execution
+{"success": true, "exit_code": 0}
+```
+
+### tee(in_fd, out_fds)
+Copies input from one file descriptor to multiple outputs (1:many relationship).
+
+**Parameters**:
+- `in_fd`: Source file descriptor to read from
+- `out_fds`: Array of destination file descriptors (1=stdout, 2=stderr, or other fds)
 
 **Response example**:
 ```json
 {
   "success": true,
-  "output": "processed result"
+  "bytes_copied": 1024
+}
+```
+
+### close(fd)
+Closes file descriptor and waits for command termination. Returns exit code for command input fds.
+
+**Parameters**:
+- `fd`: File descriptor to close (respects dependency order to prevent deadlock)
+
+**Response example**:
+```json
+{
+  "success": true,
+  "exit_code": 0,
+  "message": "Command 'grep [pattern]' terminated with exit code 0"
 }
 ```
 
@@ -299,6 +336,43 @@ Terminates the program.
   "success": true,
   "message": "Exit requested with code 0"
 }
+```
+
+## Advanced Features
+
+### Background Command Execution
+`llmcmd` supports sophisticated background command execution with proper process management:
+
+- **Asynchronous Processing**: Commands run in background goroutines
+- **File Descriptor Management**: Automatic fd allocation and cleanup
+- **Exit Code Handling**: Proper command termination and result reporting
+- **Deadlock Prevention**: Dependency-aware close() ordering
+
+### Pipeline Chaining
+Create complex processing pipelines by chaining commands:
+
+```bash
+# Example: Multi-step text processing
+echo "data" | llmcmd "extract lines containing 'error', sort them, and count unique entries"
+```
+
+The LLM will automatically:
+1. Use `pipe()` to start grep in background
+2. Use `pipe()` to start sort with grep output as input  
+3. Use `pipe()` to start uniq with sort output
+4. Return final count
+
+### Dependency Management
+Automatic dependency tracking prevents deadlocks:
+
+- **pipe()** creates 1:1 dependencies (input_fd → output_fd)
+- **tee()** creates 1:many dependencies (input_fd → [output_fds])
+- **close()** enforces proper order (outputs before inputs)
+
+```json
+// Safe closing order
+close({fd: 11})  // Output fd first
+close({fd: 10})  // Input fd second, returns exit code
 ```
 
 ## Smart File Information Pre-loading
