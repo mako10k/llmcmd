@@ -27,8 +27,8 @@ func TestCreateInitialMessages_EfficiencyPrompt(t *testing.T) {
 		t.Error("System message should mention write tool")
 	}
 
-	if !strings.Contains(systemMsg, "pipe(commands, input)") {
-		t.Error("System message should mention pipe tool")
+	if !strings.Contains(systemMsg, "spawn(commands, input)") {
+		t.Error("System message should mention spawn tool")
 	}
 
 	userMsg := messages[1].Content

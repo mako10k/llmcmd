@@ -247,7 +247,7 @@ PRIVACY WARNING:
 BUILT-IN TOOLS:
     - read: Read from files or stdin with line/count controls
     - write: Write to files or stdout with newline options
-    - pipe: Execute secure built-in text processing commands
+    - spawn: Execute secure built-in text processing commands
     - exit: Clean program termination
 
 For more information: https://github.com/mako10k/llmcmd
