@@ -32,6 +32,20 @@
 3. **Validation**: Check all inputs, nil pointers, and boundary conditions
 4. **No Silent Failures**: Every error path must be visible and actionable
 
+### Fallback Guidelines
+**Immediate Termination Required:**
+- **User Input Errors**: Parse errors, invalid values, wrong formats → User needs to fix
+- **Configuration Errors**: Invalid settings, malformed files → User needs to correct
+- **Logic Violations**: Precondition failures, contract violations → Programming error
+- **Security Issues**: Authentication failures, permission denials → Must not continue
+
+**Limited Fallback Allowed (with consultation):**
+- **Missing Optional Files**: Use defaults when file absence is normal behavior
+- **Network Transient Errors**: Retry with clear limits, then terminate
+- **Resource Constraints**: Temporary issues that may resolve with retry
+
+**Rule**: When in doubt, terminate immediately. User errors should cause immediate failure with clear error messages.
+
 ### Code Quality Standards
 - **Defensive Programming**: Assume inputs are invalid until proven otherwise
 - **Explicit Error Paths**: Every function that can fail must return an error
