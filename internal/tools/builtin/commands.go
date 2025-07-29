@@ -28,6 +28,8 @@ var Commands = map[string]CommandFunc{
 	"nl":    Nl,
 	"tee":   Tee,
 	"rev":   Rev,
+	"diff":  Diff,
+	"patch": Patch,
 }
 
 // Cat copies input to output (like Unix cat)
@@ -80,7 +82,7 @@ func Grep(args []string, stdin io.Reader, stdout io.Writer) error {
 	for scanner.Scan() {
 		line := scanner.Text()
 		matches := regex.MatchString(line)
-		
+
 		if matches != invertMatch { // XOR logic
 			if lineNumber {
 				fmt.Fprintf(stdout, "%d:%s\n", lineNum, line)
@@ -243,7 +245,7 @@ func Sort(args []string, stdin io.Reader, stdout io.Writer) error {
 		sort.Slice(lines, func(i, j int) bool {
 			a, errA := strconv.ParseFloat(strings.TrimSpace(lines[i]), 64)
 			b, errB := strconv.ParseFloat(strings.TrimSpace(lines[j]), 64)
-			
+
 			if errA != nil && errB != nil {
 				// Both are not numbers, sort lexically
 				result := lines[i] < lines[j]
@@ -400,7 +402,7 @@ func Tr(args []string, stdin io.Reader, stdout io.Writer) error {
 
 	fromSet := args[0]
 	toSet := args[1]
-	
+
 	fromRunes := []rune(fromSet)
 	toRunes := []rune(toSet)
 

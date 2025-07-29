@@ -403,7 +403,7 @@ TOOLS AVAILABLE:
 
 5. exit(code) - Terminate program with exit code
 
-BUILT-IN COMMANDS: cat, grep, sed, head, tail, sort, wc, tr, cut, uniq, nl, rev
+Built-in commands available: cat, grep, sed, head, tail, sort, wc, tr, cut, uniq, nl, tee, rev, diff, patch
 
 CRITICAL PATTERN FOR COMMAND OUTPUT:
 To execute a command and read its output:

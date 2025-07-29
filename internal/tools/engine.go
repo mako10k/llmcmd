@@ -351,25 +351,11 @@ func (e *Engine) startBackgroundCommand(cmd string, args []string) (int, int, er
 
 		// Execute the built-in command
 		var err error
-		switch cmd {
-		case "cat":
-			err = builtin.Cat(args, inReader, outWriter)
-		case "grep":
-			err = builtin.Grep(args, inReader, outWriter)
-		case "sed":
-			err = builtin.Sed(args, inReader, outWriter)
-		case "head":
-			err = builtin.Head(args, inReader, outWriter)
-		case "tail":
-			err = builtin.Tail(args, inReader, outWriter)
-		case "sort":
-			err = builtin.Sort(args, inReader, outWriter)
-		case "wc":
-			err = builtin.Wc(args, inReader, outWriter)
-		case "tr":
-			err = builtin.Tr(args, inReader, outWriter)
-		default:
+		commandFunc, exists := builtin.Commands[cmd]
+		if !exists {
 			err = fmt.Errorf("unknown command: %s", cmd)
+		} else {
+			err = commandFunc(args, inReader, outWriter)
 		}
 
 		runningCmd.mu.Lock()
@@ -454,25 +440,11 @@ func (e *Engine) startBackgroundCommandWithInput(cmd string, args []string, inpu
 		var err error
 		inReader := bytes.NewReader(inputData)
 
-		switch cmd {
-		case "cat":
-			err = builtin.Cat(args, inReader, outWriter)
-		case "grep":
-			err = builtin.Grep(args, inReader, outWriter)
-		case "sed":
-			err = builtin.Sed(args, inReader, outWriter)
-		case "head":
-			err = builtin.Head(args, inReader, outWriter)
-		case "tail":
-			err = builtin.Tail(args, inReader, outWriter)
-		case "sort":
-			err = builtin.Sort(args, inReader, outWriter)
-		case "wc":
-			err = builtin.Wc(args, inReader, outWriter)
-		case "tr":
-			err = builtin.Tr(args, inReader, outWriter)
-		default:
+		commandFunc, exists := builtin.Commands[cmd]
+		if !exists {
 			err = fmt.Errorf("unknown command: %s", cmd)
+		} else {
+			err = commandFunc(args, inReader, outWriter)
 		}
 
 		runningCmd.mu.Lock()
@@ -541,25 +513,11 @@ func (e *Engine) startBackgroundCommandWithOutput(cmd string, args []string, out
 
 		// Execute the built-in command
 		var err error
-		switch cmd {
-		case "cat":
-			err = builtin.Cat(args, inReader, outWriter)
-		case "grep":
-			err = builtin.Grep(args, inReader, outWriter)
-		case "sed":
-			err = builtin.Sed(args, inReader, outWriter)
-		case "head":
-			err = builtin.Head(args, inReader, outWriter)
-		case "tail":
-			err = builtin.Tail(args, inReader, outWriter)
-		case "sort":
-			err = builtin.Sort(args, inReader, outWriter)
-		case "wc":
-			err = builtin.Wc(args, inReader, outWriter)
-		case "tr":
-			err = builtin.Tr(args, inReader, outWriter)
-		default:
+		commandFunc, exists := builtin.Commands[cmd]
+		if !exists {
 			err = fmt.Errorf("unknown command: %s", cmd)
+		} else {
+			err = commandFunc(args, inReader, outWriter)
 		}
 
 		runningCmd.mu.Lock()
