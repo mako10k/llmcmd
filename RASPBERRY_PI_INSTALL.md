@@ -6,7 +6,7 @@ Raspberry Pi 5 (ARM64)で llmcmd をインストールする方法：
 
 ```bash
 # ARM64バイナリを直接ダウンロード
-curl -sL "https://raw.githubusercontent.com/mako10k/llmcmd/main/dist/llmcmd-linux-arm64" -o llmcmd
+curl -sL "https://raw.githubusercontent.com/mako10k/llmcmd/main/releases/llmcmd-linux-arm64" -o llmcmd
 chmod +x llmcmd
 
 # システムワイドにインストール
