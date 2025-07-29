@@ -31,9 +31,35 @@ sudo mv llmcmd /usr/local/bin/
 OpenAI API キーを設定：
 
 ```bash
+# 方法1: 環境変数（推奨）
 export OPENAI_API_KEY="your-api-key-here"
-# または
 echo 'export OPENAI_API_KEY="your-api-key-here"' >> ~/.bashrc
+
+# 方法2: 設定ファイル
+curl -sL https://raw.githubusercontent.com/mako10k/llmcmd/main/.llmcmdrc.example -o ~/.llmcmdrc
+nano ~/.llmcmdrc  # API キーを設定
+```
+
+### 設定ファイルのオプション
+
+`~/.llmcmdrc` で以下の設定が可能：
+
+```ini
+# OpenAI API設定
+openai_api_key=your-api-key-here
+model=gpt-4o-mini
+max_tokens=4096
+temperature=0.1
+
+# セキュリティ設定
+max_api_calls=50
+timeout_seconds=300
+max_file_size=10485760    # 10MB
+read_buffer_size=4096     # 4KB
+
+# 再試行設定  
+max_retries=3
+retry_delay_ms=1000
 ```
 
 ## テスト例
