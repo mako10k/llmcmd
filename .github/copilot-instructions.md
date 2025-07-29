@@ -46,6 +46,11 @@
 - **Code Editor**: VS Code
 - **Go Version**: 1.21 or higher
 
+### mcp-shell-server Usage Notes
+- **Output Tracking**: When command output is truncated, use the returned `output_id` with `read_execution_output` to get complete results
+- **Common Mistake**: Don't assume output is complete when truncated - always check for `output_truncated: true` and use `output_id` to retrieve full content
+- **Background Processes**: Long-running commands automatically switch to background mode and provide `execution_id` for status monitoring
+
 ### Development Workflow
 1. Use #mcp-shell-server for Git commands and build operations
 2. Incremental implementation and testing

@@ -177,6 +177,10 @@ func ToolDefinitions() []Tool {
 							"type":        "boolean",
 							"description": "Add newline at the end (default: false)",
 						},
+						"eof": map[string]interface{}{
+							"type":        "boolean",
+							"description": "Signal end of file and trigger chain cleanup (default: false)",
+						},
 					},
 					"required": []string{"fd", "data"},
 				},
@@ -185,8 +189,8 @@ func ToolDefinitions() []Tool {
 		{
 			Type: "function",
 			Function: ToolFunction{
-				Name:        "pipe",
-				Description: "Execute built-in commands with flexible input/output patterns: 1) pipe({cmd,args}) for background with new fds, 2) pipe({cmd,args,in_fd,size}) for background with input, 3) pipe({cmd,args,out_fd}) for background with output, 4) pipe({cmd,args,in_fd,out_fd,[size]}) for foreground execution",
+				Name:        "spawn",
+				Description: "Spawn built-in commands in background mode: 1) spawn({cmd,args}) for new fds, 2) spawn({cmd,args,in_fd,size}) for input, 3) spawn({cmd,args,out_fd}) for output. Use write({eof:true}) to trigger chain cleanup.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -246,24 +250,6 @@ func ToolDefinitions() []Tool {
 						},
 					},
 					"required": []string{"in_fd", "out_fds"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: ToolFunction{
-				Name:        "close",
-				Description: "Close a file descriptor and wait for command termination. For pipe/tee dependencies, output fds must be closed before input fds to prevent deadlock. Returns exit code for command input fds.",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"fd": map[string]interface{}{
-							"type":        "integer",
-							"description": "File descriptor to close (respects dependency order)",
-							"minimum":     0,
-						},
-					},
-					"required": []string{"fd"},
 				},
 			},
 		},
