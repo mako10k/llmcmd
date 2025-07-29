@@ -1,0 +1,103 @@
+--- a/test_data/example_source_test.go
++++ b/test_data/example_source_test.go
+@@ -14,6 +14,7 @@
+ 	Created  time.Time `json:"created"`
+ 	Active   bool      `json:"active"`
+ 	Role     string    `json:"role"`
++	LastLogin *time.Time `json:"last_login,omitempty"`
+ 	Settings map[string]interface{} `json:"settings"`
+ }
+ 
+@@ -22,6 +23,7 @@
+ 	users    map[int]*User
+ 	nextID   int
+ 	logger   *log.Logger
++	totalLogins int64
+ 	maxUsers int
+ }
+ 
+@@ -30,6 +32,7 @@
+ 	return &UserManager{
+ 		users:    make(map[int]*User),
+ 		nextID:   1,
++		totalLogins: 0,
+ 		logger:   log.New(os.Stdout, "[UserManager] ", log.LstdFlags),
+ 		maxUsers: maxUsers,
+ 	}
+@@ -65,6 +68,7 @@
+ 		Created:  time.Now(),
+ 		Active:   true,
+ 		Role:     role,
++		LastLogin: nil,
+ 		Settings: make(map[string]interface{}),
+ 	}
+ 
+@@ -140,6 +144,21 @@
+ 	return nil
+ }
+ 
++// LoginUser records a user login
++func (um *UserManager) LoginUser(id int) error {
++	user, exists := um.users[id]
++	if !exists {
++		return fmt.Errorf("user not found: %d", id)
++	}
++
++	now := time.Now()
++	user.LastLogin = &now
++	um.totalLogins++
++	um.logger.Printf("User %s (ID: %d) logged in", user.Name, id)
++	return nil
++}
++
++// GetStats returns usage statistics
++func (um *UserManager) GetStats() (int, int64) {
++	return len(um.users), um.totalLogins
++}
++
+ // Interactive CLI for testing
+ func main() {
+ 	fmt.Println("User Management System")
+-	fmt.Println("Commands: create, get, update, delete, list, activate, deactivate, quit")
++	fmt.Println("Commands: create, get, update, delete, list, activate, deactivate, login, stats, quit")
+ 
+ 	um := NewUserManager(100)
+ 	scanner := bufio.NewScanner(os.Stdin)
+@@ -251,8 +270,31 @@
+ 			} else {
+ 				fmt.Println("User deactivated successfully")
+ 			}
++
++		case "login":
++			if len(parts) < 2 {
++				fmt.Println("Usage: login <id>")
++				continue
++			}
++			id, err := strconv.Atoi(parts[1])
++			if err != nil {
++				fmt.Printf("Invalid ID: %v\n", err)
++				continue
++			}
++			err = um.LoginUser(id)
++			if err != nil {
++				fmt.Printf("Error: %v\n", err)
++			} else {
++				fmt.Println("User logged in successfully")
++			}
++
++		case "stats":
++			userCount, loginCount := um.GetStats()
++			fmt.Printf("Statistics:\n")
++			fmt.Printf("  Total users: %d\n", userCount)
++			fmt.Printf("  Total logins: %d\n", loginCount)
+ 
+ 		case "quit", "exit":
+ 			fmt.Println("Goodbye!")
+ 			return
+ 
+ 		default:
+ 			fmt.Printf("Unknown command: %s\n", command)
+-			fmt.Println("Available commands: create, get, update, delete, list, activate, deactivate, quit")
++			fmt.Println("Available commands: create, get, update, delete, list, activate, deactivate, login, stats, quit")
+ 		}
+ 	}
