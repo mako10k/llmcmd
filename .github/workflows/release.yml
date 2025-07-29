@@ -33,6 +33,10 @@ jobs:
         GOOS: ${{ matrix.goos }}
         GOARCH: ${{ matrix.goarch }}
       run: |
+        # Debug: show current directory and contents
+        pwd
+        ls -la
+        
         binary_name="llmcmd"
         if [[ "${{ matrix.goos }}" == "windows" ]]; then
           binary_name="${binary_name}.exe"
@@ -43,11 +47,21 @@ jobs:
           output_name="${output_name}.exe"
         fi
         
-        # Ensure the directory exists
-        ls -la cmd/
-        ls -la cmd/llmcmd/
+        # Verify the structure
+        echo "Project structure:"
+        find . -name "*.go" -type f | head -10
         
-        go build -ldflags="-w -s" -o "$output_name" ./cmd/llmcmd/main.go
+        # Try different build approaches
+        if [ -d "cmd/llmcmd" ]; then
+          echo "Building from cmd/llmcmd directory"
+          go build -ldflags="-w -s" -o "$output_name" ./cmd/llmcmd
+        elif [ -f "cmd/llmcmd/main.go" ]; then
+          echo "Building from cmd/llmcmd/main.go file"
+          go build -ldflags="-w -s" -o "$output_name" ./cmd/llmcmd/main.go
+        else
+          echo "Error: Could not find cmd/llmcmd directory or main.go file"
+          exit 1
+        fi
         
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
