@@ -201,12 +201,13 @@ IMPORTANT: Analyze INPUT TEXT from stdin, not the question language. Provide dir
 
 	if len(actualFiles) > 0 {
 		for i, file := range actualFiles {
-			fdMappingContent += fmt.Sprintf("\n- fd=%d: %s (input file)", i+3, file)
+			fdMappingContent += fmt.Sprintf("\n- fd=%d: %s (input file #%d)", i+3, file, i+1)
 		}
 		fdMappingContent += "\n\nAVAILABLE INPUT SOURCES:"
-		fdMappingContent += "\n✓ stdin (fd=0) - contains input data"
-		fdMappingContent += "\n✓ input files (fd=3+) - specified above"
-		fdMappingContent += "\nWORKFLOW: read(fd=0 or fd=3+) → pipe(commands) → write(fd=1) → exit(0)"
+		fdMappingContent += "\n✓ input files (fd=3+) - specified above, contains data to process"
+		fdMappingContent += "\n✗ stdin (fd=0) - ignore, no input data here"
+		fdMappingContent += "\nWORKFLOW: read(fd=3+) → pipe(commands) → write(fd=1) → exit(0)"
+		fdMappingContent += "\n\nFILE REFERENCES: Use $1 for first file, $2 for second file, etc."
 	} else {
 		fdMappingContent += "\n\nAVAILABLE INPUT SOURCES:"
 		fdMappingContent += "\n✓ stdin (fd=0) - contains input data"
@@ -221,12 +222,30 @@ IMPORTANT: Analyze INPUT TEXT from stdin, not the question language. Provide dir
 
 	// Second user message: User's actual prompt/instructions
 	var userContent string
-	if prompt != "" && instructions != "" {
-		userContent = fmt.Sprintf("Process the input data according to this request:\n\nPrompt: %s\n\nInstructions: %s", prompt, instructions)
-	} else if prompt != "" {
-		userContent = fmt.Sprintf("Process the input data according to this request:\n\n%s", prompt)
+	if len(actualFiles) > 0 {
+		// ファイルがある場合はファイル参照の説明を追加
+		fileRefs := "\n\nFILE REFERENCES:"
+		for i := range actualFiles {
+			fileRefs += fmt.Sprintf("\n- $%d = input file #%d", i+1, i+1)
+		}
+		fileRefs += "\n- stdin/stdout/stderr = standard streams"
+		
+		if prompt != "" && instructions != "" {
+			userContent = fmt.Sprintf("Process the input files according to this request:\n\nPrompt: %s\n\nInstructions: %s%s", prompt, instructions, fileRefs)
+		} else if prompt != "" {
+			userContent = fmt.Sprintf("Process the input files according to this request:\n\n%s%s", prompt, fileRefs)
+		} else {
+			userContent = fmt.Sprintf("Process the input files according to this request:\n\n%s%s", instructions, fileRefs)
+		}
 	} else {
-		userContent = fmt.Sprintf("Process the input data according to this request:\n\n%s", instructions)
+		// 標準入力の場合
+		if prompt != "" && instructions != "" {
+			userContent = fmt.Sprintf("Process the input data from stdin according to this request:\n\nPrompt: %s\n\nInstructions: %s", prompt, instructions)
+		} else if prompt != "" {
+			userContent = fmt.Sprintf("Process the input data from stdin according to this request:\n\n%s", prompt)
+		} else {
+			userContent = fmt.Sprintf("Process the input data from stdin according to this request:\n\n%s", instructions)
+		}
 	}
 
 	messages = append(messages, ChatMessage{
