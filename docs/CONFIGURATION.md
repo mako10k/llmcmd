@@ -146,6 +146,16 @@ llmcmd --verbose "test"
 
 ## Security Considerations
 
+### Data Privacy
+
+⚠️ **Critical Privacy Warning**
+
+- **All input data is transmitted to OpenAI's API** for processing
+- **Sensitive information** (passwords, API keys, personal data, configuration files) will be sent to OpenAI
+- **User responsibility**: Ensure no confidential data is processed
+
+### Configuration Security
+
 - **API Key Protection**: Never commit API keys to version control
 - **File Permissions**: Ensure `~/.llmcmdrc` has restricted permissions:
   ```bash
@@ -153,6 +163,18 @@ llmcmd --verbose "test"
   ```
 - **Rate Limiting**: Use `max_api_calls` to prevent excessive usage
 - **File Size Limits**: Adjust `max_file_size` based on your needs
+
+### Safe Usage Guidelines
+
+```bash
+# ❌ UNSAFE: Processing sensitive files
+llmcmd -i ~/.ssh/config "analyze this"
+llmcmd -i database.conf "summarize settings"
+
+# ✅ SAFE: Processing non-sensitive data
+echo "public data" | llmcmd "process this"
+llmcmd -i public_config.txt "analyze settings"
+```
 
 ## Best Practices
 

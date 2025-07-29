@@ -239,6 +239,11 @@ SECURITY:
     - API rate limiting and timeout controls
     - Memory usage limits for safe operation
 
+PRIVACY WARNING:
+    ⚠️  All input data is sent to OpenAI's API for processing
+    ⚠️  Do NOT process files containing passwords, API keys, or sensitive data
+    ⚠️  Your responsibility to ensure data privacy
+
 BUILT-IN TOOLS:
     - read: Read from files or stdin with line/count controls
     - write: Write to files or stdout with newline options

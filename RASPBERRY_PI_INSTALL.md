@@ -77,6 +77,30 @@ echo -e "line1\nline2\nline3" | llmcmd "Number each line"
 
 ## 注意事項
 
+### システム要件
 - Raspberry Pi OS (64-bit) が必要
 - OpenAI API キーが必要
 - インターネット接続が必要（API呼び出しのため）
+
+### セキュリティ注意事項
+
+⚠️ **プライバシーに関する重要な注意**
+
+llmcmdを使用する際は以下にご注意ください：
+
+- **すべての入力データがOpenAI APIに送信されます**
+- **機密情報**（パスワード、APIキー、個人情報）が入力ファイルや標準入力に含まれる場合、それらもOpenAIに送信されます
+- **設定ファイル**に機密情報が含まれる場合は直接処理しないでください
+- **ログファイル**に機密データが含まれる可能性があります - `-v`オプションの使用に注意
+
+#### 安全な使用例
+
+```bash
+# ❌ 推奨しない: 機密情報を含むファイルの処理
+llmcmd -i ~/.llmcmdrc "このファイルを要約して"
+llmcmd -i /etc/passwd "ユーザー情報を分析"
+
+# ✅ 推奨: 機密情報を除外してから処理
+grep -v "password\|secret\|key" config.txt | llmcmd "この設定を分析して"
+echo "apple banana cherry" | llmcmd "アルファベット順にソート"
+```
