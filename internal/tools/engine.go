@@ -313,11 +313,11 @@ func (e *Engine) createRunningCommand(cmd string, args []string, fd int, inputFd
 		pid:         fd, // Use fd as pseudo-pid
 		commandName: fmt.Sprintf("%s %v", cmd, args),
 	}
-	
+
 	e.commandsMutex.Lock()
 	e.runningCommands[fd] = runningCmd
 	e.commandsMutex.Unlock()
-	
+
 	return runningCmd
 }
 

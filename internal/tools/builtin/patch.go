@@ -123,7 +123,7 @@ func validateChunk(lines []string, chunk PatchChunk) error {
 				return fmt.Errorf("context line %d beyond file end (%d lines)", oldIndex+1, len(lines))
 			}
 			if lines[oldIndex] != change.Content {
-				return fmt.Errorf("context mismatch at line %d: expected %q, got %q", 
+				return fmt.Errorf("context mismatch at line %d: expected %q, got %q",
 					oldIndex+1, change.Content, lines[oldIndex])
 			}
 			oldIndex++
@@ -132,7 +132,7 @@ func validateChunk(lines []string, chunk PatchChunk) error {
 				return fmt.Errorf("delete line %d beyond file end (%d lines)", oldIndex+1, len(lines))
 			}
 			if lines[oldIndex] != change.Content {
-				return fmt.Errorf("delete mismatch at line %d: expected %q, got %q", 
+				return fmt.Errorf("delete mismatch at line %d: expected %q, got %q",
 					oldIndex+1, change.Content, lines[oldIndex])
 			}
 			oldIndex++
@@ -269,24 +269,24 @@ func applyChunk(lines []string, chunk PatchChunk) ([]string, error) {
 		switch change.Type {
 		case " ": // Context line
 			if oldIndex >= len(lines) {
-				return nil, fmt.Errorf("context line %d beyond file end (%d lines): patch chunk @@ -%d,%d +%d,%d @@ exceeds file boundaries", 
+				return nil, fmt.Errorf("context line %d beyond file end (%d lines): patch chunk @@ -%d,%d +%d,%d @@ exceeds file boundaries",
 					oldIndex+1, len(lines), chunk.OldStart, chunk.OldLines, chunk.NewStart, chunk.NewLines)
 			}
 			if lines[oldIndex] != change.Content {
 				return nil, fmt.Errorf("context mismatch at line %d: patch expects %q but file contains %q\n"+
-					"  Hint: patch may be outdated or for different version of file", 
+					"  Hint: patch may be outdated or for different version of file",
 					oldIndex+1, change.Content, lines[oldIndex])
 			}
 			result = append(result, change.Content)
 			oldIndex++
 		case "-": // Delete line
 			if oldIndex >= len(lines) {
-				return nil, fmt.Errorf("delete line %d beyond file end (%d lines): cannot delete non-existent line", 
+				return nil, fmt.Errorf("delete line %d beyond file end (%d lines): cannot delete non-existent line",
 					oldIndex+1, len(lines))
 			}
 			if lines[oldIndex] != change.Content {
 				return nil, fmt.Errorf("delete mismatch at line %d: patch wants to delete %q but file contains %q\n"+
-					"  Hint: file may have been modified since patch was created", 
+					"  Hint: file may have been modified since patch was created",
 					oldIndex+1, change.Content, lines[oldIndex])
 			}
 			// Skip this line (delete it)

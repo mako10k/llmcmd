@@ -14,18 +14,21 @@ var (
 	ErrShowHelp    = errors.New("show help")
 	ErrShowVersion = errors.New("show version")
 	ErrInstall     = errors.New("install system")
+	ErrListPresets = errors.New("list presets")
 )
 
 // Config holds all configuration for the application
 type Config struct {
 	// Command line options
-	Prompt     string   // -p: LLM prompt/instructions
-	InputFiles []string // -i: Input file paths (can be specified multiple times)
-	OutputFile string   // -o: Output file path
-	Verbose    bool     // -v: Verbose logging
-	ShowStats  bool     // --stats: Show detailed statistics
-	ConfigFile string   // -c: Configuration file path
-	NoStdin    bool     // --no-stdin: Skip reading from stdin
+	Prompt       string   // -p: LLM prompt/instructions (free text)
+	Preset       string   // -r/--preset: Preset prompt key
+	ListPresets  bool     // --list-presets: Show available prompt presets
+	InputFiles   []string // -i: Input file paths (can be specified multiple times)
+	OutputFile   string   // -o: Output file path
+	Verbose      bool     // -v: Verbose logging
+	ShowStats    bool     // --stats: Show detailed statistics
+	ConfigFile   string   // -c: Configuration file path
+	NoStdin       bool     // --no-stdin: Skip reading from stdin
 
 	// Positional arguments
 	Instructions string // Remaining arguments as instructions
@@ -44,8 +47,12 @@ func ParseArgs(args []string) (*Config, error) {
 	fs.SetOutput(os.Stderr)
 
 	// Define flags with both short and long options where appropriate
-	fs.StringVar(&config.Prompt, "p", "", "LLM prompt/instructions")
-	fs.StringVar(&config.Prompt, "prompt", "", "LLM prompt/instructions")
+	fs.StringVar(&config.Prompt, "p", "", "LLM prompt/instructions (free text)")
+	fs.StringVar(&config.Prompt, "prompt", "", "LLM prompt/instructions (free text)")
+	
+	fs.StringVar(&config.Preset, "r", "", "Use predefined prompt preset (see --list-presets)")
+	fs.StringVar(&config.Preset, "preset", "", "Use predefined prompt preset (see --list-presets)")
+	fs.BoolVar(&config.ListPresets, "list-presets", false, "List available prompt presets and exit")
 
 	fs.Var(&inputFiles, "i", "Input file path (can be specified multiple times)")
 	fs.Var(&inputFiles, "input", "Input file path (can be specified multiple times)")
@@ -85,6 +92,10 @@ func ParseArgs(args []string) (*Config, error) {
 	}
 	if showVersion {
 		return nil, ErrShowVersion
+	}
+	if config.ListPresets {
+		// Return minimal config with ConfigFile path for preset loading
+		return &Config{ConfigFile: config.ConfigFile}, ErrListPresets
 	}
 	if installSystem {
 		return nil, ErrInstall
@@ -181,7 +192,9 @@ USAGE:
     llmcmd [OPTIONS] [INSTRUCTIONS]
 
 OPTIONS:
-    -p, --prompt <text>     LLM prompt/instructions
+    -p, --prompt <text>     LLM prompt/instructions (free text)
+    -r, --preset <key>      Use predefined prompt preset (see --list-presets)
+    --list-presets          List available prompt presets and exit
     -i, --input <file>      Input file path (can be specified multiple times)
     -o, --output <file>     Output file path  
     -c, --config <file>     Configuration file path (default: ~/.llmcmdrc)
@@ -198,14 +211,18 @@ EXAMPLES:
     # Basic text processing from stdin
     echo "hello world" | llmcmd "Convert to uppercase"
     
+    # Using preset prompts  
+    cat file1.txt file2.txt | llmcmd -r diff_patch "Generate a unified diff"
+    llmcmd -r code_review -i source.go "Review this code for issues"
+    
     # File processing
     llmcmd -i input.txt -o output.txt "Summarize this document"
     
     # Multiple file comparison
     llmcmd -i file1.txt -i file2.txt "Compare these files and highlight differences"
     
-    # Complex text operations
-    echo -e "apple\nbanana\ncherry" | llmcmd "Sort alphabetically and number each line"
+    # List available presets
+    llmcmd --list-presets
 
 CONFIGURATION:
     Configuration priority (highest to lowest):

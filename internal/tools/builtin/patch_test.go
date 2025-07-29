@@ -98,8 +98,8 @@ line 3
 			expectedError: "patch: failed to apply patch: chunk 1 application failed: delete mismatch at line 2",
 		},
 		{
-			name: "help message",
-			args: []string{"--help"},
+			name:  "help message",
+			args:  []string{"--help"},
 			input: "",
 			expectedOutput: `patch - Apply unified diff patches to text
 
