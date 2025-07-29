@@ -60,6 +60,40 @@ func main() {
 		}
 	}
 
+	// Load and merge configuration
+	mergedConfig, err := cli.LoadAndMergeConfig(config)
+	if err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
+	
+	// Resolve preset if specified
+	finalPrompt := config.Prompt
+	if config.Preset != "" {
+		if config.Prompt != "" {
+			log.Fatal("Error: Cannot specify both --prompt and --preset options")
+		}
+		
+		presetContent, err := cli.ResolvePreset(mergedConfig, config.Preset)
+		if err != nil {
+			log.Fatalf("Preset resolution error: %v", err)
+		}
+		finalPrompt = presetContent
+	} else if config.Prompt == "" {
+		// Use default preset if no prompt specified
+		defaultPreset := mergedConfig.DefaultPrompt
+		if defaultPreset != "" {
+			presetContent, err := cli.ResolvePreset(mergedConfig, defaultPreset)
+			if err != nil {
+				log.Printf("Warning: Could not resolve default preset '%s': %v", defaultPreset, err)
+			} else {
+				finalPrompt = presetContent
+			}
+		}
+	}
+	
+	// Update config with resolved prompt
+	config.Prompt = finalPrompt
+
 	// Initialize logging
 	if config.Verbose {
 		log.SetOutput(os.Stderr)

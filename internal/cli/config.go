@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -106,6 +107,101 @@ func LoadConfigFile(path string) (*ConfigFile, error) {
 		return nil, fmt.Errorf("error reading config file: %w", err)
 	}
 
+	return config, nil
+}
+
+// ResolvePreset resolves a preset key to its content from the configuration
+func ResolvePreset(config *ConfigFile, presetKey string) (string, error) {
+	if config == nil {
+		return "", fmt.Errorf("configuration is nil")
+	}
+	
+	if config.PromptPresets == nil {
+		return "", fmt.Errorf("no presets available in configuration")
+	}
+	
+	preset, exists := config.PromptPresets[presetKey]
+	if !exists {
+		return "", fmt.Errorf("preset '%s' not found", presetKey)
+	}
+	
+	return preset.Content, nil
+}
+
+// LoadAndMergeConfig loads configuration from file and merges with CLI arguments
+func LoadAndMergeConfig(cliConfig *Config) (*ConfigFile, error) {
+	// Start with default configuration
+	config := DefaultConfig()
+	
+	// Load from config file if specified
+	configFile := cliConfig.ConfigFile
+	if configFile == "" {
+		// Use default config file path
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			configFile = filepath.Join(homeDir, ".llmcmdrc")
+		}
+	}
+	
+	if configFile != "" {
+		fileConfig, err := LoadConfigFile(configFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load config file: %w", err)
+		}
+		
+		// Merge file config with defaults
+		if fileConfig.OpenAIAPIKey != "" {
+			config.OpenAIAPIKey = fileConfig.OpenAIAPIKey
+		}
+		if fileConfig.OpenAIBaseURL != "" {
+			config.OpenAIBaseURL = fileConfig.OpenAIBaseURL
+		}
+		if fileConfig.Model != "" {
+			config.Model = fileConfig.Model
+		}
+		if fileConfig.MaxTokens != 0 {
+			config.MaxTokens = fileConfig.MaxTokens
+		}
+		if fileConfig.Temperature != 0 {
+			config.Temperature = fileConfig.Temperature
+		}
+		if fileConfig.MaxAPICalls != 0 {
+			config.MaxAPICalls = fileConfig.MaxAPICalls
+		}
+		if fileConfig.TimeoutSeconds != 0 {
+			config.TimeoutSeconds = fileConfig.TimeoutSeconds
+		}
+		if fileConfig.MaxFileSize != 0 {
+			config.MaxFileSize = fileConfig.MaxFileSize
+		}
+		if fileConfig.ReadBufferSize != 0 {
+			config.ReadBufferSize = fileConfig.ReadBufferSize
+		}
+		if fileConfig.MaxRetries != 0 {
+			config.MaxRetries = fileConfig.MaxRetries
+		}
+		if fileConfig.RetryDelay != 0 {
+			config.RetryDelay = fileConfig.RetryDelay
+		}
+		if fileConfig.SystemPrompt != "" {
+			config.SystemPrompt = fileConfig.SystemPrompt
+		}
+		if fileConfig.DefaultPrompt != "" {
+			config.DefaultPrompt = fileConfig.DefaultPrompt
+		}
+		config.DisableTools = fileConfig.DisableTools
+		
+		// Merge presets (file presets override defaults)
+		if fileConfig.PromptPresets != nil {
+			for k, v := range fileConfig.PromptPresets {
+				config.PromptPresets[k] = v
+			}
+		}
+	}
+	
+	// Apply CLI overrides
+	// TODO: Apply CLI configuration overrides here
+	
 	return config, nil
 }
 
