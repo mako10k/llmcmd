@@ -32,6 +32,26 @@ var Commands = map[string]CommandFunc{
 	"patch": Patch,
 }
 
+// compileRegex compiles a regex pattern and returns an error if invalid
+func compileRegex(pattern string, ignoreCase bool) (*regexp.Regexp, error) {
+	if ignoreCase {
+		pattern = "(?i)" + pattern
+	}
+	compiled, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid regex pattern: %s", err)
+	}
+	return compiled, nil
+}
+
+// appendCount appends formatted count to output slice if condition is true
+func appendCount(output []string, count int, condition bool) []string {
+	if condition {
+		return append(output, fmt.Sprintf("%d", count))
+	}
+	return output
+}
+
 // Cat copies input to output (like Unix cat)
 func Cat(args []string, stdin io.Reader, stdout io.Writer) error {
 	// cat simply copies stdin to stdout
@@ -68,13 +88,10 @@ func Grep(args []string, stdin io.Reader, stdout io.Writer) error {
 		}
 	}
 
-	// Compile regex
-	if ignoreCase {
-		finalPattern = "(?i)" + finalPattern
-	}
-	regex, err := regexp.Compile(finalPattern)
+	// Compile regex using common function
+	regex, err := compileRegex(finalPattern, ignoreCase)
 	if err != nil {
-		return fmt.Errorf("grep: invalid pattern: %w", err)
+		return err
 	}
 
 	scanner := bufio.NewScanner(stdin)
@@ -123,13 +140,10 @@ func Sed(args []string, stdin io.Reader, stdout io.Writer) error {
 	globalReplace := strings.Contains(flags, "g")
 	ignoreCase := strings.Contains(flags, "i")
 
-	// Compile regex
-	if ignoreCase {
-		pattern = "(?i)" + pattern
-	}
-	regex, err := regexp.Compile(pattern)
+	// Compile regex using common function
+	regex, err := compileRegex(pattern, ignoreCase)
 	if err != nil {
-		return fmt.Errorf("sed: invalid pattern: %w", err)
+		return err
 	}
 
 	scanner := bufio.NewScanner(stdin)
@@ -342,17 +356,10 @@ func Wc(args []string, stdin io.Reader, stdout io.Writer) error {
 
 	// Output counts
 	var output []string
-	if showLines {
-		output = append(output, fmt.Sprintf("%d", lines))
-	}
-	if showWords {
-		output = append(output, fmt.Sprintf("%d", words))
-	}
-	if showBytes {
-		output = append(output, fmt.Sprintf("%d", bytes))
-	} else if showChars {
-		output = append(output, fmt.Sprintf("%d", chars))
-	}
+	output = appendCount(output, lines, showLines)
+	output = appendCount(output, words, showWords)
+	output = appendCount(output, bytes, showBytes)
+	output = appendCount(output, chars, showChars && !showBytes)
 
 	fmt.Fprintln(stdout, strings.Join(output, " "))
 	return nil

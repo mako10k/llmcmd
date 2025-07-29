@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,25 +67,31 @@ func NewClient(config ClientConfig) *Client {
 	}
 }
 
+// errorf is a helper to add error stats and return a formatted error
+func (c *Client) errorf(format string, args ...interface{}) (*ChatCompletionResponse, error) {
+	c.stats.AddError()
+	return nil, fmt.Errorf(format, args...)
+}
+
 // ChatCompletion sends a chat completion request to OpenAI API
 func (c *Client) ChatCompletion(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
 	// Check rate limits
 	if c.stats.RequestCount >= c.maxCalls {
-		return nil, fmt.Errorf("maximum API calls exceeded (%d/%d)", c.stats.RequestCount, c.maxCalls)
+		return c.errorf("maximum API calls exceeded (%d/%d)", c.stats.RequestCount, c.maxCalls)
 	}
 
 	// Prepare request
 	reqBody, err := json.Marshal(req)
 	if err != nil {
 		c.stats.AddError()
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return c.errorf("failed to marshal request: %w", err)
 	}
 
 	// Create HTTP request
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/chat/completions", bytes.NewBuffer(reqBody))
 	if err != nil {
 		c.stats.AddError()
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return c.errorf("failed to create request: %w", err)
 	}
 
 	// Set headers
@@ -100,33 +106,29 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatCompletionRequest) 
 
 	if err != nil {
 		c.stats.AddError()
-		return nil, fmt.Errorf("request failed: %w", err)
+		return c.errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Read response body
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		c.stats.AddError()
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		return c.errorf("failed to read response: %w", err)
 	}
 
 	// Handle error responses
 	if resp.StatusCode != http.StatusOK {
 		var errorResp ErrorResponse
 		if err := json.Unmarshal(respBody, &errorResp); err != nil {
-			c.stats.AddError()
-			return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(respBody))
+			return c.errorf("API request failed with status %d: %s", resp.StatusCode, string(respBody))
 		}
-		c.stats.AddError()
-		return nil, fmt.Errorf("API error: %s (type: %s)", errorResp.Error.Message, errorResp.Error.Type)
+		return c.errorf("API error: %s (type: %s)", errorResp.Error.Message, errorResp.Error.Type)
 	}
 
 	// Parse successful response
 	var chatResp ChatCompletionResponse
 	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		c.stats.AddError()
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+		return c.errorf("failed to unmarshal response: %w", err)
 	}
 
 	// Update statistics

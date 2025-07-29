@@ -13,7 +13,7 @@ func executeTool(engine *tools.Engine, functionName string, args map[string]inte
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal arguments: %w", err)
 	}
-	
+
 	toolCall := map[string]interface{}{
 		"name":      functionName,
 		"arguments": string(argsBytes),

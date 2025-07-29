@@ -62,18 +62,18 @@ func (a *App) Run() error {
 	}
 
 	// Initialize OpenAI client
-	if err := a.initializeOpenAI(); err != nil {
-		return fmt.Errorf("failed to initialize OpenAI client: %w", err)
+	if err := a.executeWithError(a.initializeOpenAI, "initialize OpenAI client"); err != nil {
+		return err
 	}
 
 	// Initialize tool execution engine
-	if err := a.initializeToolEngine(); err != nil {
-		return fmt.Errorf("failed to initialize tool engine: %w", err)
+	if err := a.executeWithError(a.initializeToolEngine, "initialize tool engine"); err != nil {
+		return err
 	}
 
 	// Execute LLM interaction
-	if err := a.executeTask(); err != nil {
-		return fmt.Errorf("task execution failed: %w", err)
+	if err := a.executeWithError(a.executeTask, "execute task"); err != nil {
+		return err
 	}
 
 	// Show statistics if requested
@@ -317,6 +317,38 @@ func (a *App) IsExitRequested() bool {
 	return a.exitRequested
 }
 
+// executeWithError wraps function execution with standardized error handling
+func (a *App) executeWithError(fn func() error, operation string) error {
+	if err := fn(); err != nil {
+		return fmt.Errorf("failed to %s: %w", operation, err)
+	}
+	return nil
+}
+
+// validateRange validates that a value is within the specified range
+func validateRange(value int, min, max int, name string) error {
+	if value < min || value > max {
+		return fmt.Errorf("%s must be between %d and %d", name, min, max)
+	}
+	return nil
+}
+
+// validateInt64Range validates that an int64 value is within the specified range
+func validateInt64Range(value int64, min, max int64, name string) error {
+	if value < min || value > max {
+		return fmt.Errorf("%s must be between %d and %d", name, min, max)
+	}
+	return nil
+}
+
+// validateFloatRange validates that a float value is within the specified range
+func validateFloatRange(value float64, min, max float64, name string) error {
+	if value < min || value > max {
+		return fmt.Errorf("%s must be between %.1f and %.1f", name, min, max)
+	}
+	return nil
+}
+
 // validateConfig validates the loaded configuration
 func (a *App) validateConfig() error {
 	// Check OpenAI API key
@@ -330,24 +362,24 @@ func (a *App) validateConfig() error {
 	}
 
 	// Validate numeric ranges
-	if a.fileConfig.MaxTokens <= 0 || a.fileConfig.MaxTokens > 32768 {
-		return fmt.Errorf("max_tokens must be between 1 and 32768")
+	if err := validateRange(a.fileConfig.MaxTokens, 1, 32768, "max_tokens"); err != nil {
+		return err
 	}
 
-	if a.fileConfig.Temperature < 0.0 || a.fileConfig.Temperature > 2.0 {
-		return fmt.Errorf("temperature must be between 0.0 and 2.0")
+	if err := validateFloatRange(a.fileConfig.Temperature, 0.0, 2.0, "temperature"); err != nil {
+		return err
 	}
 
-	if a.fileConfig.MaxAPICalls <= 0 || a.fileConfig.MaxAPICalls > 1000 {
-		return fmt.Errorf("max_api_calls must be between 1 and 1000")
+	if err := validateRange(a.fileConfig.MaxAPICalls, 1, 1000, "max_api_calls"); err != nil {
+		return err
 	}
 
-	if a.fileConfig.TimeoutSeconds <= 0 || a.fileConfig.TimeoutSeconds > 3600 {
-		return fmt.Errorf("timeout_seconds must be between 1 and 3600")
+	if err := validateRange(a.fileConfig.TimeoutSeconds, 1, 3600, "timeout_seconds"); err != nil {
+		return err
 	}
 
-	if a.fileConfig.MaxFileSize <= 0 || a.fileConfig.MaxFileSize > 100*1024*1024 {
-		return fmt.Errorf("max_file_size must be between 1 and 100MB")
+	if err := validateInt64Range(a.fileConfig.MaxFileSize, 1, 100*1024*1024, "max_file_size"); err != nil {
+		return err
 	}
 
 	if a.fileConfig.ReadBufferSize <= 0 || a.fileConfig.ReadBufferSize > 64*1024 {

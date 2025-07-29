@@ -25,18 +25,18 @@ type PatchLine struct {
 // Args: [--validate] - optional pre-validation without applying patch
 func Patch(args []string, stdin io.Reader, stdout io.Writer) error {
 	// Parse arguments
-	validateOnly := false
+	dryRun := false
 	for _, arg := range args {
 		switch arg {
-		case "--validate", "-v":
-			validateOnly = true
+		case "--dry-run":
+			dryRun = true
 		case "--help", "-h":
 			fmt.Fprint(stdout, `patch - Apply unified diff patches to text
 
-Usage: patch [--validate]
+Usage: patch [--dry-run]
 
 Options:
-  --validate, -v    Validate patch without applying (pre-validation mode)
+  --dry-run         Don't actually apply patch (validation only)
   --help, -h        Show this help message
 
 Input format: original_text + ---LLMCMD_PATCH_SEPARATOR--- + patch_content
@@ -61,14 +61,14 @@ Input format: original_text + ---LLMCMD_PATCH_SEPARATOR--- + patch_content
 	originalText := strings.TrimSpace(parts[0])
 	patchContent := strings.TrimSpace(parts[1])
 
-	if validateOnly {
-		// Pre-validation mode: only check if patch is valid
+	if dryRun {
+		// Dry-run mode: only check if patch is valid
 		err := validatePatch(originalText, patchContent)
 		if err != nil {
-			fmt.Fprintf(stdout, "VALIDATION FAILED: %v\n", err)
+			fmt.Fprintf(stdout, "DRY-RUN FAILED: %v\n", err)
 			return nil // Don't return error for validation failure
 		} else {
-			fmt.Fprintf(stdout, "VALIDATION SUCCESS: patch can be applied cleanly\n")
+			fmt.Fprintf(stdout, "DRY-RUN SUCCESS: patch can be applied cleanly\n")
 			return nil
 		}
 	}
