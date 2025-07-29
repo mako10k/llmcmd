@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -198,28 +199,35 @@ func getFileInfo(filePath string) map[string]interface{} {
 
 	// Determine file type based on extension and content
 	ext := filepath.Ext(filePath)
-	switch ext {
-	case ".txt", ".md", ".log":
-		info["file_type"] = "text"
-	case ".json", ".xml", ".yaml", ".yml":
-		info["file_type"] = "structured_text"
-	case ".csv", ".tsv":
-		info["file_type"] = "tabular_data"
-	case ".tar", ".tar.gz", ".tgz", ".zip", ".rar":
+	fileName := filepath.Base(filePath)
+	
+	// Check for compound extensions first
+	if strings.HasSuffix(fileName, ".tar.gz") || strings.HasSuffix(fileName, ".tar.bz2") || strings.HasSuffix(fileName, ".tar.xz") {
 		info["file_type"] = "archive"
-	case ".bin", ".exe", ".so", ".dll":
-		info["file_type"] = "binary"
-	case ".jpg", ".jpeg", ".png", ".gif", ".bmp":
-		info["file_type"] = "image"
-	case ".mp3", ".wav", ".ogg":
-		info["file_type"] = "audio"
-	case ".mp4", ".avi", ".mkv":
-		info["file_type"] = "video"
-	default:
-		if stat.Mode()&0111 != 0 {
-			info["file_type"] = "executable"
-		} else {
-			info["file_type"] = "unknown"
+	} else {
+		switch ext {
+		case ".txt", ".md", ".log":
+			info["file_type"] = "text"
+		case ".json", ".xml", ".yaml", ".yml":
+			info["file_type"] = "structured_text"
+		case ".csv", ".tsv":
+			info["file_type"] = "tabular_data"
+		case ".tar", ".tgz", ".zip", ".rar", ".gz", ".bz2", ".xz", ".7z":
+			info["file_type"] = "archive"
+		case ".bin", ".exe", ".so", ".dll":
+			info["file_type"] = "binary"
+		case ".jpg", ".jpeg", ".png", ".gif", ".bmp":
+			info["file_type"] = "image"
+		case ".mp3", ".wav", ".ogg":
+			info["file_type"] = "audio"
+		case ".mp4", ".avi", ".mkv":
+			info["file_type"] = "video"
+		default:
+			if stat.Mode()&0111 != 0 {
+				info["file_type"] = "executable"
+			} else {
+				info["file_type"] = "unknown"
+			}
 		}
 	}
 
@@ -240,16 +248,36 @@ func getFileInfo(filePath string) map[string]interface{} {
 
 // getStdFileInfo gets file information for standard file descriptors (stdin/stdout/stderr)
 func getStdFileInfo(fd int) map[string]interface{} {
-	// Try to get file info for the standard FD
-	file := os.NewFile(uintptr(fd), fmt.Sprintf("fd%d", fd))
-	if file == nil {
-		return map[string]interface{}{
-			"type": "terminal",
+	defer func() {
+		if r := recover(); r != nil {
+			// If anything panics, return a safe default
 		}
-	}
-	defer file.Close()
+	}()
 
-	stat, err := file.Stat()
+	// Try to get file info for the standard FD
+	var stat os.FileInfo
+	var err error
+	
+	// Use different approaches based on the FD
+	switch fd {
+	case 0: // stdin
+		stat, err = os.Stdin.Stat()
+	case 1: // stdout
+		stat, err = os.Stdout.Stat()
+	case 2: // stderr
+		stat, err = os.Stderr.Stat()
+	default:
+		// For other FDs, try os.NewFile approach
+		file := os.NewFile(uintptr(fd), fmt.Sprintf("fd%d", fd))
+		if file == nil {
+			return map[string]interface{}{
+				"type": "terminal",
+			}
+		}
+		defer file.Close()
+		stat, err = file.Stat()
+	}
+	
 	if err != nil {
 		return map[string]interface{}{
 			"type": "terminal",
@@ -267,13 +295,19 @@ func getStdFileInfo(fd int) map[string]interface{} {
 		info["modtime"] = stat.ModTime().Format("2006-01-02 15:04:05")
 		info["type"] = "file"
 
-		// Try to get the actual file path if possible
-		if fdPath := fmt.Sprintf("/proc/self/fd/%d", fd); true {
-			if realPath, err := os.Readlink(fdPath); err == nil {
-				info["file_path"] = realPath
-				
-				// Get file type from extension
-				ext := filepath.Ext(realPath)
+		// Try to get the actual file path if possible (Linux/Unix only)
+		fdPath := fmt.Sprintf("/proc/self/fd/%d", fd)
+		if realPath, err := os.Readlink(fdPath); err == nil {
+			info["file_path"] = realPath
+			
+			// Get file type from extension
+			ext := filepath.Ext(realPath)
+			fileName := filepath.Base(realPath)
+			
+			// Check for compound extensions first
+			if strings.HasSuffix(fileName, ".tar.gz") || strings.HasSuffix(fileName, ".tar.bz2") || strings.HasSuffix(fileName, ".tar.xz") {
+				info["file_type"] = "archive"
+			} else {
 				switch ext {
 				case ".txt", ".md", ".log":
 					info["file_type"] = "text"
@@ -281,7 +315,7 @@ func getStdFileInfo(fd int) map[string]interface{} {
 					info["file_type"] = "structured_text"
 				case ".csv", ".tsv":
 					info["file_type"] = "tabular_data"
-				case ".tar", ".tar.gz", ".tgz", ".zip", ".rar":
+				case ".tar", ".tgz", ".zip", ".rar", ".gz", ".bz2", ".xz", ".7z":
 					info["file_type"] = "archive"
 				case ".bin", ".exe", ".so", ".dll":
 					info["file_type"] = "binary"
@@ -290,18 +324,31 @@ func getStdFileInfo(fd int) map[string]interface{} {
 				default:
 					info["file_type"] = "unknown"
 				}
+			}
 
-				// Size category
-				size := stat.Size()
-				if size < 1024 {
-					info["size_category"] = "small"
-				} else if size < 1024*1024 {
-					info["size_category"] = "medium"
-				} else if size < 10*1024*1024 {
-					info["size_category"] = "large"
-				} else {
-					info["size_category"] = "very_large"
-				}
+			// Size category
+			size := stat.Size()
+			if size < 1024 {
+				info["size_category"] = "small"
+			} else if size < 1024*1024 {
+				info["size_category"] = "medium"
+			} else if size < 10*1024*1024 {
+				info["size_category"] = "large"
+			} else {
+				info["size_category"] = "very_large"
+			}
+		} else {
+			// If we can't get the path, still provide basic file info
+			info["file_type"] = "unknown"
+			size := stat.Size()
+			if size < 1024 {
+				info["size_category"] = "small"
+			} else if size < 1024*1024 {
+				info["size_category"] = "medium"
+			} else if size < 10*1024*1024 {
+				info["size_category"] = "large"
+			} else {
+				info["size_category"] = "very_large"
 			}
 		}
 	} else if stat.Mode()&os.ModeCharDevice != 0 {
@@ -331,31 +378,94 @@ func CreateInitialMessages(prompt, instructions string, inputFiles []string, cus
 		systemContent = `You are a command-line text processing assistant. Process user requests efficiently using these tools:
 
 TOOLS AVAILABLE:
-1. read(fd) - Read from file descriptors (count=bytes, lines=line count)
-2. write(fd, data) - Write to stdout/stderr (newline=true adds \\n)
-3. pipe(commands, input) - Execute built-in commands
-4. exit(code) - Terminate program
+1. read(fd, [lines], [count]) - Read from file descriptors
+   - fd: file descriptor number (0=stdin, 3+=input files)
+   - lines: number of lines to read (optional)
+   - count: number of bytes to read (optional)
 
-STANDARD WORKFLOW:
-1. read(fd=0) for stdin → 2. process data → 3. write(fd=1, data) → 4. exit(0)
+2. write(fd, data, [newline]) - Write to output
+   - fd: 1=stdout, 2=stderr, or pipe input fd
+   - data: text content to write
+   - newline: add newline (default false)
 
-EXAMPLE WORKFLOW:
-For line processing: read(fd=0, lines=40) for efficient reading
-For filtering and sorting: pipe({commands:[{name:"grep",args:["apple"]},{name:"sort",args:["-u"]}], input:{type:"fd",fd:0}})
-For final output: write(fd=1, data, newline=true) to ensure proper formatting
+3. pipe(cmd, [args], [in_fd], [out_fd], [size]) - Execute built-in commands
+   - Pattern 1: pipe({cmd, args}) → {in_fd, out_fd} (background execution)
+   - Pattern 2: pipe({cmd, args, in_fd, size}) → {out_fd} (background with input)
+   - Pattern 3: pipe({cmd, args, out_fd}) → {in_fd} (background with output)
+   - Pattern 4: pipe({cmd, args, in_fd, out_fd, [size]}) → {exit_code} (foreground)
+   - NOTE: Must specify BOTH in_fd AND out_fd for foreground execution
+   - For simple tasks: pipe({cmd, args, in_fd: 0, out_fd: 1}) reads stdin, writes stdout
+
+4. tee(in_fd, out_fds) - Copy input to multiple outputs
+   - in_fd: source file descriptor
+   - out_fds: array of output file descriptors
+
+5. close(fd) - Close file descriptor and get command results
+   - Returns exit code for command input fds
+   - Must close output fds before input fds (deadlock prevention)
+
+6. exit(code) - Terminate program with exit code
+
+BUILT-IN COMMANDS: cat, grep, sed, head, tail, sort, wc, tr, cut, uniq, nl, rev
+
+STANDARD WORKFLOWS:
+- Simple processing: read(0) → process → write(1, data) → exit(0)
+- Background pipeline: pipe({cmd:"grep", args:["pattern"]}) → write(in_fd, data) → read(out_fd) → close(out_fd) → close(in_fd)
+- Multi-step: pipe() → tee() → multiple processing streams → close() for results
 
 EFFICIENCY GUIDELINES:
 - Use minimal API calls - combine operations when possible
-- Read data in appropriate chunks
+- Read data in appropriate chunks (lines for text, bytes for binary)
 - Process streaming data efficiently
+- Follow proper close() order to prevent deadlocks
 
-IMPORTANT: Analyze INPUT TEXT from stdin, not the question language. Provide direct answers about the input data.`
+ANALYSIS APPROACH:
+- For file analysis questions ("このファイルは何ですか？", "What is this file?"):
+  * Use file information (name, extension, size) provided in fd mapping
+  * For .tar.gz, .zip, .pdf, .jpg etc: Answer based on extension and metadata
+  * Do NOT read binary file contents with grep or other text tools
+  * Provide file type identification based on extension and size information
+
+- For text content analysis ("何が書いてありますか？", "What does it contain?"):
+  * Read actual file content using read(fd) tools
+  * Use appropriate text processing commands (grep, head, tail, etc.)
+  * Process text data to answer content questions
+
+- For data processing tasks:
+  * Read input data, process with built-in commands, output results
+  * Use pipe() for complex processing chains
+  * Follow proper fd management and close() ordering
+
+- Answer user questions directly and clearly based on available information
+- Always consider file size and type before choosing processing approach`
 	}
 
 	messages = append(messages, ChatMessage{
 		Role:    "system",
 		Content: systemContent,
 	})
+
+	// Skip FD mapping and technical details if tools are disabled
+	if disableTools {
+		// For disabled tools, just add the user instruction directly
+		userContent := instructions
+		if prompt != "" {
+			if userContent != "" {
+				userContent = prompt + "\n\n" + userContent
+			} else {
+				userContent = prompt
+			}
+		}
+		
+		if userContent != "" {
+			messages = append(messages, ChatMessage{
+				Role:    "user",
+				Content: userContent,
+			})
+		}
+		
+		return messages
+	}
 
 	// First user message: Technical file descriptor information
 	var fdMappingContent string

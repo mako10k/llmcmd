@@ -186,55 +186,84 @@ func ToolDefinitions() []Tool {
 			Type: "function",
 			Function: ToolFunction{
 				Name:        "pipe",
-				Description: "Execute pipeline of built-in commands with input/output processing",
+				Description: "Execute built-in commands with flexible input/output patterns: 1) pipe({cmd,args}) for background with new fds, 2) pipe({cmd,args,in_fd,size}) for background with input, 3) pipe({cmd,args,out_fd}) for background with output, 4) pipe({cmd,args,in_fd,out_fd,[size]}) for foreground execution",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
-						"commands": map[string]interface{}{
+						"cmd": map[string]interface{}{
+							"type":        "string",
+							"description": "Command name to execute",
+							"enum":        []string{"cat", "grep", "sed", "head", "tail", "sort", "wc", "tr", "cut", "uniq", "nl", "rev"},
+						},
+						"args": map[string]interface{}{
 							"type":        "array",
-							"description": "Array of commands to execute in pipeline",
+							"description": "Command arguments array",
 							"items": map[string]interface{}{
-								"type": "object",
-								"properties": map[string]interface{}{
-									"name": map[string]interface{}{
-										"type":        "string",
-										"description": "Command name",
-										"enum":        []string{"cat", "grep", "sed", "head", "tail", "sort", "wc", "tr", "cut", "uniq", "nl", "tee", "rev"},
-									},
-									"args": map[string]interface{}{
-										"type":        "array",
-										"description": "Command arguments",
-										"items": map[string]interface{}{
-											"type": "string",
-										},
-									},
-								},
-								"required": []string{"name"},
+								"type": "string",
 							},
 						},
-						"input": map[string]interface{}{
-							"type":        "object",
-							"description": "Input source for pipeline",
-							"properties": map[string]interface{}{
-								"type": map[string]interface{}{
-									"type":        "string",
-									"description": "Input type",
-									"enum":        []string{"fd", "data"},
-								},
-								"fd": map[string]interface{}{
-									"type":        "integer",
-									"description": "File descriptor (0=stdin, 3+=input files)",
-									"minimum":     0,
-								},
-								"data": map[string]interface{}{
-									"type":        "string",
-									"description": "Raw input data",
-								},
-							},
-							"required": []string{"type"},
+						"in_fd": map[string]interface{}{
+							"type":        "integer",
+							"description": "Input file descriptor for command (optional). When provided with out_fd, runs synchronously.",
+							"minimum":     0,
+						},
+						"out_fd": map[string]interface{}{
+							"type":        "integer",
+							"description": "Output file descriptor for command (optional). When provided with in_fd, runs synchronously.",
+							"minimum":     1,
+						},
+						"size": map[string]interface{}{
+							"type":        "integer",
+							"description": "Number of bytes to process from in_fd (optional). For foreground execution control.",
+							"minimum":     1,
 						},
 					},
-					"required": []string{"commands", "input"},
+					"required": []string{"cmd"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolFunction{
+				Name:        "tee",
+				Description: "Copy input from one fd to multiple output fds (1:many relationship). Creates dependency that requires all output fds to be closed before input fd.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"in_fd": map[string]interface{}{
+							"type":        "integer",
+							"description": "Source file descriptor to read from",
+							"minimum":     0,
+						},
+						"out_fds": map[string]interface{}{
+							"type":        "array",
+							"description": "Array of destination file descriptors (1=stdout, 2=stderr, or other fds)",
+							"items": map[string]interface{}{
+								"type":    "integer",
+								"minimum": 1,
+							},
+							"minItems": 1,
+						},
+					},
+					"required": []string{"in_fd", "out_fds"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolFunction{
+				Name:        "close",
+				Description: "Close a file descriptor and wait for command termination. For pipe/tee dependencies, output fds must be closed before input fds to prevent deadlock. Returns exit code for command input fds.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"fd": map[string]interface{}{
+							"type":        "integer",
+							"description": "File descriptor to close (respects dependency order)",
+							"minimum":     0,
+						},
+					},
+					"required": []string{"fd"},
 				},
 			},
 		},
@@ -242,13 +271,13 @@ func ToolDefinitions() []Tool {
 			Type: "function",
 			Function: ToolFunction{
 				Name:        "exit",
-				Description: "Terminate the program with an exit code",
+				Description: "Exit the program with specified code",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"code": map[string]interface{}{
 							"type":        "integer",
-							"description": "Exit code (0=success, 1-255=error)",
+							"description": "Exit code",
 							"minimum":     0,
 							"maximum":     255,
 						},
