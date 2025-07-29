@@ -46,16 +46,36 @@
 - **Code Editor**: VS Code
 - **Go Version**: 1.21 or higher
 
+### ⚠️ CRITICAL: Tool Selection Requirements
+
+**🚫 DO NOT USE `run_in_terminal`** - This tool has known output reading bugs and cannot reliably capture command outputs, especially when they are truncated or large.
+
+**✅ ALWAYS USE `#mcp-shell-server`** - This is the ONLY approved method for executing shell commands in this project. It provides:
+- Reliable output capture with truncation handling
+- Background process management
+- Complete output retrieval via `output_id`
+- Proper error handling and status monitoring
+
+**Violation of this rule will cause development failures and incomplete command outputs.**
+
 ### mcp-shell-server Usage Notes
 - **Output Tracking**: When command output is truncated, use the returned `output_id` with `read_execution_output` to get complete results
 - **Common Mistake**: Don't assume output is complete when truncated - always check for `output_truncated: true` and use `output_id` to retrieve full content
 - **Background Processes**: Long-running commands automatically switch to background mode and provide `execution_id` for status monitoring
 
 ### Development Workflow
-1. Use #mcp-shell-server for Git commands and build operations
+1. **🔥 MANDATORY**: Use #mcp-shell-server for Git commands and build operations - NEVER use run_in_terminal
 2. Incremental implementation and testing
 3. Proper commit messages with clear change descriptions
 4. Phase-based development approach
+
+### Shell Command Execution Rules
+- **Git Operations**: `#mcp-shell-server` only (git status, git commit, git push, etc.)
+- **Build Commands**: `#mcp-shell-server` only (go build, go test, go mod, etc.)
+- **File Operations**: `#mcp-shell-server` only (grep, find, ls, etc.)
+- **ANY Shell Command**: `#mcp-shell-server` only - NO EXCEPTIONS
+
+**Reason**: `run_in_terminal` has output reading bugs that cause incomplete results and development workflow failures.
 
 ## Implementation Phases
 
@@ -76,7 +96,7 @@
 ### Phase 3: Tool Implementation (Days 8-13)
 - [ ] read tool: File/stream reading with fd management
 - [ ] write tool: File/stream writing with size tracking
-- [ ] pipe tool: Built-in command execution and data transfer
+- [ ] spawn tool: Background-only command execution and data transfer
 - [ ] exit tool: Program termination with cleanup
 
 ### Phase 4: Built-in Commands (Days 14-17)
