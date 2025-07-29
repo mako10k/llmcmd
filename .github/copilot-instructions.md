@@ -10,6 +10,33 @@
 2. **Simplicity**: Clean, maintainable code using compiled languages
 3. **Efficiency**: Optimized API usage with proper cost controls
 4. **Extensibility**: Future-ready architecture for additional features
+5. **Reliability**: Fail-First principle with contract programming
+
+## Development Principles
+
+### 🚨 CRITICAL: Fail-First Principle
+- **Immediate Termination**: When an error occurs, terminate the program immediately
+- **No Error Hiding**: NEVER hide, suppress, or continue processing after errors
+- **Clear Error Messages**: Always provide clear, actionable error messages
+- **Early Detection**: Detect and report errors as early as possible
+
+### Contract Programming
+- **Preconditions**: Validate all input parameters and system state before execution
+- **Postconditions**: Verify expected outcomes where applicable
+- **Assertions**: Use explicit checks for critical assumptions
+- **Documentation**: Document all contracts in code comments
+
+### Error Handling Rules
+1. **Fatal Errors**: Use `log.Fatal()` or `os.Exit(1)` for unrecoverable errors
+2. **Expected Errors**: Return explicit error values, handle at appropriate level
+3. **Validation**: Check all inputs, nil pointers, and boundary conditions
+4. **No Silent Failures**: Every error path must be visible and actionable
+
+### Code Quality Standards
+- **Defensive Programming**: Assume inputs are invalid until proven otherwise
+- **Explicit Error Paths**: Every function that can fail must return an error
+- **Resource Cleanup**: Always use proper cleanup (defer, close, etc.)
+- **Testing**: Test error conditions extensively, not just happy paths
 
 ## Core Constraints
 
