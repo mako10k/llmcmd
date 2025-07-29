@@ -1,7 +1,7 @@
-# Binaries
+# Binaries (excluding release binaries)
 llmcmd
 llmcmd.exe
-llmcmd-*
+/llmcmd-*
 
 # Go build artifacts
 *.o
