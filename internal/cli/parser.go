@@ -173,6 +173,10 @@ func (af *arrayFlags) Set(value string) error {
 func ShowHelp() {
 	fmt.Print(`llmcmd - LLM Command Line Tool
 
+DESCRIPTION:
+    A secure command-line tool that enables Large Language Models to execute
+    text processing tasks using the OpenAI ChatCompletion API with built-in tools.
+
 USAGE:
     llmcmd [OPTIONS] [INSTRUCTIONS]
 
@@ -184,23 +188,64 @@ OPTIONS:
     -v, --verbose           Enable verbose logging
     -s, --stats             Show detailed statistics after execution
     -n, --no-stdin          Skip reading from stdin
-    -h, --help          Show this help message
-    -V, --version       Show version information
+    -h, --help              Show this help message
+    -V, --version           Show version information
 
 ARGUMENTS:
-    INSTRUCTIONS        Command instructions for the LLM
+    INSTRUCTIONS            Command instructions for the LLM
 
 EXAMPLES:
-    llmcmd -p "Summarize this file" -i input.txt -o summary.txt
-    llmcmd -i file1.txt -i file2.txt "Compare these files"
-    llmcmd "Process this text and extract key points" < input.txt
+    # Basic text processing from stdin
+    echo "hello world" | llmcmd "Convert to uppercase"
+    
+    # File processing
+    llmcmd -i input.txt -o output.txt "Summarize this document"
+    
+    # Multiple file comparison
+    llmcmd -i file1.txt -i file2.txt "Compare these files and highlight differences"
+    
+    # Complex text operations
+    echo -e "apple\nbanana\ncherry" | llmcmd "Sort alphabetically and number each line"
 
 CONFIGURATION:
-    Configuration can be provided via:
-    1. Command line options (highest priority)
-    2. Configuration file (~/.llmcmdrc by default)
-    3. Environment variables (lowest priority)
+    Configuration priority (highest to lowest):
+    1. Command line options
+    2. Configuration file (~/.llmcmdrc by default)  
+    3. Environment variables
 
-For more information, visit: https://github.com/mako10k/llmcmd
+    Config file format (.llmcmdrc):
+        openai_api_key=your-api-key-here
+        model=gpt-4o-mini
+        max_tokens=4096
+        temperature=0.1
+        max_api_calls=50
+        timeout_seconds=300
+        max_file_size=10485760
+        read_buffer_size=4096
+        max_retries=3
+        retry_delay_ms=1000
+
+    Environment variables:
+        OPENAI_API_KEY          API key for OpenAI
+        LLMCMD_MODEL           Model to use (default: gpt-4o-mini)
+        LLMCMD_MAX_TOKENS      Maximum tokens per response
+        LLMCMD_TEMPERATURE     Model temperature (0.0-2.0)
+        LLMCMD_MAX_API_CALLS   Maximum API calls per session
+        LLMCMD_TIMEOUT         Timeout in seconds
+
+SECURITY:
+    - No external command execution (built-in tools only)
+    - File access limited to specified input/output files
+    - API rate limiting and timeout controls
+    - Memory usage limits for safe operation
+
+BUILT-IN TOOLS:
+    - read: Read from files or stdin with line/count controls
+    - write: Write to files or stdout with newline options
+    - fstat: Get file statistics and metadata
+    - pipe: Execute secure built-in text processing commands
+    - exit: Clean program termination
+
+For more information: https://github.com/mako10k/llmcmd
 `)
 }

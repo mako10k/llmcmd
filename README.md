@@ -75,28 +75,76 @@ go build -o llmcmd ./cmd/llmcmd
 sudo ./llmcmd --install
 ```
 
-## 設定
+## Configuration
 
-### OpenAI APIキーの設定
+### OpenAI API Key Setup
 
-#### 環境変数（推奨）
-
-```bash
-export OPENAI_API_KEY="sk-..."
-```
-
-#### 設定ファイル
-
-`~/.llmcmdrc`ファイルを作成：
+#### Environment Variable (Recommended)
 
 ```bash
-OPENAI_API_KEY=sk-...
-LLMCMD_MAX_INPUT_BYTES=10485760
-LLMCMD_MAX_OUTPUT_BYTES=10485760
-LLMCMD_ALLOWED_CMDS=ls,cat,grep,sort,wc,head,tail
+export OPENAI_API_KEY="sk-your-api-key-here"
 ```
 
-## 使用方法
+#### Configuration File
+
+Create a configuration file at `~/.llmcmdrc`:
+
+```bash
+# Copy the example configuration
+curl -sL https://raw.githubusercontent.com/mako10k/llmcmd/main/.llmcmdrc.example -o ~/.llmcmdrc
+
+# Edit with your API key
+nano ~/.llmcmdrc
+```
+
+### Configuration Options
+
+The configuration file supports the following options:
+
+```ini
+# OpenAI API Configuration
+openai_api_key=your-api-key-here
+model=gpt-4o-mini
+max_tokens=4096
+temperature=0.1
+
+# Security & Rate Limiting
+max_api_calls=50
+timeout_seconds=300
+max_file_size=10485760    # 10MB
+read_buffer_size=4096     # 4KB
+
+# Retry Configuration
+max_retries=3
+retry_delay_ms=1000
+
+# Advanced Options
+# system_prompt=           # Custom system prompt
+# disable_tools=false      # Disable LLM tools
+```
+
+### Environment Variables
+
+You can also configure via environment variables:
+
+```bash
+export OPENAI_API_KEY="sk-your-api-key-here"
+export LLMCMD_MODEL="gpt-4o-mini"
+export LLMCMD_MAX_TOKENS="4096"
+export LLMCMD_TEMPERATURE="0.1"
+export LLMCMD_MAX_API_CALLS="50"
+export LLMCMD_TIMEOUT="300"
+```
+
+### Configuration Priority
+
+Settings are applied in this order (highest to lowest priority):
+1. Command line options
+2. Configuration file (`~/.llmcmdrc`)
+3. Environment variables
+4. Default values
+
+## Usage
 
 ### 基本的な使い方
 
