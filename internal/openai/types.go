@@ -6,13 +6,13 @@ import (
 
 // ChatCompletionRequest represents an OpenAI ChatCompletion API request
 type ChatCompletionRequest struct {
-	Model       string                 `json:"model"`
-	Messages    []ChatMessage          `json:"messages"`
-	Tools       []Tool                 `json:"tools,omitempty"`
-	ToolChoice  interface{}            `json:"tool_choice,omitempty"`
-	MaxTokens   int                    `json:"max_tokens,omitempty"`
-	Temperature float64                `json:"temperature,omitempty"`
-	Stream      bool                   `json:"stream,omitempty"`
+	Model       string        `json:"model"`
+	Messages    []ChatMessage `json:"messages"`
+	Tools       []Tool        `json:"tools,omitempty"`
+	ToolChoice  interface{}   `json:"tool_choice,omitempty"`
+	MaxTokens   int           `json:"max_tokens,omitempty"`
+	Temperature float64       `json:"temperature,omitempty"`
+	Stream      bool          `json:"stream,omitempty"`
 }
 
 // ChatCompletionResponse represents an OpenAI ChatCompletion API response
@@ -144,6 +144,12 @@ func ToolDefinitions() []Tool {
 							"minimum":     1,
 							"maximum":     4096,
 						},
+						"lines": map[string]interface{}{
+							"type":        "integer",
+							"description": "Number of lines to read (alternative to count, default: 40)",
+							"minimum":     1,
+							"maximum":     1000,
+						},
 					},
 					"required": []string{"fd"},
 				},
@@ -166,6 +172,10 @@ func ToolDefinitions() []Tool {
 						"data": map[string]interface{}{
 							"type":        "string",
 							"description": "Data to write",
+						},
+						"newline": map[string]interface{}{
+							"type":        "boolean",
+							"description": "Add newline at the end (default: false)",
 						},
 					},
 					"required": []string{"fd", "data"},
@@ -248,6 +258,24 @@ func ToolDefinitions() []Tool {
 						},
 					},
 					"required": []string{"code"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolFunction{
+				Name:        "fstat",
+				Description: "Get file information and statistics for a file descriptor",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"fd": map[string]interface{}{
+							"type":        "integer",
+							"description": "File descriptor number (0=stdin, 3+=input files)",
+							"minimum":     0,
+						},
+					},
+					"required": []string{"fd"},
 				},
 			},
 		},

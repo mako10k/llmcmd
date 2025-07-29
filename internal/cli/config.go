@@ -9,36 +9,36 @@ import (
 
 // ConfigFile represents configuration loaded from file
 type ConfigFile struct {
-	OpenAIAPIKey     string `json:"openai_api_key"`
-	OpenAIBaseURL    string `json:"openai_base_url"`
-	Model            string `json:"model"`
-	MaxTokens        int    `json:"max_tokens"`
-	Temperature      float64 `json:"temperature"`
-	MaxAPICalls      int    `json:"max_api_calls"`
-	TimeoutSeconds   int    `json:"timeout_seconds"`
-	MaxFileSize      int64  `json:"max_file_size"`
-	ReadBufferSize   int    `json:"read_buffer_size"`
-	MaxRetries       int    `json:"max_retries"`
-	RetryDelay       int    `json:"retry_delay_ms"`
-	SystemPrompt     string `json:"system_prompt"`
-	DisableTools     bool   `json:"disable_tools"`
+	OpenAIAPIKey   string  `json:"openai_api_key"`
+	OpenAIBaseURL  string  `json:"openai_base_url"`
+	Model          string  `json:"model"`
+	MaxTokens      int     `json:"max_tokens"`
+	Temperature    float64 `json:"temperature"`
+	MaxAPICalls    int     `json:"max_api_calls"`
+	TimeoutSeconds int     `json:"timeout_seconds"`
+	MaxFileSize    int64   `json:"max_file_size"`
+	ReadBufferSize int     `json:"read_buffer_size"`
+	MaxRetries     int     `json:"max_retries"`
+	RetryDelay     int     `json:"retry_delay_ms"`
+	SystemPrompt   string  `json:"system_prompt"`
+	DisableTools   bool    `json:"disable_tools"`
 }
 
 // DefaultConfig returns default configuration values
 func DefaultConfig() *ConfigFile {
 	return &ConfigFile{
-		OpenAIBaseURL:    "https://api.openai.com/v1",
-		Model:            "gpt-4o-mini",
-		MaxTokens:        4096,
-		Temperature:      0.1,
-		MaxAPICalls:      50,
-		TimeoutSeconds:   300,
-		MaxFileSize:      10 * 1024 * 1024, // 10MB
-		ReadBufferSize:   4096,             // 4KB
-		MaxRetries:       3,
-		RetryDelay:       1000, // 1 second
-		SystemPrompt:     "", // Empty means use default built-in prompt
-		DisableTools:     false, // Tools enabled by default
+		OpenAIBaseURL:  "https://api.openai.com/v1",
+		Model:          "gpt-4o-mini",
+		MaxTokens:      4096,
+		Temperature:    0.1,
+		MaxAPICalls:    50,
+		TimeoutSeconds: 300,
+		MaxFileSize:    10 * 1024 * 1024, // 10MB
+		ReadBufferSize: 4096,             // 4KB
+		MaxRetries:     3,
+		RetryDelay:     1000,  // 1 second
+		SystemPrompt:   "",    // Empty means use default built-in prompt
+		DisableTools:   false, // Tools enabled by default
 	}
 }
 

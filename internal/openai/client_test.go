@@ -26,8 +26,8 @@ func TestNewClient(t *testing.T) {
 
 func TestToolDefinitions(t *testing.T) {
 	tools := ToolDefinitions()
-	if len(tools) != 4 {
-		t.Errorf("Expected 4 tools, got %d", len(tools))
+	if len(tools) != 5 {
+		t.Errorf("Expected 5 tools, got %d", len(tools))
 	}
 
 	expectedTools := map[string]bool{
@@ -35,6 +35,7 @@ func TestToolDefinitions(t *testing.T) {
 		"write": false,
 		"pipe":  false,
 		"exit":  false,
+		"fstat": false,
 	}
 
 	for _, tool := range tools {
@@ -54,9 +55,9 @@ func TestToolDefinitions(t *testing.T) {
 
 func TestCreateInitialMessages(t *testing.T) {
 	messages := CreateInitialMessages("test prompt", "test instruction", []string{"file1.txt"}, "", false)
-	
-	if len(messages) != 2 {
-		t.Errorf("Expected 2 messages, got %d", len(messages))
+
+	if len(messages) != 3 {
+		t.Errorf("Expected 3 messages, got %d", len(messages))
 	}
 
 	if messages[0].Role != "system" {
@@ -65,5 +66,9 @@ func TestCreateInitialMessages(t *testing.T) {
 
 	if messages[1].Role != "user" {
 		t.Errorf("Second message should be user role, got %s", messages[1].Role)
+	}
+
+	if messages[2].Role != "user" {
+		t.Errorf("Third message should be user role, got %s", messages[2].Role)
 	}
 }

@@ -8,17 +8,17 @@ import (
 
 func TestParseArgs(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		want     *Config
-		wantErr  error
+		name    string
+		args    []string
+		want    *Config
+		wantErr error
 	}{
 		{
 			name: "basic prompt",
 			args: []string{"-p", "test prompt"},
 			want: &Config{
 				Prompt:       "test prompt",
-				InputFiles:   []string{},
+				InputFiles:   []string{"-"}, // Default to stdin when no input files specified
 				Instructions: "",
 			},
 		},
@@ -32,15 +32,15 @@ func TestParseArgs(t *testing.T) {
 			},
 		},
 		{
-			name: "help flag",
-			args: []string{"-h"},
-			want: nil,
+			name:    "help flag",
+			args:    []string{"-h"},
+			want:    nil,
 			wantErr: ErrShowHelp,
 		},
 		{
-			name: "version flag",
-			args: []string{"--version"},
-			want: nil,
+			name:    "version flag",
+			args:    []string{"--version"},
+			want:    nil,
 			wantErr: ErrShowVersion,
 		},
 	}
@@ -92,7 +92,7 @@ func TestParseArgs(t *testing.T) {
 
 func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
-	
+
 	if config.Model != "gpt-4o-mini" {
 		t.Errorf("DefaultConfig() Model = %v, want gpt-4o-mini", config.Model)
 	}

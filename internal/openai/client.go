@@ -12,22 +12,22 @@ import (
 
 // Client represents an OpenAI API client
 type Client struct {
-	httpClient *http.Client
-	apiKey     string
-	baseURL    string
-	stats      ClientStats
-	maxCalls   int
+	httpClient  *http.Client
+	apiKey      string
+	baseURL     string
+	stats       ClientStats
+	maxCalls    int
 	retryConfig RetryConfig
 }
 
 // ClientConfig holds configuration for the OpenAI client
 type ClientConfig struct {
-	APIKey      string
-	BaseURL     string
-	Timeout     time.Duration
-	MaxCalls    int
-	MaxRetries  int
-	RetryDelay  time.Duration
+	APIKey     string
+	BaseURL    string
+	Timeout    time.Duration
+	MaxCalls   int
+	MaxRetries int
+	RetryDelay time.Duration
 }
 
 // NewClient creates a new OpenAI API client
@@ -56,10 +56,10 @@ func NewClient(config ClientConfig) *Client {
 		baseURL:  config.BaseURL,
 		maxCalls: config.MaxCalls,
 		retryConfig: RetryConfig{
-			MaxRetries:      config.MaxRetries,
-			BaseDelay:       config.RetryDelay,
-			MaxDelay:        30 * time.Second,
-			BackoffFactor:   2.0,
+			MaxRetries:    config.MaxRetries,
+			BaseDelay:     config.RetryDelay,
+			MaxDelay:      30 * time.Second,
+			BackoffFactor: 2.0,
 		},
 	}
 }
@@ -155,28 +155,29 @@ func CreateInitialMessages(prompt, instructions string, inputFiles []string, cus
 		systemContent = `You are a helpful assistant. Provide direct, clear answers to user questions without using any special tools or functions. Generate your response directly as plain text.`
 	} else {
 		// Default system message with tool descriptions and efficiency guidelines
-		systemContent = `You are a helpful command-line text processing assistant.
+		systemContent = `You are a command-line text processing assistant. Process user requests efficiently using these tools:
 
 TOOLS AVAILABLE:
-1. read(fd) - Read from file descriptors
-2. write(fd, data) - Write to output (fd=1: stdout, fd=2: stderr)  
+1. read(fd) - Read from file descriptors (count=bytes, lines=line count)
+2. write(fd, data) - Write to stdout/stderr (newline=true adds \\n)
 3. pipe(commands, input) - Execute built-in commands
-4. exit(code) - Terminate
+4. fstat(fd) - Get file information and statistics
+5. exit(code) - Terminate program
 
 STANDARD WORKFLOW:
-1. Read input data if available: read(fd=0) for stdin
-2. Process the data according to user's request
-3. Write results to stdout: write(fd=1, data)
-4. Finish with: exit(0)
+1. read(fd=0) for stdin → 2. process data → 3. write(fd=1, data) → 4. exit(0)
 
-IMPORTANT RULES:
-- When asked about language/content, analyze the INPUT TEXT from stdin (not the question language)
-- The user's question language is different from the input text language
-- Always provide a clear, direct answer about the INPUT data
-- Never use complex pipeline commands unless specifically needed
-- If unsure, provide the most straightforward interpretation
+EXAMPLE WORKFLOW:
+For line processing: read(fd=0, lines=40) for efficient reading
+For filtering and sorting: pipe({commands:[{name:"grep",args:["apple"]},{name:"sort",args:["-u"]}], input:{type:"fd",fd:0}})
+For final output: write(fd=1, data, newline=true) to ensure proper formatting
 
-Process the user's request step by step using this workflow.`
+EFFICIENCY GUIDELINES:
+- Use minimal API calls - combine operations when possible
+- Read data in appropriate chunks
+- Process streaming data efficiently
+
+IMPORTANT: Analyze INPUT TEXT from stdin, not the question language. Provide direct answers about the input data.`
 	}
 
 	messages = append(messages, ChatMessage{
@@ -184,17 +185,8 @@ Process the user's request step by step using this workflow.`
 		Content: systemContent,
 	})
 
-	// User message with prompt and instructions
-	var userContent string
-	if prompt != "" && instructions != "" {
-		userContent = fmt.Sprintf("Prompt: %s\n\nInstructions: %s", prompt, instructions)
-	} else if prompt != "" {
-		userContent = prompt
-	} else {
-		userContent = instructions
-	}
-
-	// Add input source information with clear file descriptor mapping
+	// First user message: Technical file descriptor information
+	var fdMappingContent string
 	var actualFiles []string
 	for _, file := range inputFiles {
 		if file != "-" {
@@ -202,24 +194,39 @@ Process the user's request step by step using this workflow.`
 		}
 	}
 
-	userContent += "\n\nFILE DESCRIPTOR MAPPING:"
-	userContent += "\n- fd=0: stdin (standard input)"
-	userContent += "\n- fd=1: stdout (standard output - write results here)"
-	userContent += "\n- fd=2: stderr (error output)"
+	fdMappingContent = "FILE DESCRIPTOR MAPPING:"
+	fdMappingContent += "\n- fd=0: stdin (standard input)"
+	fdMappingContent += "\n- fd=1: stdout (standard output - write results here)"
+	fdMappingContent += "\n- fd=2: stderr (error output)"
 
 	if len(actualFiles) > 0 {
 		for i, file := range actualFiles {
-			userContent += fmt.Sprintf("\n- fd=%d: %s (input file)", i+3, file)
+			fdMappingContent += fmt.Sprintf("\n- fd=%d: %s (input file)", i+3, file)
 		}
-		userContent += "\n\nAVAILABLE INPUT SOURCES:"
-		userContent += "\n✓ stdin (fd=0) - contains input data"
-		userContent += "\n✓ input files (fd=3+) - specified above"
-		userContent += "\nWORKFLOW: read(fd=0 or fd=3+) → pipe(commands) → write(fd=1) → exit(0)"
+		fdMappingContent += "\n\nAVAILABLE INPUT SOURCES:"
+		fdMappingContent += "\n✓ stdin (fd=0) - contains input data"
+		fdMappingContent += "\n✓ input files (fd=3+) - specified above"
+		fdMappingContent += "\nWORKFLOW: read(fd=0 or fd=3+) → pipe(commands) → write(fd=1) → exit(0)"
 	} else {
-		userContent += "\n\nAVAILABLE INPUT SOURCES:"
-		userContent += "\n✓ stdin (fd=0) - contains input data"
-		userContent += "\n✗ input files - none specified (do NOT read fd=3+)"
-		userContent += "\nWORKFLOW: read(fd=0) → pipe(commands) → write(fd=1) → exit(0)"
+		fdMappingContent += "\n\nAVAILABLE INPUT SOURCES:"
+		fdMappingContent += "\n✓ stdin (fd=0) - contains input data"
+		fdMappingContent += "\n✗ input files - none specified (do NOT read fd=3+)"
+		fdMappingContent += "\nWORKFLOW: read(fd=0) → pipe(commands) → write(fd=1) → exit(0)"
+	}
+
+	messages = append(messages, ChatMessage{
+		Role:    "user",
+		Content: fdMappingContent,
+	})
+
+	// Second user message: User's actual prompt/instructions
+	var userContent string
+	if prompt != "" && instructions != "" {
+		userContent = fmt.Sprintf("Process the input data according to this request:\n\nPrompt: %s\n\nInstructions: %s", prompt, instructions)
+	} else if prompt != "" {
+		userContent = fmt.Sprintf("Process the input data according to this request:\n\n%s", prompt)
+	} else {
+		userContent = fmt.Sprintf("Process the input data according to this request:\n\n%s", instructions)
 	}
 
 	messages = append(messages, ChatMessage{
@@ -237,7 +244,7 @@ func CreateToolResponseMessage(toolCallID, result string) ChatMessage {
 	if content == "" {
 		content = "(no output)"
 	}
-	
+
 	return ChatMessage{
 		Role:       "tool",
 		Content:    content,
