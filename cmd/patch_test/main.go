@@ -13,7 +13,7 @@ func executeTool(engine *tools.Engine, functionName string, args map[string]inte
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal arguments: %w", err)
 	}
-	
+
 	toolCall := map[string]interface{}{
 		"name":      functionName,
 		"arguments": string(argsBytes),
@@ -61,7 +61,7 @@ func main() {
 		// We need to know the output fd from the spawn result
 		// Since spawn returns in_fd and out_fd via fmt.Sprintf, let's try reading from a fixed fd
 	}
-	
+
 	// Try reading from a few possible file descriptors
 	var sizeResult string
 	for fd := 3; fd <= 10; fd++ {
@@ -74,7 +74,7 @@ func main() {
 			break
 		}
 	}
-	
+
 	if sizeResult == "" {
 		fmt.Printf("Could not read size output from any fd\n")
 		// Continue with test anyway
@@ -111,7 +111,7 @@ func main() {
 
 	// Test 3: Apply patch (dry-run first)
 	fmt.Println("\n3. Testing patch application (dry-run)...")
-	
+
 	// Create backup
 	backupFile := sourceFile + ".backup"
 	result, err = executeTool(engine, "spawn", map[string]interface{}{
