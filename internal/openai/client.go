@@ -200,7 +200,7 @@ func getFileInfo(filePath string) map[string]interface{} {
 	// Determine file type based on extension and content
 	ext := filepath.Ext(filePath)
 	fileName := filepath.Base(filePath)
-	
+
 	// Check for compound extensions first
 	if strings.HasSuffix(fileName, ".tar.gz") || strings.HasSuffix(fileName, ".tar.bz2") || strings.HasSuffix(fileName, ".tar.xz") {
 		info["file_type"] = "archive"
@@ -257,7 +257,7 @@ func getStdFileInfo(fd int) map[string]interface{} {
 	// Try to get file info for the standard FD
 	var stat os.FileInfo
 	var err error
-	
+
 	// Use different approaches based on the FD
 	switch fd {
 	case 0: // stdin
@@ -277,7 +277,7 @@ func getStdFileInfo(fd int) map[string]interface{} {
 		defer file.Close()
 		stat, err = file.Stat()
 	}
-	
+
 	if err != nil {
 		return map[string]interface{}{
 			"type": "terminal",
@@ -299,11 +299,11 @@ func getStdFileInfo(fd int) map[string]interface{} {
 		fdPath := fmt.Sprintf("/proc/self/fd/%d", fd)
 		if realPath, err := os.Readlink(fdPath); err == nil {
 			info["file_path"] = realPath
-			
+
 			// Get file type from extension
 			ext := filepath.Ext(realPath)
 			fileName := filepath.Base(realPath)
-			
+
 			// Check for compound extensions first
 			if strings.HasSuffix(fileName, ".tar.gz") || strings.HasSuffix(fileName, ".tar.bz2") || strings.HasSuffix(fileName, ".tar.xz") {
 				info["file_type"] = "archive"
@@ -378,46 +378,41 @@ func CreateInitialMessages(prompt, instructions string, inputFiles []string, cus
 		systemContent = `You are a command-line text processing assistant. Process user requests efficiently using these tools:
 
 TOOLS AVAILABLE:
-1. read(fd, [lines], [count]) - Read from file descriptors
+1. read(fd, [lines], [count]) - Read content for LLM processing
    - fd: file descriptor number (0=stdin, 3+=input files)
    - lines: number of lines to read (optional)
    - count: number of bytes to read (optional)
 
-2. write(fd, data, [newline]) - Write to output
+2. write(fd, data, [newline], [eof]) - Write to output
    - fd: 1=stdout, 2=stderr, or pipe input fd
    - data: text content to write
    - newline: add newline (default false)
+   - eof: signal end of file and trigger chain cleanup (default false)
 
-3. pipe(cmd, [args], [in_fd], [out_fd], [size]) - Execute built-in commands
-   - Pattern 1: pipe({cmd, args}) → {in_fd, out_fd} (background execution)
-   - Pattern 2: pipe({cmd, args, in_fd, size}) → {out_fd} (background with input)
-   - Pattern 3: pipe({cmd, args, out_fd}) → {in_fd} (background with output)
-   - Pattern 4: pipe({cmd, args, in_fd, out_fd, [size]}) → {exit_code} (foreground)
-   - NOTE: Must specify BOTH in_fd AND out_fd for foreground execution
-   - For simple tasks: pipe({cmd, args, in_fd: 0, out_fd: 1}) reads stdin, writes stdout
+3. spawn(cmd, [args], [in_fd], [out_fd], [size]) - Spawn built-in commands (background-only)
+   - Pattern 1: spawn({cmd, args}) → {in_fd, out_fd} (background execution)
+   - Pattern 2: spawn({cmd, args, in_fd, size}) → {out_fd} (background with input)
+   - Pattern 3: spawn({cmd, args, out_fd}) → {in_fd} (background with output)
+   - NOTE: Foreground execution patterns removed - use write({eof: true}) for termination
 
 4. tee(in_fd, out_fds) - Copy input to multiple outputs
    - in_fd: source file descriptor
    - out_fds: array of output file descriptors
 
-5. close(fd) - Close file descriptor and get command results
-   - Returns exit code for command input fds
-   - Must close output fds before input fds (deadlock prevention)
-
-6. exit(code) - Terminate program with exit code
+5. exit(code) - Terminate program with exit code
 
 BUILT-IN COMMANDS: cat, grep, sed, head, tail, sort, wc, tr, cut, uniq, nl, rev
 
 STANDARD WORKFLOWS:
 - Simple processing: read(0) → process → write(1, data) → exit(0)
-- Background pipeline: pipe({cmd:"grep", args:["pattern"]}) → write(in_fd, data) → read(out_fd) → close(out_fd) → close(in_fd)
-- Multi-step: pipe() → tee() → multiple processing streams → close() for results
+- Background pipeline: spawn({cmd:"grep", args:["pattern"]}) → write(in_fd, data) → read(out_fd) → write(in_fd, "", {eof: true})
+- Multi-step: spawn() → tee() → multiple processing streams → write({eof: true}) for cleanup
 
 EFFICIENCY GUIDELINES:
 - Use minimal API calls - combine operations when possible
 - Read data in appropriate chunks (lines for text, bytes for binary)
 - Process streaming data efficiently
-- Follow proper close() order to prevent deadlocks
+- Use write({eof: true}) to trigger automatic chain cleanup
 
 ANALYSIS APPROACH:
 - For file analysis questions ("このファイルは何ですか？", "What is this file?"):
@@ -456,14 +451,14 @@ ANALYSIS APPROACH:
 				userContent = prompt
 			}
 		}
-		
+
 		if userContent != "" {
 			messages = append(messages, ChatMessage{
 				Role:    "user",
 				Content: userContent,
 			})
 		}
-		
+
 		return messages
 	}
 
@@ -477,7 +472,7 @@ ANALYSIS APPROACH:
 	}
 
 	fdMappingContent = "FILE DESCRIPTOR MAPPING:"
-	
+
 	// Check stdin information
 	stdinInfo := getStdFileInfo(0)
 	stdinDisplay := "stdin (standard input)"
@@ -494,21 +489,21 @@ ANALYSIS APPROACH:
 			} else {
 				sizeStr = fmt.Sprintf("%.1f GB", float64(size)/(1024*1024*1024))
 			}
-			
+
 			fileType := "unknown"
 			if ftype, ok := stdinInfo["file_type"].(string); ok {
 				fileType = ftype
 			}
-			
+
 			sizeCategory := "unknown"
 			if category, ok := stdinInfo["size_category"].(string); ok {
 				sizeCategory = category
 			}
-			
+
 			stdinDisplay = fmt.Sprintf("stdin <- %s [%s, %s, %s]", filePath, sizeStr, fileType, sizeCategory)
 		}
 	}
-	
+
 	// Check stdout information
 	stdoutInfo := getStdFileInfo(1)
 	stdoutDisplay := "stdout (standard output - write results here)"
@@ -517,7 +512,7 @@ ANALYSIS APPROACH:
 			stdoutDisplay = fmt.Sprintf("stdout -> %s", filePath)
 		}
 	}
-	
+
 	// Check stderr information
 	stderrInfo := getStdFileInfo(2)
 	stderrDisplay := "stderr (error output)"
@@ -526,7 +521,7 @@ ANALYSIS APPROACH:
 			stderrDisplay = fmt.Sprintf("stderr -> %s", filePath)
 		}
 	}
-	
+
 	fdMappingContent += fmt.Sprintf("\n- fd=0: %s", stdinDisplay)
 	fdMappingContent += fmt.Sprintf("\n- fd=1: %s", stdoutDisplay)
 	fdMappingContent += fmt.Sprintf("\n- fd=2: %s", stderrDisplay)

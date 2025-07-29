@@ -393,9 +393,9 @@ func (a *App) showStatistics() {
 	fmt.Fprintf(os.Stderr, "🔧 TOOL USAGE:\n")
 	fmt.Fprintf(os.Stderr, "   Read Calls:         %d\n", toolStats.ReadCalls)
 	fmt.Fprintf(os.Stderr, "   Write Calls:        %d\n", toolStats.WriteCalls)
-	fmt.Fprintf(os.Stderr, "   Pipe Calls:         %d\n", toolStats.PipeCalls)
+	fmt.Fprintf(os.Stderr, "   Spawn Calls:        %d\n", toolStats.SpawnCalls)
 	fmt.Fprintf(os.Stderr, "   Exit Calls:         %d\n", toolStats.ExitCalls)
-	fmt.Fprintf(os.Stderr, "   Total Tool Calls:   %d\n", toolStats.ReadCalls+toolStats.WriteCalls+toolStats.PipeCalls+toolStats.ExitCalls)
+	fmt.Fprintf(os.Stderr, "   Total Tool Calls:   %d\n", toolStats.ReadCalls+toolStats.WriteCalls+toolStats.SpawnCalls+toolStats.ExitCalls)
 	fmt.Fprintf(os.Stderr, "\n")
 
 	// Data Transfer Statistics
@@ -409,7 +409,7 @@ func (a *App) showStatistics() {
 	if a.iterationCount > 0 && openaiStats.RequestCount > 0 {
 		fmt.Fprintf(os.Stderr, "⚡ EFFICIENCY METRICS:\n")
 		fmt.Fprintf(os.Stderr, "   API Calls/Iteration: %.2f\n", float64(openaiStats.RequestCount)/float64(a.iterationCount))
-		fmt.Fprintf(os.Stderr, "   Tools/API Call:      %.2f\n", float64(toolStats.ReadCalls+toolStats.WriteCalls+toolStats.PipeCalls+toolStats.ExitCalls)/float64(openaiStats.RequestCount))
+		fmt.Fprintf(os.Stderr, "   Tools/API Call:      %.2f\n", float64(toolStats.ReadCalls+toolStats.WriteCalls+toolStats.SpawnCalls+toolStats.ExitCalls)/float64(openaiStats.RequestCount))
 
 		tokensPerSecond := float64(openaiStats.TotalTokens) / duration.Seconds()
 		fmt.Fprintf(os.Stderr, "   Tokens/Second:       %.1f\n", tokensPerSecond)

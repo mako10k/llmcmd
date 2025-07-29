@@ -72,51 +72,51 @@ func isBinaryFile(filename string) bool {
 
 // RunningCommand tracks a running command and its pipes
 type RunningCommand struct {
-	cmd         *exec.Cmd
-	stdout      io.ReadCloser
-	stderr      io.ReadCloser
-	stdin       io.WriteCloser
-	done        chan error
-	exitCode    int
-	finished    bool
-	mu          sync.RWMutex
-	
+	cmd      *exec.Cmd
+	stdout   io.ReadCloser
+	stderr   io.ReadCloser
+	stdin    io.WriteCloser
+	done     chan error
+	exitCode int
+	finished bool
+	mu       sync.RWMutex
+
 	// File descriptor mappings for this command
-	inputFd     int  // The fd this command reads from
-	outputFd    int  // The fd this command writes to
-	pid         int  // Process ID
+	inputFd     int    // The fd this command reads from
+	outputFd    int    // The fd this command writes to
+	pid         int    // Process ID
 	commandName string // Command name for debugging
 }
 
 // FdDependency represents a file descriptor dependency relationship
 type FdDependency struct {
-	Source     int   // Source fd (input)
-	Targets    []int // Target fds (outputs) - supports 1:many for tee
-	ToolType   string // "pipe" or "tee"
+	Source   int    // Source fd (input)
+	Targets  []int  // Target fds (outputs) - supports 1:many for tee
+	ToolType string // "spawn" or "tee"
 }
 
 // Engine handles tool execution for llmcmd
 type Engine struct {
-	inputFiles        []*os.File
-	outputFile        *os.File
-	fileDescriptors   []io.Reader
-	runningCommands   map[int]*RunningCommand // Maps fd to running command
-	commandsMutex     sync.RWMutex
-	fdDependencies    []FdDependency           // Tracks fd dependencies for pipes and tees
-	closedFds         map[int]bool             // Tracks which fds have been closed
-	chainMutex        sync.RWMutex             // Protects fdDependencies and closedFds
-	nextFd            int                      // Next available file descriptor number
-	maxFileSize       int64
-	bufferSize        int
-	stats             ExecutionStats
-	noStdin           bool // Skip reading from stdin
+	inputFiles      []*os.File
+	outputFile      *os.File
+	fileDescriptors []io.Reader
+	runningCommands map[int]*RunningCommand // Maps fd to running command
+	commandsMutex   sync.RWMutex
+	fdDependencies  []FdDependency // Tracks fd dependencies for spawns and tees
+	closedFds       map[int]bool   // Tracks which fds have been closed
+	chainMutex      sync.RWMutex   // Protects fdDependencies and closedFds
+	nextFd          int            // Next available file descriptor number
+	maxFileSize     int64
+	bufferSize      int
+	stats           ExecutionStats
+	noStdin         bool // Skip reading from stdin
 }
 
 // ExecutionStats tracks tool execution statistics
 type ExecutionStats struct {
 	ReadCalls    int   `json:"read_calls"`
 	WriteCalls   int   `json:"write_calls"`
-	PipeCalls    int   `json:"pipe_calls"`
+	SpawnCalls   int   `json:"spawn_calls"`
 	TeeCalls     int   `json:"tee_calls"`
 	CloseCalls   int   `json:"close_calls"`
 	ExitCalls    int   `json:"exit_calls"`
@@ -194,7 +194,7 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 func (e *Engine) addFdDependency(source int, targets []int, toolType string) {
 	e.chainMutex.Lock()
 	defer e.chainMutex.Unlock()
-	
+
 	dependency := FdDependency{
 		Source:   source,
 		Targets:  targets,
@@ -207,14 +207,14 @@ func (e *Engine) addFdDependency(source int, targets []int, toolType string) {
 func (e *Engine) checkCloseDependencies(inFd int) error {
 	e.chainMutex.RLock()
 	defer e.chainMutex.RUnlock()
-	
+
 	// Find dependencies where this fd is the source
 	for _, dep := range e.fdDependencies {
 		if dep.Source == inFd {
 			// Check if all target fds have been closed
 			for _, targetFd := range dep.Targets {
 				if !e.closedFds[targetFd] {
-					return fmt.Errorf("cannot close input fd %d: output fd %d (from %s) must be closed first", 
+					return fmt.Errorf("cannot close input fd %d: output fd %d (from %s) must be closed first",
 						inFd, targetFd, dep.ToolType)
 				}
 			}
@@ -228,6 +228,77 @@ func (e *Engine) markFdClosed(fd int) {
 	e.chainMutex.Lock()
 	defer e.chainMutex.Unlock()
 	e.closedFds[fd] = true
+}
+
+// traverseChainOnEOF traverses the chain when EOF is detected and collects exit codes
+func (e *Engine) traverseChainOnEOF(startFd int) []ChainResult {
+	e.chainMutex.RLock()
+	defer e.chainMutex.RUnlock()
+
+	var results []ChainResult
+	visited := make(map[int]bool)
+
+	e.traverseChainRecursive(startFd, visited, &results)
+	return results
+}
+
+// ChainResult represents the result of a command in the chain
+type ChainResult struct {
+	Fd       int    `json:"fd"`
+	ExitCode int    `json:"exit_code"`
+	Command  string `json:"command"`
+	Message  string `json:"message"`
+}
+
+// traverseChainRecursive recursively traverses the dependency chain
+func (e *Engine) traverseChainRecursive(fd int, visited map[int]bool, results *[]ChainResult) {
+	if visited[fd] {
+		return // Avoid infinite loops
+	}
+	visited[fd] = true
+
+	// Special case: STDIN (fd=0)
+	if fd == 0 {
+		*results = append(*results, ChainResult{
+			Fd:       0,
+			ExitCode: 0,
+			Command:  "stdin",
+			Message:  "Chain traversal reached STDIN (fd=0) - chain root found",
+		})
+		return
+	}
+
+	// Find dependencies where this fd is a target (reverse lookup)
+	for _, dep := range e.fdDependencies {
+		for _, targetFd := range dep.Targets {
+			if targetFd == fd {
+				// Found upstream dependency, get command info and exit code
+				var result ChainResult
+				result.Fd = dep.Source
+
+				// Get command information
+				e.commandsMutex.RLock()
+				if runningCmd, exists := e.runningCommands[dep.Source]; exists {
+					runningCmd.mu.RLock()
+					result.ExitCode = runningCmd.exitCode
+					result.Command = runningCmd.commandName
+					result.Message = fmt.Sprintf("Command '%s' on fd %d exited with code %d",
+						runningCmd.commandName, dep.Source, runningCmd.exitCode)
+					runningCmd.mu.RUnlock()
+				} else {
+					result.ExitCode = 0
+					result.Command = "unknown"
+					result.Message = fmt.Sprintf("No command information for fd %d", dep.Source)
+				}
+				e.commandsMutex.RUnlock()
+
+				*results = append(*results, result)
+
+				// Continue traversing upstream
+				e.traverseChainRecursive(dep.Source, visited, results)
+			}
+		}
+	}
 }
 
 // allocateFd allocates a new file descriptor number
@@ -246,7 +317,7 @@ func (e *Engine) startBackgroundCommand(cmd string, args []string) (int, int, er
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to create input pipe: %w", err)
 	}
-	
+
 	outReader, outWriter, err := os.Pipe()
 	if err != nil {
 		inReader.Close()
@@ -279,7 +350,7 @@ func (e *Engine) startBackgroundCommand(cmd string, args []string) (int, int, er
 	for len(e.fileDescriptors) <= outFd {
 		e.fileDescriptors = append(e.fileDescriptors, nil)
 	}
-	
+
 	// Set up file descriptors for reading/writing
 	e.fileDescriptors[outFd] = outReader // For reading command output
 
@@ -289,11 +360,11 @@ func (e *Engine) startBackgroundCommand(cmd string, args []string) (int, int, er
 			// Close pipes when command finishes
 			inReader.Close()
 			outWriter.Close()
-			
+
 			runningCmd.mu.Lock()
 			runningCmd.finished = true
 			runningCmd.mu.Unlock()
-			
+
 			runningCmd.done <- nil
 			close(runningCmd.done)
 		}()
@@ -368,7 +439,7 @@ func (e *Engine) startBackgroundCommandWithInput(cmd string, args []string, inpu
 	for len(e.fileDescriptors) <= outFd {
 		e.fileDescriptors = append(e.fileDescriptors, nil)
 	}
-	
+
 	// Set up file descriptor for reading command output
 	e.fileDescriptors[outFd] = outReader
 
@@ -376,11 +447,11 @@ func (e *Engine) startBackgroundCommandWithInput(cmd string, args []string, inpu
 	go func() {
 		defer func() {
 			outWriter.Close()
-			
+
 			runningCmd.mu.Lock()
 			runningCmd.finished = true
 			runningCmd.mu.Unlock()
-			
+
 			runningCmd.done <- nil
 			close(runningCmd.done)
 		}()
@@ -402,7 +473,7 @@ func (e *Engine) startBackgroundCommandWithInput(cmd string, args []string, inpu
 		// Execute the built-in command
 		var err error
 		inReader := bytes.NewReader(inputData)
-		
+
 		switch cmd {
 		case "cat":
 			err = builtin.Cat(args, inReader, outWriter)
@@ -479,11 +550,11 @@ func (e *Engine) startBackgroundCommandWithOutput(cmd string, args []string, out
 	go func() {
 		defer func() {
 			inReader.Close()
-			
+
 			runningCmd.mu.Lock()
 			runningCmd.finished = true
 			runningCmd.mu.Unlock()
-			
+
 			runningCmd.done <- nil
 			close(runningCmd.done)
 		}()
@@ -575,8 +646,8 @@ func (e *Engine) ExecuteToolCall(toolCall map[string]interface{}) (string, error
 		return e.executeRead(args)
 	case "write":
 		return e.executeWrite(args)
-	case "pipe":
-		return e.executePipe(args)
+	case "spawn":
+		return e.executeSpawn(args)
 	case "tee":
 		return e.executeTee(args)
 	case "close":
@@ -674,6 +745,12 @@ func (e *Engine) executeWrite(args map[string]interface{}) (string, error) {
 		addNewline = newlineVal
 	}
 
+	// Extract eof parameter (optional, default false)
+	isEof := false
+	if eofVal, ok := args["eof"].(bool); ok {
+		isEof = eofVal
+	}
+
 	// Get the appropriate writer
 	var writer io.Writer
 	switch fd {
@@ -717,18 +794,42 @@ func (e *Engine) executeWrite(args map[string]interface{}) (string, error) {
 	}
 
 	e.stats.BytesWritten += int64(n)
+
+	// Handle EOF - trigger chain cleanup if eof is true
+	if isEof {
+		// Close the writer to signal EOF
+		if closer, ok := writer.(io.Closer); ok {
+			closer.Close()
+		}
+
+		// Mark FD as closed and trigger chain processing
+		e.markFdClosed(fd)
+
+		// Traverse the chain to collect exit codes
+		chainResults := e.traverseChainOnEOF(fd)
+
+		// Create summary message
+		var summary strings.Builder
+		summary.WriteString(fmt.Sprintf("wrote %d bytes to fd %d (EOF), chain traversal results:\n", n, fd))
+		for _, result := range chainResults {
+			summary.WriteString(fmt.Sprintf("  %s\n", result.Message))
+		}
+
+		return summary.String(), nil
+	}
+
 	return fmt.Sprintf("wrote %d bytes to fd %d", n, fd), nil
 }
 
-// executePipe implements the pipe tool for executing built-in commands
-func (e *Engine) executePipe(args map[string]interface{}) (string, error) {
-	e.stats.PipeCalls++
+// executeSpawn implements the spawn tool for executing built-in commands
+func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
+	e.stats.SpawnCalls++
 
 	// Extract command name (required)
 	cmd, ok := args["cmd"].(string)
 	if !ok {
 		e.stats.ErrorCount++
-		return "", fmt.Errorf("pipe: cmd parameter is required")
+		return "", fmt.Errorf("spawn: cmd parameter is required")
 	}
 
 	// Extract command arguments (optional)
@@ -768,157 +869,64 @@ func (e *Engine) executePipe(args map[string]interface{}) (string, error) {
 		"success": true,
 	}
 
-	// Pattern 1: pipe({cmd:...,args:...}) -> {success:true,in_fd:..., out_fd:...}
+	// Pattern 1: spawn({cmd:...,args:...}) -> {success:true,in_fd:..., out_fd:...}
 	// Background execution, return file descriptors
 	if inFd == nil && outFd == nil && size == nil {
 		// Start background command with real pipes
 		realInFd, realOutFd, err := e.startBackgroundCommand(cmd, cmdArgs)
 		if err != nil {
 			e.stats.ErrorCount++
-			return "", fmt.Errorf("pipe: failed to start background command: %w", err)
+			return "", fmt.Errorf("spawn: failed to start background command: %w", err)
 		}
-		
+
 		// Record the dependency relationship
-		e.addFdDependency(realInFd, []int{realOutFd}, "pipe")
-		
+		e.addFdDependency(realInFd, []int{realOutFd}, "spawn")
+
 		result["in_fd"] = realInFd
 		result["out_fd"] = realOutFd
-		return fmt.Sprintf("Background command '%s' started with pid %d", cmd, 
+		return fmt.Sprintf("Background command '%s' started with pid %d", cmd,
 			e.runningCommands[realInFd].pid), nil
 	}
 
-	// Pattern 2: pipe({cmd:...,args:...,in_fd:...,size:1234}) -> {success:true,out_fd:...}
+	// Pattern 2: spawn({cmd:...,args:...,in_fd:...,size:1234}) -> {success:true,out_fd:...}
 	// Background execution with input from in_fd
 	if inFd != nil && outFd == nil && size != nil {
 		// Start background command that reads from existing in_fd
 		realOutFd, err := e.startBackgroundCommandWithInput(cmd, cmdArgs, *inFd, *size)
 		if err != nil {
 			e.stats.ErrorCount++
-			return "", fmt.Errorf("pipe: failed to start background command with input: %w", err)
+			return "", fmt.Errorf("spawn: failed to start background command with input: %w", err)
 		}
-		
+
 		result["out_fd"] = realOutFd
 		result["in_size"] = *size
 		return fmt.Sprintf("Command '%s' started with input from fd %d", cmd, *inFd), nil
 	}
 
-	// Pattern 3: pipe({cmd:...,args:...,out_fd:...}) -> {success:true,in_fd:...}
+	// Pattern 3: spawn({cmd:...,args:...,out_fd:...}) -> {success:true,in_fd:...}
 	// Background execution with output to out_fd
 	if inFd == nil && outFd != nil && size == nil {
 		// Start background command that writes to existing out_fd
 		realInFd, err := e.startBackgroundCommandWithOutput(cmd, cmdArgs, *outFd)
 		if err != nil {
 			e.stats.ErrorCount++
-			return "", fmt.Errorf("pipe: failed to start background command with output: %w", err)
+			return "", fmt.Errorf("spawn: failed to start background command with output: %w", err)
 		}
-		
+
 		result["in_fd"] = realInFd
 		return fmt.Sprintf("Command '%s' started with output to fd %d", cmd, *outFd), nil
 	}
 
-	// Pattern 4a: pipe({cmd:...,args:...,in_fd:...,out_fd:...}) -> {success:true,exit_code:...}
-	// Foreground execution without size - read until EOF
-	if inFd != nil && outFd != nil && size == nil {
-		// Execute command synchronously, reading until EOF
-		if *inFd < 0 || *inFd >= len(e.fileDescriptors) || e.fileDescriptors[*inFd] == nil {
-			e.stats.ErrorCount++
-			return "", fmt.Errorf("pipe: invalid input file descriptor: %d", *inFd)
-		}
-
-		// Read all input data until EOF
-		var inputData []byte
-		buf := make([]byte, 4096)
-		for {
-			n, err := e.fileDescriptors[*inFd].Read(buf)
-			if n > 0 {
-				inputData = append(inputData, buf[:n]...)
-			}
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				e.stats.ErrorCount++
-				return "", fmt.Errorf("pipe: failed to read from fd %d: %w", *inFd, err)
-			}
-		}
-
-		// Execute command
-		output, err := e.executeBuiltinCommand(cmd, cmdArgs, inputData)
-		exitCode := 0
-		if err != nil {
-			exitCode = 1
-			e.stats.ErrorCount++
-		}
-
-		// Write output to out_fd
-		outputSize := len(output)
-		if *outFd == 1 {
-			fmt.Print(string(output))
-		} else if *outFd == 2 {
-			fmt.Fprint(os.Stderr, string(output))
-		}
-
-		result["exit_code"] = exitCode
-		result["in_size"] = len(inputData)
-		result["out_size"] = outputSize
-		
-		if err != nil {
-			return fmt.Sprintf("Command '%s' failed: read %d bytes, wrote %d bytes, exit code %d", cmd, len(inputData), outputSize, exitCode), nil
-		}
-		return fmt.Sprintf("Command '%s' executed: read %d bytes, wrote %d bytes, exit code %d", cmd, len(inputData), outputSize, exitCode), nil
-	}
-
-	// Pattern 4: pipe({cmd:...,args:...,in_fd:...,out_fd:...,size:1234}) -> {success:true,in_size:1234,out_size:1234,exit_code:...}
-	// Foreground execution with full I/O specification
-	if inFd != nil && outFd != nil && size != nil {
-		// Execute command synchronously
-		if *inFd < 0 || *inFd >= len(e.fileDescriptors) || e.fileDescriptors[*inFd] == nil {
-			e.stats.ErrorCount++
-			return "", fmt.Errorf("pipe: invalid input file descriptor: %d", *inFd)
-		}
-
-		// Read input data
-		inputData := make([]byte, *size)
-		n, err := e.fileDescriptors[*inFd].Read(inputData)
-		if err != nil && err != io.EOF {
-			e.stats.ErrorCount++
-			return "", fmt.Errorf("pipe: failed to read from fd %d: %w", *inFd, err)
-		}
-		inputData = inputData[:n]
-
-		// Execute command
-		output, err := e.executeBuiltinCommand(cmd, cmdArgs, inputData)
-		exitCode := 0
-		if err != nil {
-			// Command failed, set non-zero exit code
-			exitCode = 1
-			e.stats.ErrorCount++
-			// Don't return error immediately, report failure with exit code
-		}
-
-		// Write output to out_fd
-		outputSize := len(output)
-		if *outFd == 1 {
-			// stdout
-			fmt.Print(string(output))
-		} else if *outFd == 2 {
-			// stderr
-			fmt.Fprint(os.Stderr, string(output))
-		}
-
-		result["in_size"] = n
-		result["out_size"] = outputSize
-		result["exit_code"] = exitCode
-		
-		if err != nil {
-			return fmt.Sprintf("Command '%s' failed: read %d bytes, wrote %d bytes, exit code %d", cmd, n, outputSize, exitCode), nil
-		}
-		return fmt.Sprintf("Command '%s' executed: read %d bytes, wrote %d bytes, exit code %d", cmd, n, outputSize, exitCode), nil
+	// Pattern 4: spawn({cmd:...,args:...,in_fd:...,out_fd:...}) -> Error (removed foreground execution)
+	// Foreground execution patterns are no longer supported
+	if inFd != nil && outFd != nil {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("spawn: foreground execution patterns are not supported - use background-only execution and write({eof: true}) for termination")
 	}
 
 	// Invalid parameter combination
 	e.stats.ErrorCount++
-	return "", fmt.Errorf("pipe: invalid parameter combination")
+	return "", fmt.Errorf("spawn: invalid parameter combination")
 }
 
 // executeBuiltinCommand executes a single built-in command
@@ -1083,7 +1091,7 @@ func (e *Engine) executeClose(args map[string]interface{}) (string, error) {
 	e.commandsMutex.RLock()
 	runningCmd, exists := e.runningCommands[fd]
 	e.commandsMutex.RUnlock()
-	
+
 	if exists {
 		// Close appropriate pipe based on fd type
 		if runningCmd.inputFd == fd {
@@ -1091,23 +1099,23 @@ func (e *Engine) executeClose(args map[string]interface{}) (string, error) {
 			if runningCmd.stdin != nil {
 				runningCmd.stdin.Close()
 			}
-			
+
 			// Wait for command to complete
 			<-runningCmd.done
-			
+
 			runningCmd.mu.RLock()
 			exitCode := runningCmd.exitCode
 			cmdName := runningCmd.commandName
 			runningCmd.mu.RUnlock()
-			
+
 			// Clean up
 			e.commandsMutex.Lock()
 			delete(e.runningCommands, runningCmd.inputFd)
 			delete(e.runningCommands, runningCmd.outputFd)
 			e.commandsMutex.Unlock()
-			
+
 			e.markFdClosed(fd)
-			return fmt.Sprintf("Command '%s' on fd %d terminated with exit code %d", 
+			return fmt.Sprintf("Command '%s' on fd %d terminated with exit code %d",
 				cmdName, fd, exitCode), nil
 		} else if runningCmd.outputFd == fd {
 			// Closing output fd - close stdout
