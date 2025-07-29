@@ -36,6 +36,10 @@ jobs:
         # Debug: show current directory and contents
         pwd
         ls -la
+        echo "Go env:"
+        go env GOPATH GOROOT GOCACHE
+        echo "Go version:"
+        go version
         
         binary_name="llmcmd"
         if [[ "${{ matrix.goos }}" == "windows" ]]; then
