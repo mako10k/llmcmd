@@ -1,20 +1,23 @@
 # llmcmd - LLM Command Line Tool
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/mako10k/llmcmd/releases)
+[![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)](https://github.com/mako10k/llmcmd/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.21+-blue.svg)](https://golang.org/)
 
-A secure command-line tool that enables Large Language Models to execute text processing tasks using the OpenAI ChatCompletion API with specialized prompt presets.
+A secure command-line tool that enables Large Language Models to execute text processing tasks using the OpenAI ChatCompletion API with advanced quota management and specialized prompt presets.
 
 ## Overview
 
 `llmcmd` is a command-line tool that allows you to instruct large language models (LLMs) to perform tasks using built-in tools for file operations and text processing. All operations are sandboxed and secure, with no external command execution.
 
-**Version 2.0.0** introduces the **Preset Prompt System** - specialized prompts optimized for different task types, enabling more accurate and context-appropriate responses for technical operations, code analysis, data processing, and general tasks.
+**Version 3.0.0** introduces the **Complete Quota System** with weighted token tracking, **Fail-First validation**, and enhanced API call management - alongside the existing **Preset Prompt System** for specialized task optimization.
 
 ## Features
 
 - **Natural Language Interface**: Instruct tasks in plain language
+- **Complete Quota System**: Weighted token tracking with real-time monitoring and limits
+- **Fail-First Validation**: Strict configuration validation with immediate error reporting
+- **API Call Management**: Configurable limits with graceful termination on final calls
 - **Preset Prompt System**: Specialized prompts for different task types (general, diff/patch, code review, data processing)
 - **Smart File Analysis**: Automatic file information pre-loading and size/type detection
 - **Secure Built-in Tools**: File reading/writing, text processing pipelines
@@ -116,8 +119,14 @@ model=gpt-4o-mini
 max_tokens=4096
 temperature=0.1
 
-# Security & Rate Limiting
+# API Call & Quota Management
 max_api_calls=50
+quota_max_tokens=0          # 0 = unlimited, or set a limit
+quota_weights_input=1.0     # Weight for input tokens
+quota_weights_cached=0.25   # Weight for cached input tokens  
+quota_weights_output=4.0    # Weight for output tokens
+
+# Security & Rate Limiting
 timeout_seconds=300
 max_file_size=10485760    # 10MB
 read_buffer_size=4096     # 4KB
@@ -567,6 +576,30 @@ go build -o llmcmd ./cmd/llmcmd
 ```bash
 go test ./...
 ```
+
+### Code Quality & Duplication Detection
+
+This project uses `jscpd` for duplicate code detection:
+
+```bash
+# Install dependencies (run once)
+npm install
+
+# Run duplicate detection
+npm run cpd               # Basic detection
+npm run cpd:report        # Generate HTML + JSON reports
+npm run cpd:verbose       # Verbose output with details
+
+# View reports
+open reports/jscpd/html/index.html  # macOS
+xdg-open reports/jscpd/html/index.html  # Linux
+```
+
+The duplication detection is configured to:
+- Minimum 5 lines or 50 tokens for detection
+- Skip large files (>1000 lines) like `engine.go`
+- Generate detailed HTML reports with source highlighting
+- Export JSON data for CI/CD integration
 
 ### 貢献
 
