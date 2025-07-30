@@ -42,27 +42,33 @@ Download the latest release binary for your platform:
 
 ```bash
 # Linux AMD64
-wget https://github.com/mako10k/llmcmd/releases/latest/download/llmcmd-linux-amd64
-chmod +x llmcmd-linux-amd64
-sudo mv llmcmd-linux-amd64 /usr/local/bin/llmcmd
+wget https://github.com/mako10k/llmcmd/releases/download/v3.0.1/llmcmd-v3.0.1-linux-amd64.tar.gz
+tar -xzf llmcmd-v3.0.1-linux-amd64.tar.gz
+chmod +x llmcmd-v3.0.1-linux-amd64
+sudo mv llmcmd-v3.0.1-linux-amd64 /usr/local/bin/llmcmd
 
 # Linux ARM64
-wget https://github.com/mako10k/llmcmd/releases/latest/download/llmcmd-linux-arm64
-chmod +x llmcmd-linux-arm64
-sudo mv llmcmd-linux-arm64 /usr/local/bin/llmcmd
+wget https://github.com/mako10k/llmcmd/releases/download/v3.0.1/llmcmd-v3.0.1-linux-arm64.tar.gz
+tar -xzf llmcmd-v3.0.1-linux-arm64.tar.gz
+chmod +x llmcmd-v3.0.1-linux-arm64
+sudo mv llmcmd-v3.0.1-linux-arm64 /usr/local/bin/llmcmd
 
 # macOS AMD64 (Intel)
-wget https://github.com/mako10k/llmcmd/releases/latest/download/llmcmd-darwin-amd64
-chmod +x llmcmd-darwin-amd64
-sudo mv llmcmd-darwin-amd64 /usr/local/bin/llmcmd
+wget https://github.com/mako10k/llmcmd/releases/download/v3.0.1/llmcmd-v3.0.1-darwin-amd64.tar.gz
+tar -xzf llmcmd-v3.0.1-darwin-amd64.tar.gz
+chmod +x llmcmd-v3.0.1-darwin-amd64
+sudo mv llmcmd-v3.0.1-darwin-amd64 /usr/local/bin/llmcmd
 
 # macOS ARM64 (Apple Silicon)
-wget https://github.com/mako10k/llmcmd/releases/latest/download/llmcmd-darwin-arm64
-chmod +x llmcmd-darwin-arm64
-sudo mv llmcmd-darwin-arm64 /usr/local/bin/llmcmd
+wget https://github.com/mako10k/llmcmd/releases/download/v3.0.1/llmcmd-v3.0.1-darwin-arm64.tar.gz
+tar -xzf llmcmd-v3.0.1-darwin-arm64.tar.gz
+chmod +x llmcmd-v3.0.1-darwin-arm64
+sudo mv llmcmd-v3.0.1-darwin-arm64 /usr/local/bin/llmcmd
 
 # Windows AMD64
-# Download llmcmd-windows-amd64.exe and place it in your PATH
+wget https://github.com/mako10k/llmcmd/releases/download/v3.0.1/llmcmd-v3.0.1-windows-amd64.tar.gz
+tar -xzf llmcmd-v3.0.1-windows-amd64.tar.gz
+# Add the extracted .exe file to your PATH
 ```
 
 #### Build from Source
