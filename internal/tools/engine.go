@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -869,6 +870,13 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("spawn: cmd parameter is required")
 	}
 
+	// Validate that the command is a built-in command
+	if _, exists := builtin.Commands[cmd]; !exists {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("spawn: command '%s' is not a supported built-in command. Available commands: %v", 
+			cmd, getSupportedCommands())
+	}
+
 	// Extract command arguments (optional)
 	var cmdArgs []string
 	if argsInterface, hasArgs := args["args"]; hasArgs {
@@ -1037,6 +1045,16 @@ func (e *Engine) executeClose(args map[string]interface{}) (string, error) {
 	}
 
 	return summary.String(), nil
+}
+
+// getSupportedCommands returns a sorted list of supported built-in commands
+func getSupportedCommands() []string {
+	var commands []string
+	for cmd := range builtin.Commands {
+		commands = append(commands, cmd)
+	}
+	sort.Strings(commands)
+	return commands
 }
 
 // executeExit implements the exit tool

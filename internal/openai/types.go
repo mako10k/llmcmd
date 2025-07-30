@@ -259,14 +259,14 @@ func ToolDefinitions() []Tool {
 			Type: "function",
 			Function: ToolFunction{
 				Name:        "spawn",
-				Description: "Spawn built-in commands in background mode: 1) spawn({cmd,args}) for new fds, 2) spawn({cmd,args,in_fd,size}) for input, 3) spawn({cmd,args,out_fd}) for output. Use write({eof:true}) to trigger chain cleanup.",
+				Description: "Execute ONLY built-in commands (no external tools allowed). Background execution for security. Pattern 1: spawn({cmd,args}) returns new file descriptors. Pattern 2: spawn({cmd,args,in_fd}) reads from existing fd. Pattern 3: spawn({cmd,args,out_fd}) writes to existing fd. Pattern 4: spawn({cmd,args,in_fd,out_fd}) for pipeline middle. Commands limited to built-in security sandbox.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"cmd": map[string]interface{}{
 							"type":        "string",
-							"description": "Command name to execute",
-							"enum":        []string{"cat", "grep", "sed", "head", "tail", "sort", "wc", "tr", "cut", "uniq", "nl", "rev"},
+							"description": "Built-in command name (NO external commands like pandoc, awk, etc.)",
+							"enum":        []string{"cat", "cut", "diff", "grep", "head", "nl", "patch", "rev", "sed", "sort", "tail", "tee", "tr", "uniq", "wc"},
 						},
 						"args": map[string]interface{}{
 							"type":        "array",
@@ -283,11 +283,6 @@ func ToolDefinitions() []Tool {
 						"out_fd": map[string]interface{}{
 							"type":        "integer",
 							"description": "Output file descriptor for command (optional). When provided with in_fd, runs synchronously.",
-							"minimum":     1,
-						},
-						"size": map[string]interface{}{
-							"type":        "integer",
-							"description": "Number of bytes to process from in_fd (optional). For foreground execution control.",
 							"minimum":     1,
 						},
 					},
@@ -319,6 +314,24 @@ func ToolDefinitions() []Tool {
 						},
 					},
 					"required": []string{"in_fd", "out_fds"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolFunction{
+				Name:        "close",
+				Description: "Close file descriptor and cleanup associated pipeline chains. Required for explicit pipeline endpoint control.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"fd": map[string]interface{}{
+							"type":        "integer",
+							"description": "File descriptor to close (0=stdin, 1=stdout, 2=stderr, 3+=intermediate fds)",
+							"minimum":     0,
+						},
+					},
+					"required": []string{"fd"},
 				},
 			},
 		},
