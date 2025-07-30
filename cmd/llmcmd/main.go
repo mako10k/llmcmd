@@ -13,7 +13,7 @@ import (
 // Application metadata
 const (
 	AppName    = "llmcmd"
-	AppVersion = "3.0.0"
+	AppVersion = "3.0.1"
 )
 
 func main() {

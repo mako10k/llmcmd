@@ -1,6 +1,6 @@
 # llmcmd - LLM Command Line Tool
 
-[![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)](https://github.com/mako10k/llmcmd/releases)
+[![Version](https://img.shields.io/badge/version-3.0.1-blue.svg)](https://github.com/mako10k/llmcmd/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.21+-blue.svg)](https://golang.org/)
 
