@@ -99,7 +99,7 @@ type FdDependency struct {
 type Engine struct {
 	inputFiles      []*os.File
 	outputFile      *os.File
-	fileDescriptors []io.Reader
+	fileDescriptors []interface{} // Can hold io.Reader, io.Writer, or io.ReadWriter
 	runningCommands map[int]*RunningCommand // Maps fd to running command
 	commandsMutex   sync.RWMutex
 	fdDependencies  []FdDependency // Tracks fd dependencies for spawns and tees
@@ -118,6 +118,7 @@ type ExecutionStats struct {
 	WriteCalls   int   `json:"write_calls"`
 	SpawnCalls   int   `json:"spawn_calls"`
 	TeeCalls     int   `json:"tee_calls"`
+	CloseCalls   int   `json:"close_calls"`
 	ExitCalls    int   `json:"exit_calls"`
 	BytesRead    int64 `json:"bytes_read"`
 	BytesWritten int64 `json:"bytes_written"`
@@ -147,10 +148,17 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 
 	// Initialize file descriptors array
 	// 0=stdin, 1=stdout, 2=stderr, 3+=input files
-	engine.fileDescriptors = make([]io.Reader, 3)
+	engine.fileDescriptors = make([]interface{}, 3)
 	if !config.NoStdin {
 		engine.fileDescriptors[0] = os.Stdin
 	}
+	// Add stdout and stderr to fd management
+	if engine.outputFile != nil {
+		engine.fileDescriptors[1] = engine.outputFile
+	} else {
+		engine.fileDescriptors[1] = os.Stdout
+	}
+	engine.fileDescriptors[2] = os.Stderr
 
 	// Open input files and add to file descriptors
 	for _, filename := range config.InputFiles {
@@ -445,7 +453,14 @@ func (e *Engine) startBackgroundCommandWithInput(cmd string, args []string, inpu
 		var inputData []byte
 		if size > 0 {
 			buf := make([]byte, size)
-			n, err := e.fileDescriptors[inputFd].Read(buf)
+			reader, ok := e.fileDescriptors[inputFd].(io.Reader)
+			if !ok {
+				runningCmd.mu.Lock()
+				runningCmd.exitCode = 1
+				runningCmd.mu.Unlock()
+				return
+			}
+			n, err := reader.Read(buf)
 			if err != nil && err != io.EOF {
 				runningCmd.mu.Lock()
 				runningCmd.exitCode = 1
@@ -478,38 +493,37 @@ func (e *Engine) startBackgroundCommandWithInput(cmd string, args []string, inpu
 	return outFd, nil
 }
 
-// startBackgroundCommandWithOutput starts a command that writes to existing out_fd
-func (e *Engine) startBackgroundCommandWithOutput(cmd string, args []string, outputFd int) (int, error) {
-	// Create input pipe
-	inReader, inWriter, err := os.Pipe()
+// startBackgroundCommandWithExistingInput starts a command that reads from existing in_fd (reads all available data)
+func (e *Engine) startBackgroundCommandWithExistingInput(cmd string, args []string, inputFd int) (int, error) {
+	// Validate input file descriptor
+	if inputFd < 0 || inputFd >= len(e.fileDescriptors) || e.fileDescriptors[inputFd] == nil {
+		return 0, fmt.Errorf("invalid input file descriptor: %d", inputFd)
+	}
+
+	// Create output pipe
+	outReader, outWriter, err := os.Pipe()
 	if err != nil {
-		return 0, fmt.Errorf("failed to create input pipe: %w", err)
+		return 0, fmt.Errorf("failed to create output pipe: %w", err)
 	}
 
-	// Allocate input file descriptor
-	inFd := e.allocateFd()
-
-	// Determine output writer
-	var outWriter io.Writer
-	switch outputFd {
-	case 1:
-		outWriter = os.Stdout
-	case 2:
-		outWriter = os.Stderr
-	default:
-		inReader.Close()
-		inWriter.Close()
-		return 0, fmt.Errorf("invalid output file descriptor: %d", outputFd)
-	}
+	// Allocate output file descriptor
+	outFd := e.allocateFd()
 
 	// Create and store running command tracker
-	runningCmd := e.createRunningCommand(cmd, args, inFd, inFd, outputFd, inWriter, nil)
-	e.commandsMutex.Unlock()
+	runningCmd := e.createRunningCommand(cmd, args, outFd, inputFd, outFd, nil, outReader)
+
+	// Extend file descriptors array if needed
+	for len(e.fileDescriptors) <= outFd {
+		e.fileDescriptors = append(e.fileDescriptors, nil)
+	}
+
+	// Set up file descriptor for reading command output
+	e.fileDescriptors[outFd] = outReader
 
 	// Start goroutine to execute built-in command
 	go func() {
 		defer func() {
-			inReader.Close()
+			outWriter.Close()
 
 			runningCmd.mu.Lock()
 			runningCmd.finished = true
@@ -519,15 +533,24 @@ func (e *Engine) startBackgroundCommandWithOutput(cmd string, args []string, out
 			close(runningCmd.done)
 		}()
 
-		// Execute the built-in command
-		var err error
+		// Execute the built-in command directly with input stream
 		commandFunc, exists := builtin.Commands[cmd]
 		if !exists {
-			err = fmt.Errorf("unknown command: %s", cmd)
-		} else {
-			err = commandFunc(args, inReader, outWriter)
+			runningCmd.mu.Lock()
+			runningCmd.exitCode = 1
+			runningCmd.mu.Unlock()
+			return
 		}
 
+		reader, ok := e.fileDescriptors[inputFd].(io.Reader)
+		if !ok {
+			runningCmd.mu.Lock()
+			runningCmd.exitCode = 1
+			runningCmd.mu.Unlock()
+			return
+		}
+
+		err := commandFunc(args, reader, outWriter)
 		runningCmd.mu.Lock()
 		if err != nil {
 			runningCmd.exitCode = 1
@@ -537,21 +560,59 @@ func (e *Engine) startBackgroundCommandWithOutput(cmd string, args []string, out
 		runningCmd.mu.Unlock()
 	}()
 
-	return inFd, nil
+	return outFd, nil
+}
+
+// startBackgroundCommandWithInputOutput starts a command that reads from in_fd and creates a new output fd (pipe chain middle)
+// startBackgroundCommandWithInputOutput starts a command that reads from in_fd and writes to out_fd (pipe chain middle)
+func (e *Engine) startBackgroundCommandWithInputOutput(cmd string, args []string, inputFd int) error {
+	// Validate input file descriptor
+	if inputFd < 0 || inputFd >= len(e.fileDescriptors) || e.fileDescriptors[inputFd] == nil {
+		return fmt.Errorf("invalid input file descriptor: %d", inputFd)
+	}
+
+	// Writing to arbitrary file descriptor not yet implemented - fd management redesign needed
+	return fmt.Errorf("startBackgroundCommandWithInputOutput not yet implemented - fd management redesign needed")
+}
+
+// startBackgroundCommandWithOutput starts a command that writes to existing out_fd
+func (e *Engine) startBackgroundCommandWithOutput(cmd string, args []string, outputFd int) (int, error) {
+	// Validate output file descriptor exists
+	if outputFd < 0 || outputFd >= len(e.fileDescriptors) || e.fileDescriptors[outputFd] == nil {
+		return 0, fmt.Errorf("invalid output file descriptor: %d", outputFd)
+	}
+
+	// Writing to arbitrary file descriptor not yet implemented - fd management redesign needed
+	return 0, fmt.Errorf("writing to arbitrary file descriptor %d not yet implemented - fd management redesign needed", outputFd)
 }
 
 // Close closes all file handles
 func (e *Engine) Close() error {
 	var errors []error
 
-	// Close input files
+	// Close file descriptors (skip fd 0 as it's managed by the parent process)
+	for i, fdObj := range e.fileDescriptors {
+		if i == 0 {
+			// Skip stdin (fd 0) - managed by parent process
+			continue
+		}
+		if fdObj != nil {
+			if closer, ok := fdObj.(io.Closer); ok {
+				if err := closer.Close(); err != nil {
+					errors = append(errors, fmt.Errorf("error closing fd %d: %w", i, err))
+				}
+			}
+		}
+	}
+
+	// Close input files (these might overlap with fileDescriptors, but Close() is idempotent)
 	for _, file := range e.inputFiles {
 		if err := file.Close(); err != nil {
 			errors = append(errors, err)
 		}
 	}
 
-	// Close output file
+	// Close output file (this might overlap with fd 1, but Close() is idempotent)  
 	if e.outputFile != nil {
 		if err := e.outputFile.Close(); err != nil {
 			errors = append(errors, err)
@@ -596,6 +657,8 @@ func (e *Engine) ExecuteToolCall(toolCall map[string]interface{}) (string, error
 		return e.executeSpawn(args)
 	case "tee":
 		return e.executeTee(args)
+	case "close":
+		return e.executeClose(args)
 	case "exit":
 		return e.executeExit(args)
 	default:
@@ -643,24 +706,46 @@ func (e *Engine) executeRead(args map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("read: invalid file descriptor %d", fd)
 	}
 
-	reader = e.fileDescriptors[fd]
-	if reader == nil {
+	fdObj := e.fileDescriptors[fd]
+	if fdObj == nil {
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("read: file descriptor %d not available", fd)
+	}
+
+	var readerOk bool
+	reader, readerOk = fdObj.(io.Reader)
+	if !readerOk {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("read: file descriptor %d is not readable", fd)
 	}
 
 	// Read data with blocking I/O
 	buffer := make([]byte, count)
 	n, err := reader.Read(buffer)
-	if err != nil && err != io.EOF {
-		e.stats.ErrorCount++
-		return "", fmt.Errorf("read: %w", err)
+	
+	// Handle all possible outcomes explicitly (Fail-First principle)
+	if err != nil {
+		if err == io.EOF {
+			// EOF is a normal termination condition - report it clearly
+			e.stats.BytesRead += int64(n)
+			if n > 0 {
+				// Return partial data with EOF indication
+				return fmt.Sprintf("%s\n--- EOF reached after %d bytes ---", string(buffer[:n]), n), nil
+			} else {
+				// Pure EOF with no data
+				return "--- EOF: No more data available ---", nil
+			}
+		} else {
+			// All other errors are failures (Fail-First)
+			e.stats.ErrorCount++
+			return "", fmt.Errorf("read: %w", err)
+		}
 	}
 
 	e.stats.BytesRead += int64(n)
 	result := string(buffer[:n])
 
-	// Return empty string if no data, but don't treat it as error
+	// Contract: Always return clear information about what was read
 	return result, nil
 }
 
@@ -697,26 +782,16 @@ func (e *Engine) executeWrite(args map[string]interface{}) (string, error) {
 
 	// Get the appropriate writer
 	var writer io.Writer
-	switch fd {
-	case 0: // stdin - check if it's a running command's input fd
-		e.commandsMutex.RLock()
-		if runningCmd, exists := e.runningCommands[fd]; exists && runningCmd.stdin != nil {
-			writer = runningCmd.stdin
-			e.commandsMutex.RUnlock()
+
+	// First check if it's a special fd (0-2) from fileDescriptors
+	if fd >= 0 && fd < len(e.fileDescriptors) && e.fileDescriptors[fd] != nil {
+		if w, ok := e.fileDescriptors[fd].(io.Writer); ok {
+			writer = w
 		} else {
-			e.commandsMutex.RUnlock()
 			e.stats.ErrorCount++
-			return "", fmt.Errorf("write: stdin (fd 0) is not available for writing")
+			return "", fmt.Errorf("write: file descriptor %d is not writable", fd)
 		}
-	case 1: // stdout
-		if e.outputFile != nil {
-			writer = e.outputFile
-		} else {
-			writer = os.Stdout
-		}
-	case 2: // stderr
-		writer = os.Stderr
-	default:
+	} else {
 		// Check if this is a running command's input fd
 		e.commandsMutex.RLock()
 		if runningCmd, exists := e.runningCommands[fd]; exists {
@@ -751,20 +826,28 @@ func (e *Engine) executeWrite(args map[string]interface{}) (string, error) {
 
 	// Handle EOF - trigger chain cleanup if eof is true
 	if isEof {
-		// Close the writer to signal EOF
-		if closer, ok := writer.(io.Closer); ok {
-			closer.Close()
+		if fd >= 3 {
+			// Pipeline intermediate (fd 3+): auto-close on EOF
+			if closer, ok := writer.(io.Closer); ok {
+				closer.Close()
+			}
+			// Mark FD as closed and trigger chain processing
+			e.markFdClosed(fd)
+		} else {
+			// Pipeline endpoints (fd 0,1,2): EOF is just a marker, explicit close needed
+			// Don't mark as closed - explicit close tool required for actual closing
 		}
 
-		// Mark FD as closed and trigger chain processing
-		e.markFdClosed(fd)
-
-		// Traverse the chain to collect exit codes
+		// Traverse the chain to collect exit codes (for all fds)
 		chainResults := e.traverseChainOnEOF(fd)
 
 		// Create summary message
 		var summary strings.Builder
-		summary.WriteString(fmt.Sprintf("wrote %d bytes to fd %d (EOF), chain traversal results:\n", n, fd))
+		if fd >= 3 {
+			summary.WriteString(fmt.Sprintf("wrote %d bytes to fd %d (EOF), auto-closed, chain traversal results:\n", n, fd))
+		} else {
+			summary.WriteString(fmt.Sprintf("wrote %d bytes to fd %d (EOF), explicit close required, chain traversal results:\n", n, fd))
+		}
 		for _, result := range chainResults {
 			summary.WriteString(fmt.Sprintf("  %s\n", result.Message))
 		}
@@ -801,7 +884,6 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	// Extract optional parameters
 	var inFd *int
 	var outFd *int
-	var size *int
 
 	if inFdFloat, hasInFd := args["in_fd"].(float64); hasInFd {
 		inFdInt := int(inFdFloat)
@@ -813,11 +895,6 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 		outFd = &outFdInt
 	}
 
-	if sizeFloat, hasSize := args["size"].(float64); hasSize {
-		sizeInt := int(sizeFloat)
-		size = &sizeInt
-	}
-
 	// Determine execution pattern based on arguments
 	result := map[string]interface{}{
 		"success": true,
@@ -825,7 +902,7 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 
 	// Pattern 1: spawn({cmd:...,args:...}) -> {success:true,in_fd:..., out_fd:...}
 	// Background execution, return file descriptors
-	if inFd == nil && outFd == nil && size == nil {
+	if inFd == nil && outFd == nil {
 		// Start background command with real pipes
 		realInFd, realOutFd, err := e.startBackgroundCommand(cmd, cmdArgs)
 		if err != nil {
@@ -840,23 +917,22 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 		return e.spawnSuccess(result)
 	}
 
-	// Pattern 2: spawn({cmd:...,args:...,in_fd:...,size:1234}) -> {success:true,out_fd:...}
-	// Background execution with input from in_fd
-	if inFd != nil && outFd == nil && size != nil {
+	// Pattern 2: spawn({cmd:...,args:...,in_fd:...}) -> {success:true,out_fd:...}
+	// Background execution with input from existing in_fd
+	if inFd != nil && outFd == nil {
 		// Start background command that reads from existing in_fd
-		realOutFd, err := e.startBackgroundCommandWithInput(cmd, cmdArgs, *inFd, *size)
+		realOutFd, err := e.startBackgroundCommandWithExistingInput(cmd, cmdArgs, *inFd)
 		if err != nil {
-			return e.spawnError("failed to start background command with input", err)
+			return e.spawnError("failed to start background command with existing input", err)
 		}
 
 		result["out_fd"] = realOutFd
-		result["in_size"] = *size
 		return e.spawnSuccess(result)
 	}
 
 	// Pattern 3: spawn({cmd:...,args:...,out_fd:...}) -> {success:true,in_fd:...}
 	// Background execution with output to out_fd
-	if inFd == nil && outFd != nil && size == nil {
+	if inFd == nil && outFd != nil {
 		// Start background command that writes to existing out_fd
 		realInFd, err := e.startBackgroundCommandWithOutput(cmd, cmdArgs, *outFd)
 		if err != nil {
@@ -867,26 +943,19 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 		return e.spawnSuccess(result)
 	}
 
-	// Pattern 4: spawn({cmd:...,args:...,in_fd:...,out_fd:...}) -> Error (removed foreground execution)
-	// Foreground execution patterns are no longer supported
+	// Pattern 4: spawn({cmd:...,args:...,in_fd:...,out_fd:...}) -> {success:true}
+	// Background execution with input from in_fd and output to out_fd (pipe chain middle processing)
 	if inFd != nil && outFd != nil {
-		return e.spawnError("foreground execution patterns are not supported - use background-only execution and write({eof: true}) for termination", fmt.Errorf("invalid pattern"))
+		err := e.startBackgroundCommandWithInputOutput(cmd, cmdArgs, *inFd)
+		if err != nil {
+			return e.spawnError("failed to start background command with input and output", err)
+		}
+
+		return e.spawnSuccess(result)
 	}
 
-	// If we reach here, it means we have a valid parameter combination that should work
-	// Let the builtin command handle its own validation
-	// Fall back to Pattern 1 for any remaining cases
-	realInFd, realOutFd, err := e.startBackgroundCommand(cmd, cmdArgs)
-	if err != nil {
-		return e.spawnError("failed to start background command", err)
-	}
-
-	// Record the dependency relationship
-	e.addFdDependency(realInFd, []int{realOutFd}, "spawn")
-
-	result["in_fd"] = realInFd
-	result["out_fd"] = realOutFd
-	return e.spawnSuccess(result)
+	// Should not reach here
+	return e.spawnError("no valid spawn pattern matched", fmt.Errorf("invalid spawn arguments"))
 }
 
 // executeBuiltinCommand executes a single built-in command
@@ -906,6 +975,68 @@ func (e *Engine) executeBuiltinCommand(cmd string, args []string, input []byte) 
 	}
 
 	return output.Bytes(), nil
+}
+
+// executeClose implements the close tool - explicitly closes file descriptors
+func (e *Engine) executeClose(args map[string]interface{}) (string, error) {
+	e.stats.CloseCalls++
+
+	// Extract file descriptor
+	fdFloat, ok := args["fd"].(float64)
+	if !ok {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("close: fd parameter must be a number")
+	}
+	fd := int(fdFloat)
+
+	// Validate file descriptor
+	if fd < 0 || fd >= len(e.fileDescriptors) || e.fileDescriptors[fd] == nil {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("close: invalid file descriptor %d", fd)
+	}
+
+	// Check if already closed
+	e.chainMutex.RLock()
+	if e.closedFds[fd] {
+		e.chainMutex.RUnlock()
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("close: file descriptor %d is already closed", fd)
+	}
+	e.chainMutex.RUnlock()
+
+	// Perform the close operation
+	fdObj := e.fileDescriptors[fd]
+	if closer, ok := fdObj.(io.Closer); ok {
+		if fd < 3 {
+			// Pipeline endpoints (0,1,2): explicit close for flush and EOF notification
+			if err := closer.Close(); err != nil {
+				e.stats.ErrorCount++
+				return "", fmt.Errorf("close: error closing fd %d: %w", fd, err)
+			}
+		} else {
+			// Internal fds (3+): should already be auto-closed, but allow explicit close
+			if err := closer.Close(); err != nil {
+				e.stats.ErrorCount++
+				return "", fmt.Errorf("close: error closing fd %d: %w", fd, err)
+			}
+		}
+	}
+
+	// Mark as closed and trigger chain processing
+	e.markFdClosed(fd)
+
+	// Traverse the chain to collect exit codes
+	chainResults := e.traverseChainOnEOF(fd)
+
+	// Create summary message
+	var summary strings.Builder
+	summary.WriteString(fmt.Sprintf("closed fd %d, chain traversal results:\n", fd))
+	for _, result := range chainResults {
+		summary.WriteString(fmt.Sprintf("  fd %d: %s (exit: %d, cmd: %s)\n", 
+			result.Fd, result.Message, result.ExitCode, result.Command))
+	}
+
+	return summary.String(), nil
 }
 
 // executeExit implements the exit tool
@@ -971,17 +1102,23 @@ func (e *Engine) executeTee(args map[string]interface{}) (string, error) {
 	// Record the dependency relationship for tee (1:many)
 	e.addFdDependency(inFd, outFds, "tee")
 
-	// Validate input file descriptor
+	// Validate and get reader for input fd
 	if inFd < 0 || inFd >= len(e.fileDescriptors) || e.fileDescriptors[inFd] == nil {
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("tee: invalid input file descriptor: %d", inFd)
+	}
+
+	reader, readerOk := e.fileDescriptors[inFd].(io.Reader)
+	if !readerOk {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("tee: file descriptor %d is not readable", inFd)
 	}
 
 	// Read all input data
 	var inputData []byte
 	buf := make([]byte, 4096)
 	for {
-		n, err := e.fileDescriptors[inFd].Read(buf)
+		n, err := reader.Read(buf)
 		if n > 0 {
 			inputData = append(inputData, buf[:n]...)
 		}
@@ -997,14 +1134,11 @@ func (e *Engine) executeTee(args map[string]interface{}) (string, error) {
 	// Write to all output file descriptors
 	totalWritten := 0
 	for _, outFd := range outFds {
-		if outFd == 1 {
-			// stdout
-			n, _ := fmt.Print(string(inputData))
-			totalWritten += n
-		} else if outFd == 2 {
-			// stderr
-			n, _ := fmt.Fprint(os.Stderr, string(inputData))
-			totalWritten += n
+		if outFd >= 0 && outFd < len(e.fileDescriptors) && e.fileDescriptors[outFd] != nil {
+			if writer, ok := e.fileDescriptors[outFd].(io.Writer); ok {
+				n, _ := writer.Write(inputData)
+				totalWritten += n
+			}
 		}
 	}
 
@@ -1027,10 +1161,16 @@ func (e *Engine) readLines(fd int, lines int) (string, error) {
 		return "", fmt.Errorf("read: invalid file descriptor %d", fd)
 	}
 
-	reader := e.fileDescriptors[fd]
-	if reader == nil {
+	fdObj := e.fileDescriptors[fd]
+	if fdObj == nil {
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("read: file descriptor %d not available", fd)
+	}
+
+	reader, readerOk := fdObj.(io.Reader)
+	if !readerOk {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("read: file descriptor %d is not readable", fd)
 	}
 
 	var result strings.Builder
