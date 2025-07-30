@@ -14,6 +14,9 @@ npm-debug.log*
 reports/
 package-lock.json
 
+# Release binaries
+release/
+
 # Test binaries
 *.test
 
