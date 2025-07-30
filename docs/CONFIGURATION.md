@@ -33,6 +33,12 @@ timeout_seconds=300
 max_retries=3
 retry_delay_ms=1000
 
+# Quota System (v3.0.0+)
+quota_max_tokens=0        # 0 = unlimited, >0 = maximum tokens allowed
+quota_weights_input=1.0   # Weight for input tokens
+quota_weights_cached=0.25 # Weight for cached input tokens
+quota_weights_output=4.0  # Weight for output tokens
+
 # File Processing Limits
 max_file_size=10485760    # 10MB in bytes
 read_buffer_size=4096     # 4KB buffer

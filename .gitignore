@@ -8,6 +8,12 @@ llmcmd.exe
 *.a
 *.so
 
+# Node.js dependencies and reports
+node_modules/
+npm-debug.log*
+reports/
+package-lock.json
+
 # Test binaries
 *.test
 
