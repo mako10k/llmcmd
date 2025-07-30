@@ -1,0 +1,30 @@
+{
+  "name": "llmcmd",
+  "version": "3.0.1",
+  "description": "[![Version](https://img.shields.io/badge/version-3.0.1-blue.svg)](https://github.com/mako10k/llmcmd/releases) [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Go](https://img.shields.io/badge/go-1.21+-blue.svg)](https://golang.org/)",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "cpd": "jscpd ./internal",
+    "cpd:report": "jscpd ./internal --reporters html,console,json",
+    "cpd:full": "jscpd .",
+    "cpd:verbose": "jscpd ./internal --verbose"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mako10k/llmcmd.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/mako10k/llmcmd/issues"
+  },
+  "homepage": "https://github.com/mako10k/llmcmd#readme",
+  "devDependencies": {
+    "jscpd": "^4.0.5"
+  }
+}
