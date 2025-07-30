@@ -1,0 +1,8 @@
+{
+  "openai_api_key": "test-key",
+  "model": "gpt-4o-mini",
+  "max_tokens": 100000,
+  "temperature": 5.0,
+  "max_api_calls": 2000,
+  "timeout_seconds": 30
+}

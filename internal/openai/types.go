@@ -40,11 +40,37 @@ type Choice struct {
 	FinishReason string      `json:"finish_reason"`
 }
 
-// Usage represents token usage information
+// Usage represents token usage information with detailed breakdown
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens        int                  `json:"prompt_tokens"`
+	CompletionTokens    int                  `json:"completion_tokens"`
+	TotalTokens         int                  `json:"total_tokens"`
+	PromptTokensDetails *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+}
+
+// PromptTokensDetails represents detailed breakdown of prompt tokens
+type PromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens,omitempty"`
+}
+
+// QuotaConfig represents quota configuration for token usage
+type QuotaConfig struct {
+	MaxTokens    int     `json:"max_tokens"`    // Maximum total weighted tokens allowed
+	InputWeight  float64 `json:"input_weight"`  // Weight for input tokens (e.g., 1.0 for gpt-4o)
+	CachedWeight float64 `json:"cached_weight"` // Weight for cached tokens (e.g., 0.25 for gpt-4o)
+	OutputWeight float64 `json:"output_weight"` // Weight for output tokens (e.g., 4.0 for gpt-4o)
+}
+
+// QuotaUsage tracks weighted token usage against quota
+type QuotaUsage struct {
+	InputTokens     int     `json:"input_tokens"`     // Non-cached input tokens
+	CachedTokens    int     `json:"cached_tokens"`    // Cached input tokens
+	OutputTokens    int     `json:"output_tokens"`    // Output/completion tokens
+	WeightedInputs  float64 `json:"weighted_inputs"`  // Input tokens × input weight
+	WeightedCached  float64 `json:"weighted_cached"`  // Cached tokens × cached weight
+	WeightedOutputs float64 `json:"weighted_outputs"` // Output tokens × output weight
+	TotalWeighted   float64 `json:"total_weighted"`   // Sum of all weighted tokens
+	RemainingQuota  float64 `json:"remaining_quota"`  // Remaining quota capacity
 }
 
 // Tool represents a function tool definition
@@ -82,7 +108,7 @@ type ErrorResponse struct {
 	} `json:"error"`
 }
 
-// ClientStats tracks API usage statistics
+// ClientStats tracks API usage statistics with quota support
 type ClientStats struct {
 	RequestCount     int           `json:"request_count"`
 	TotalTokens      int           `json:"total_tokens"`
@@ -92,7 +118,9 @@ type ClientStats struct {
 	LastRequestTime  time.Time     `json:"last_request_time"`
 	ErrorCount       int           `json:"error_count"`
 	RetryCount       int           `json:"retry_count"`
-	Verbose          bool          `json:"-"` // Not serialized
+	QuotaUsage       QuotaUsage    `json:"quota_usage"`    // Quota tracking
+	QuotaExceeded    bool          `json:"quota_exceeded"` // Whether quota was exceeded
+	Verbose          bool          `json:"-"`              // Not serialized
 }
 
 // Reset resets the statistics
@@ -105,6 +133,8 @@ func (s *ClientStats) Reset() {
 	s.LastRequestTime = time.Time{}
 	s.ErrorCount = 0
 	s.RetryCount = 0
+	s.QuotaUsage = QuotaUsage{}
+	s.QuotaExceeded = false
 }
 
 // AddRequest updates statistics with a new request
@@ -115,6 +145,45 @@ func (s *ClientStats) AddRequest(duration time.Duration, usage Usage) {
 	s.CompletionTokens += usage.CompletionTokens
 	s.TotalDuration += duration
 	s.LastRequestTime = time.Now()
+}
+
+// UpdateQuotaUsage updates quota usage based on the provided usage data and config
+func (s *ClientStats) UpdateQuotaUsage(usage *Usage, config *QuotaConfig) {
+	if config == nil || usage == nil {
+		return
+	}
+
+	// Calculate actual input tokens (subtract cached from total input)
+	actualInputTokens := usage.PromptTokens
+	cachedTokens := 0
+	if usage.PromptTokensDetails != nil {
+		cachedTokens = usage.PromptTokensDetails.CachedTokens
+		actualInputTokens -= cachedTokens
+	}
+
+	// Update token counts
+	s.QuotaUsage.InputTokens += actualInputTokens
+	s.QuotaUsage.CachedTokens += cachedTokens
+	s.QuotaUsage.OutputTokens += usage.CompletionTokens
+
+	// Calculate weighted costs
+	s.QuotaUsage.WeightedInputs = float64(s.QuotaUsage.InputTokens) * config.InputWeight
+	s.QuotaUsage.WeightedCached = float64(s.QuotaUsage.CachedTokens) * config.CachedWeight
+	s.QuotaUsage.WeightedOutputs = float64(s.QuotaUsage.OutputTokens) * config.OutputWeight
+
+	// Calculate total weighted usage
+	s.QuotaUsage.TotalWeighted = s.QuotaUsage.WeightedInputs + s.QuotaUsage.WeightedCached + s.QuotaUsage.WeightedOutputs
+
+	// Calculate remaining quota
+	if config.MaxTokens <= 0 {
+		// No limit set - unlimited quota
+		s.QuotaUsage.RemainingQuota = -1 // Indicates unlimited
+		s.QuotaExceeded = false
+	} else {
+		s.QuotaUsage.RemainingQuota = float64(config.MaxTokens) - s.QuotaUsage.TotalWeighted
+		// Check if quota exceeded
+		s.QuotaExceeded = s.QuotaUsage.RemainingQuota <= 0
+	}
 }
 
 // AddError increments error count
@@ -253,6 +322,35 @@ func ToolDefinitions() []Tool {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: ToolFunction{
+				Name:        "exit",
+				Description: "Exit the program with specified code",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"code": map[string]interface{}{
+							"type":        "integer",
+							"description": "Exit code",
+							"minimum":     0,
+							"maximum":     255,
+						},
+						"message": map[string]interface{}{
+							"type":        "string",
+							"description": "Optional exit message",
+						},
+					},
+					"required": []string{"code"},
+				},
+			},
+		},
+	}
+}
+
+// ExitToolDefinition returns only the exit tool definition for final API calls
+func ExitToolDefinition() []Tool {
+	return []Tool{
 		{
 			Type: "function",
 			Function: ToolFunction{

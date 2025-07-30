@@ -1,0 +1,6 @@
+b20ee190a758b9de10e55b674560b66e23a1f09140b16c9a78d11ff7ded0d7ee  llmcmd-v3.0.0-darwin-amd64.tar.gz
+af3c5ae4a60efc37401dc5e187271adf70b24eeecf0f6a68e04d999da3d6970a  llmcmd-v3.0.0-darwin-arm64.tar.gz
+7f707a5c15170922f925b1bcf22a740e25f5323b71f60db834d67db4097698d5  llmcmd-v3.0.0-linux-amd64.tar.gz
+4d3a3a41672e50ae7fa5ed80b3b3445c96494f8c80088fb8ee9fb5ccb02d1698  llmcmd-v3.0.0-linux-arm64.tar.gz
+1a146e71568d7130cef58d8723f10e4d78fc4fdd470abbfc373dda55827db316  llmcmd-v3.0.0-windows-amd64.tar.gz
+47302252816236e5a3d37e7ed9da1a6221d947088f6dc228893f8249ceca5157  llmcmd-v3.0.0-windows-arm64.tar.gz

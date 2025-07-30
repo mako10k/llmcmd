@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	InstallDir     = "/usr/local/bin"
-	BinaryName     = "llmcmd"
-	GitHubRepo     = "mako10k/llmcmd"
-	ConfigDir      = ".config/llmcmd"
-	DefaultConfig  = `{
+	InstallDir    = "/usr/local/bin"
+	BinaryName    = "llmcmd"
+	GitHubRepo    = "mako10k/llmcmd"
+	ConfigDir     = ".config/llmcmd"
+	DefaultConfig = `{
   "model": "gpt-4o-mini",
   "max_tokens": 4096,
   "temperature": 0.1,

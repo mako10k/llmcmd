@@ -39,7 +39,7 @@ func New(config *cli.Config) *App {
 func (a *App) Run() error {
 	// Load configuration file
 	var err error
-	a.fileConfig, err = cli.LoadConfigFile(a.config.ConfigFile)
+	a.fileConfig, err = cli.LoadAndMergeConfig(a.config)
 	if err != nil {
 		return fmt.Errorf("failed to load config file: %w", err)
 	}
@@ -93,6 +93,12 @@ func (a *App) initializeOpenAI() error {
 		MaxCalls:   a.fileConfig.MaxAPICalls,
 		MaxRetries: a.fileConfig.MaxRetries,
 		RetryDelay: time.Duration(a.fileConfig.RetryDelay) * time.Millisecond,
+		QuotaConfig: &openai.QuotaConfig{
+			MaxTokens:    a.fileConfig.QuotaMaxTokens,
+			InputWeight:  a.fileConfig.QuotaWeights.InputWeight,
+			CachedWeight: a.fileConfig.QuotaWeights.InputCachedWeight,
+			OutputWeight: a.fileConfig.QuotaWeights.OutputWeight,
+		},
 	}
 
 	a.openaiClient = openai.NewClient(config)
@@ -136,27 +142,56 @@ func (a *App) initializeToolEngine() error {
 func (a *App) executeTask() error {
 	defer a.toolEngine.Close()
 
-	// Create initial messages
-	messages := openai.CreateInitialMessages(
-		a.config.Prompt,
-		a.config.Instructions,
-		a.config.InputFiles,
-		a.fileConfig.SystemPrompt,
-		a.fileConfig.DisableTools,
-	)
-
-	if a.config.Verbose {
-		log.Printf("Starting LLM interaction with %d initial messages", len(messages))
-	}
+	// Save configuration on exit (to persist quota usage)
+	defer func() {
+		if saveErr := a.fileConfig.SaveConfigFile(a.config.ConfigFile); saveErr != nil && a.config.Verbose {
+			log.Printf("Warning: failed to save config file: %v", saveErr)
+		}
+	}()
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(),
 		time.Duration(a.fileConfig.TimeoutSeconds)*time.Second)
 	defer cancel()
 
+	// Create initial messages for first iteration
+	quotaStatus := a.fileConfig.GetQuotaStatusString()
+	messages := openai.CreateInitialMessagesWithQuota(
+		a.config.Prompt,
+		a.config.Instructions,
+		a.config.InputFiles,
+		a.fileConfig.SystemPrompt,
+		a.fileConfig.DisableTools,
+		quotaStatus,
+		false, // Initial call is never the last call
+	)
+
+	if a.config.Verbose {
+		log.Printf("Starting LLM interaction with %d initial messages", len(messages))
+	}
+
 	// Main interaction loop
 	for {
 		a.iterationCount++
+
+		// Check if this will be the last API call
+		stats := a.openaiClient.GetStats()
+		isLastCall := (stats.RequestCount + 1) >= a.fileConfig.MaxAPICalls
+
+		// Update quota status for subsequent calls
+		if a.iterationCount > 1 {
+			quotaStatus = a.fileConfig.GetQuotaStatusString()
+			// For subsequent calls, create new initial messages with updated quota
+			messages = openai.CreateInitialMessagesWithQuota(
+				a.config.Prompt,
+				a.config.Instructions,
+				a.config.InputFiles,
+				a.fileConfig.SystemPrompt,
+				a.fileConfig.DisableTools,
+				quotaStatus,
+				isLastCall,
+			)
+		}
 
 		// Create request
 		request := openai.ChatCompletionRequest{
@@ -168,8 +203,19 @@ func (a *App) executeTask() error {
 
 		// Add tools only if not disabled
 		if !a.fileConfig.DisableTools {
-			request.Tools = openai.ToolDefinitions()
-			request.ToolChoice = "auto"
+			// Use the already calculated isLastCall value
+			if isLastCall {
+				// Last API call: only provide exit tool and force its use
+				request.Tools = openai.ExitToolDefinition()
+				request.ToolChoice = map[string]interface{}{
+					"type":     "function",
+					"function": map[string]string{"name": "exit"},
+				}
+			} else {
+				// Normal API call: provide all tools
+				request.Tools = openai.ToolDefinitions()
+				request.ToolChoice = "auto"
+			}
 		}
 
 		// Send request to OpenAI with retry mechanism
@@ -182,10 +228,31 @@ func (a *App) executeTask() error {
 		choice := response.Choices[0]
 		messages = append(messages, choice.Message)
 
+		// Update quota usage in config file
+		actualInputTokens := response.Usage.PromptTokens
+		cachedTokens := 0
+		if response.Usage.PromptTokensDetails != nil {
+			cachedTokens = response.Usage.PromptTokensDetails.CachedTokens
+			actualInputTokens -= cachedTokens
+		}
+		a.fileConfig.UpdateQuotaUsage(actualInputTokens, cachedTokens, response.Usage.CompletionTokens)
+
+		// Sync API call count from client stats
+		stats = a.openaiClient.GetStats()
+		a.fileConfig.QuotaUsage.APICalls = stats.RequestCount
+
+		// Check for quota exceeded after update
+		if a.fileConfig.IsQuotaExceeded() {
+			return fmt.Errorf("quota limit exceeded: %s", a.fileConfig.GetQuotaStatusString())
+		}
+
 		if a.config.Verbose {
-			stats := a.openaiClient.GetStats()
+			// Use the already retrieved stats
 			log.Printf("API call completed (total: %d/%d, retries: %d, tokens: %d)",
 				stats.RequestCount, a.fileConfig.MaxAPICalls, stats.RetryCount, response.Usage.TotalTokens)
+			if a.fileConfig.QuotaMaxTokens > 0 {
+				log.Printf("Quota status: %s", a.fileConfig.GetQuotaStatusString())
+			}
 		}
 
 		// Handle finish reason
