@@ -178,19 +178,26 @@ func (a *App) executeTask() error {
 		stats := a.openaiClient.GetStats()
 		isLastCall := (stats.RequestCount + 1) >= a.fileConfig.MaxAPICalls
 
-		// Update quota status for subsequent calls
+		// Update quota status for subsequent calls (but preserve message history!)
 		if a.iterationCount > 1 {
 			quotaStatus = a.fileConfig.GetQuotaStatusString()
-			// For subsequent calls, create new initial messages with updated quota
-			messages = openai.CreateInitialMessagesWithQuota(
-				a.config.Prompt,
-				a.config.Instructions,
-				a.config.InputFiles,
-				a.fileConfig.SystemPrompt,
-				a.fileConfig.DisableTools,
-				quotaStatus,
-				isLastCall,
-			)
+			// Update only the system message with quota info, preserving conversation history
+			if len(messages) > 0 && messages[0].Role == "system" {
+				// Update system message to include quota status
+				updatedSystemMessages := openai.CreateInitialMessagesWithQuota(
+					a.config.Prompt,
+					a.config.Instructions,
+					a.config.InputFiles,
+					a.fileConfig.SystemPrompt,
+					a.fileConfig.DisableTools,
+					quotaStatus,
+					isLastCall,
+				)
+				// Replace only the system message, keep all other history
+				if len(updatedSystemMessages) > 0 {
+					messages[0] = updatedSystemMessages[0]
+				}
+			}
 		}
 
 		// Create request
