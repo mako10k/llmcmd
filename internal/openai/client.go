@@ -21,16 +21,18 @@ type Client struct {
 	stats       ClientStats
 	maxCalls    int
 	retryConfig RetryConfig
+	quotaConfig *QuotaConfig // Optional quota configuration
 }
 
 // ClientConfig holds configuration for the OpenAI client
 type ClientConfig struct {
-	APIKey     string
-	BaseURL    string
-	Timeout    time.Duration
-	MaxCalls   int
-	MaxRetries int
-	RetryDelay time.Duration
+	APIKey      string
+	BaseURL     string
+	Timeout     time.Duration
+	MaxCalls    int
+	MaxRetries  int
+	RetryDelay  time.Duration
+	QuotaConfig *QuotaConfig // Optional quota configuration
 }
 
 // NewClient creates a new OpenAI API client
@@ -55,9 +57,10 @@ func NewClient(config ClientConfig) *Client {
 		httpClient: &http.Client{
 			Timeout: config.Timeout,
 		},
-		apiKey:   config.APIKey,
-		baseURL:  config.BaseURL,
-		maxCalls: config.MaxCalls,
+		apiKey:      config.APIKey,
+		baseURL:     config.BaseURL,
+		maxCalls:    config.MaxCalls,
+		quotaConfig: config.QuotaConfig,
 		retryConfig: RetryConfig{
 			MaxRetries:    config.MaxRetries,
 			BaseDelay:     config.RetryDelay,
@@ -78,6 +81,12 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatCompletionRequest) 
 	// Check rate limits
 	if c.stats.RequestCount >= c.maxCalls {
 		return c.errorf("maximum API calls exceeded (%d/%d)", c.stats.RequestCount, c.maxCalls)
+	}
+
+	// Check quota limits (only if limits are set)
+	if c.quotaConfig != nil && c.quotaConfig.MaxTokens > 0 && c.stats.QuotaExceeded {
+		return c.errorf("quota limit exceeded: %.1f/%.0f weighted tokens used",
+			c.stats.QuotaUsage.TotalWeighted, float64(c.quotaConfig.MaxTokens))
 	}
 
 	// Prepare request
@@ -133,6 +142,11 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatCompletionRequest) 
 
 	// Update statistics
 	c.stats.AddRequest(duration, chatResp.Usage)
+
+	// Update quota usage if quota config is provided
+	if c.quotaConfig != nil {
+		c.stats.UpdateQuotaUsage(&chatResp.Usage, c.quotaConfig)
+	}
 
 	return &chatResp, nil
 }
@@ -366,6 +380,11 @@ func getStdFileInfo(fd int) map[string]interface{} {
 
 // CreateInitialMessages creates the initial message sequence for llmcmd
 func CreateInitialMessages(prompt, instructions string, inputFiles []string, customSystemPrompt string, disableTools bool) []ChatMessage {
+	return CreateInitialMessagesWithQuota(prompt, instructions, inputFiles, customSystemPrompt, disableTools, "", false)
+}
+
+// CreateInitialMessagesWithQuota creates the initial message sequence with quota information
+func CreateInitialMessagesWithQuota(prompt, instructions string, inputFiles []string, customSystemPrompt string, disableTools bool, quotaStatus string, isLastCall bool) []ChatMessage {
 	var messages []ChatMessage
 
 	// Use custom system prompt if provided, otherwise use default
@@ -448,6 +467,16 @@ ANALYSIS APPROACH:
 
 - Answer user questions directly and clearly based on available information
 - Always consider file size and type before choosing processing approach`
+	}
+
+	// Add quota status information if provided
+	if quotaStatus != "" {
+		systemContent += "\n\nCURRENT USAGE STATUS:\n" + quotaStatus
+	}
+
+	// Add special instructions for last API call
+	if isLastCall && !disableTools {
+		systemContent += "\n\n⚠️  FINAL API CALL - MUST EXIT:\nThis is your final API call. You MUST use the exit() tool to terminate the program. Only the exit tool is available. Provide a completion summary if appropriate, then call exit(0) for success or exit(1) for errors."
 	}
 
 	messages = append(messages, ChatMessage{

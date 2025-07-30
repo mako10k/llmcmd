@@ -13,7 +13,7 @@ import (
 // Application metadata
 const (
 	AppName    = "llmcmd"
-	AppVersion = "2.0.0"
+	AppVersion = "3.0.0"
 )
 
 func main() {
@@ -30,10 +30,10 @@ func main() {
 		case cli.ErrListPresets:
 			// Start with default configuration
 			defaultConfig := cli.DefaultConfig()
-			
+
 			// If a config file is specified, try to load and merge it
 			if config.ConfigFile != "" {
-				fileConfig, loadErr := cli.LoadConfigFile(config.ConfigFile)
+				fileConfig, loadErr := cli.LoadConfigFile(config.ConfigFile, true) // Explicitly specified
 				if loadErr == nil && fileConfig.PromptPresets != nil {
 					// Merge file config with defaults (presets from file take precedence)
 					for k, v := range fileConfig.PromptPresets {
@@ -41,7 +41,7 @@ func main() {
 					}
 				}
 			}
-			
+
 			fmt.Println("Available prompt presets:")
 			for key, preset := range defaultConfig.PromptPresets {
 				fmt.Printf("  %-12s - %s\n", key, preset.Description)
@@ -65,14 +65,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
-	
+
 	// Resolve preset if specified
 	finalPrompt := config.Prompt
 	if config.Preset != "" {
 		if config.Prompt != "" {
 			log.Fatal("Error: Cannot specify both --prompt and --preset options")
 		}
-		
+
 		presetContent, err := cli.ResolvePreset(mergedConfig, config.Preset)
 		if err != nil {
 			log.Fatalf("Preset resolution error: %v", err)
@@ -90,7 +90,7 @@ func main() {
 			}
 		}
 	}
-	
+
 	// Update config with resolved prompt
 	config.Prompt = finalPrompt
 

@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,23 +17,43 @@ type PromptPreset struct {
 	Content     string `json:"content"`
 }
 
+// QuotaWeights represents cost weights for different token types
+type QuotaWeights struct {
+	InputWeight       float64 `json:"input_weight"`        // Weight for input tokens
+	InputCachedWeight float64 `json:"input_cached_weight"` // Weight for cached input tokens
+	OutputWeight      float64 `json:"output_weight"`       // Weight for output tokens
+}
+
+// QuotaUsage tracks quota consumption statistics
+type QuotaUsage struct {
+	TotalWeightedTokens float64 `json:"total_weighted_tokens"` // Total weighted token consumption
+	InputTokens         int     `json:"input_tokens"`          // Raw input tokens used
+	InputCachedTokens   int     `json:"input_cached_tokens"`   // Raw cached input tokens used
+	OutputTokens        int     `json:"output_tokens"`         // Raw output tokens used
+	APICalls            int     `json:"api_calls"`             // Number of API calls made
+}
+
 // ConfigFile represents configuration loaded from file
 type ConfigFile struct {
-	OpenAIAPIKey    string                   `json:"openai_api_key"`
-	OpenAIBaseURL   string                   `json:"openai_base_url"`
-	Model           string                   `json:"model"`
-	MaxTokens       int                      `json:"max_tokens"`
-	Temperature     float64                  `json:"temperature"`
-	MaxAPICalls     int                      `json:"max_api_calls"`
-	TimeoutSeconds  int                      `json:"timeout_seconds"`
-	MaxFileSize     int64                    `json:"max_file_size"`
-	ReadBufferSize  int                      `json:"read_buffer_size"`
-	MaxRetries      int                      `json:"max_retries"`
-	RetryDelay      int                      `json:"retry_delay_ms"`
-	SystemPrompt    string                   `json:"system_prompt"`
-	DefaultPrompt   string                   `json:"default_prompt"`
-	DisableTools    bool                     `json:"disable_tools"`
-	PromptPresets   map[string]PromptPreset  `json:"prompt_presets"`
+	OpenAIAPIKey   string                  `json:"openai_api_key"`
+	OpenAIBaseURL  string                  `json:"openai_base_url"`
+	Model          string                  `json:"model"`
+	MaxTokens      int                     `json:"max_tokens"`
+	Temperature    float64                 `json:"temperature"`
+	MaxAPICalls    int                     `json:"max_api_calls"`
+	TimeoutSeconds int                     `json:"timeout_seconds"`
+	MaxFileSize    int64                   `json:"max_file_size"`
+	ReadBufferSize int                     `json:"read_buffer_size"`
+	MaxRetries     int                     `json:"max_retries"`
+	RetryDelay     int                     `json:"retry_delay_ms"`
+	SystemPrompt   string                  `json:"system_prompt"`
+	DefaultPrompt  string                  `json:"default_prompt"`
+	DisableTools   bool                    `json:"disable_tools"`
+	PromptPresets  map[string]PromptPreset `json:"prompt_presets"`
+	// Quota system configuration
+	QuotaMaxTokens int          `json:"quota_max_tokens"` // Maximum weighted tokens allowed
+	QuotaWeights   QuotaWeights `json:"quota_weights"`    // Token type weights
+	QuotaUsage     QuotaUsage   `json:"quota_usage"`      // Current usage statistics
 }
 
 // DefaultConfig returns default configuration values
@@ -46,21 +68,39 @@ func DefaultConfig() *ConfigFile {
 		MaxFileSize:    10 * 1024 * 1024, // 10MB
 		ReadBufferSize: 4096,             // 4KB
 		MaxRetries:     3,
-		RetryDelay:     1000,  // 1 second
-		SystemPrompt:   "",    // Empty means use default built-in prompt
+		RetryDelay:     1000,      // 1 second
+		SystemPrompt:   "",        // Empty means use default built-in prompt
 		DefaultPrompt:  "general", // Default preset key
-		DisableTools:   false, // Tools enabled by default
+		DisableTools:   false,     // Tools enabled by default
 		PromptPresets:  getDefaultPromptPresets(),
+		// Default quota configuration (0 means no limit)
+		QuotaMaxTokens: 0, // No limit by default
+		QuotaWeights: QuotaWeights{
+			InputWeight:       1.0,  // Standard input token weight
+			InputCachedWeight: 0.25, // Cached tokens cost 25% of input tokens
+			OutputWeight:      4.0,  // Output tokens cost 4x input tokens (typical for gpt-4o)
+		},
+		QuotaUsage: QuotaUsage{
+			TotalWeightedTokens: 0,
+			InputTokens:         0,
+			InputCachedTokens:   0,
+			OutputTokens:        0,
+			APICalls:            0,
+		},
 	}
 }
 
 // LoadConfigFile loads configuration from file
-func LoadConfigFile(path string) (*ConfigFile, error) {
+func LoadConfigFile(path string, explicit bool) (*ConfigFile, error) {
 	config := DefaultConfig()
 
 	// Check if file exists
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		// File doesn't exist, return default config
+		if explicit {
+			// File was explicitly specified but doesn't exist - FAIL IMMEDIATELY
+			return nil, fmt.Errorf("explicitly specified config file does not exist: %s", path)
+		}
+		// File was not explicitly specified (default), return default config
 		return config, nil
 	}
 
@@ -69,6 +109,48 @@ func LoadConfigFile(path string) (*ConfigFile, error) {
 		return nil, fmt.Errorf("failed to open config file: %w", err)
 	}
 	defer file.Close()
+
+	// Read first few bytes to detect file format
+	buffer := make([]byte, 10)
+	n, err := file.Read(buffer)
+	if err != nil && err != io.EOF {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	// Reset file pointer
+	file.Seek(0, 0)
+
+	// Check if it's JSON format
+	firstChar := strings.TrimSpace(string(buffer[:n]))
+	if strings.HasPrefix(firstChar, "{") {
+		// JSON format - use strict JSON parser
+		return loadJSONConfig(file, config)
+	}
+
+	// Legacy key=value format
+	return loadLegacyConfig(file, config)
+}
+
+// loadJSONConfig loads configuration from JSON format with strict error checking
+func loadJSONConfig(file *os.File, config *ConfigFile) (*ConfigFile, error) {
+	decoder := json.NewDecoder(file)
+	decoder.DisallowUnknownFields() // Strict: fail on unknown fields
+
+	if err := decoder.Decode(config); err != nil {
+		// JSON parsing failed - FAIL IMMEDIATELY
+		return nil, fmt.Errorf("JSON config file parsing failed: %w", err)
+	}
+
+	// Validate configuration values after JSON loading
+	if err := validateConfigValues(config); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
+	}
+
+	return config, nil
+}
+
+// loadLegacyConfig loads configuration from legacy key=value format
+func loadLegacyConfig(file *os.File, config *ConfigFile) (*ConfigFile, error) {
 
 	scanner := bufio.NewScanner(file)
 	lineNum := 0
@@ -107,7 +189,74 @@ func LoadConfigFile(path string) (*ConfigFile, error) {
 		return nil, fmt.Errorf("error reading config file: %w", err)
 	}
 
+	// Validate configuration values after legacy loading
+	if err := validateConfigValues(config); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
+	}
+
 	return config, nil
+}
+
+// validateConfigValues performs strict validation of configuration values
+func validateConfigValues(config *ConfigFile) error {
+	// Critical validation - any failure should terminate the program
+
+	// Model validation
+	if config.Model == "" {
+		return fmt.Errorf("model name cannot be empty")
+	}
+
+	// Numeric range validation
+	if config.MaxTokens < 1 || config.MaxTokens > 32768 {
+		return fmt.Errorf("max_tokens must be between 1 and 32768, got %d", config.MaxTokens)
+	}
+
+	if config.Temperature < 0.0 || config.Temperature > 2.0 {
+		return fmt.Errorf("temperature must be between 0.0 and 2.0, got %.2f", config.Temperature)
+	}
+
+	if config.MaxAPICalls < 1 || config.MaxAPICalls > 1000 {
+		return fmt.Errorf("max_api_calls must be between 1 and 1000, got %d", config.MaxAPICalls)
+	}
+
+	if config.TimeoutSeconds < 1 || config.TimeoutSeconds > 3600 {
+		return fmt.Errorf("timeout_seconds must be between 1 and 3600, got %d", config.TimeoutSeconds)
+	}
+
+	if config.MaxFileSize < 1 || config.MaxFileSize > 100*1024*1024 {
+		return fmt.Errorf("max_file_size must be between 1 and 100MB, got %d", config.MaxFileSize)
+	}
+
+	if config.ReadBufferSize < 1 || config.ReadBufferSize > 64*1024 {
+		return fmt.Errorf("read_buffer_size must be between 1 and 64KB, got %d", config.ReadBufferSize)
+	}
+
+	if config.MaxRetries < 0 || config.MaxRetries > 10 {
+		return fmt.Errorf("max_retries must be between 0 and 10, got %d", config.MaxRetries)
+	}
+
+	if config.RetryDelay < 0 || config.RetryDelay > 60000 {
+		return fmt.Errorf("retry_delay_ms must be between 0 and 60000, got %d", config.RetryDelay)
+	}
+
+	// Quota validation
+	if config.QuotaMaxTokens < 0 {
+		return fmt.Errorf("quota_max_tokens cannot be negative, got %d", config.QuotaMaxTokens)
+	}
+
+	if config.QuotaWeights.InputWeight < 0 {
+		return fmt.Errorf("quota input_weight cannot be negative, got %.2f", config.QuotaWeights.InputWeight)
+	}
+
+	if config.QuotaWeights.InputCachedWeight < 0 {
+		return fmt.Errorf("quota input_cached_weight cannot be negative, got %.2f", config.QuotaWeights.InputCachedWeight)
+	}
+
+	if config.QuotaWeights.OutputWeight < 0 {
+		return fmt.Errorf("quota output_weight cannot be negative, got %.2f", config.QuotaWeights.OutputWeight)
+	}
+
+	return nil
 }
 
 // ResolvePreset resolves a preset key to its content from the configuration
@@ -115,16 +264,16 @@ func ResolvePreset(config *ConfigFile, presetKey string) (string, error) {
 	if config == nil {
 		return "", fmt.Errorf("configuration is nil")
 	}
-	
+
 	if config.PromptPresets == nil {
 		return "", fmt.Errorf("no presets available in configuration")
 	}
-	
+
 	preset, exists := config.PromptPresets[presetKey]
 	if !exists {
 		return "", fmt.Errorf("preset '%s' not found", presetKey)
 	}
-	
+
 	return preset.Content, nil
 }
 
@@ -132,76 +281,81 @@ func ResolvePreset(config *ConfigFile, presetKey string) (string, error) {
 func LoadAndMergeConfig(cliConfig *Config) (*ConfigFile, error) {
 	// Start with default configuration
 	config := DefaultConfig()
-	
+
 	// Load from config file if specified
 	configFile := cliConfig.ConfigFile
-	if configFile == "" {
-		// Use default config file path
-		homeDir, err := os.UserHomeDir()
-		if err == nil {
-			configFile = filepath.Join(homeDir, ".llmcmdrc")
-		}
-	}
-	
+
 	if configFile != "" {
-		fileConfig, err := LoadConfigFile(configFile)
+		fileConfig, err := LoadConfigFile(configFile, cliConfig.ConfigExplicit)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load config file: %w", err)
-		}
-		
-		// Merge file config with defaults
-		if fileConfig.OpenAIAPIKey != "" {
-			config.OpenAIAPIKey = fileConfig.OpenAIAPIKey
-		}
-		if fileConfig.OpenAIBaseURL != "" {
-			config.OpenAIBaseURL = fileConfig.OpenAIBaseURL
-		}
-		if fileConfig.Model != "" {
-			config.Model = fileConfig.Model
-		}
-		if fileConfig.MaxTokens != 0 {
-			config.MaxTokens = fileConfig.MaxTokens
-		}
-		if fileConfig.Temperature != 0 {
-			config.Temperature = fileConfig.Temperature
-		}
-		if fileConfig.MaxAPICalls != 0 {
-			config.MaxAPICalls = fileConfig.MaxAPICalls
-		}
-		if fileConfig.TimeoutSeconds != 0 {
-			config.TimeoutSeconds = fileConfig.TimeoutSeconds
-		}
-		if fileConfig.MaxFileSize != 0 {
-			config.MaxFileSize = fileConfig.MaxFileSize
-		}
-		if fileConfig.ReadBufferSize != 0 {
-			config.ReadBufferSize = fileConfig.ReadBufferSize
-		}
-		if fileConfig.MaxRetries != 0 {
-			config.MaxRetries = fileConfig.MaxRetries
-		}
-		if fileConfig.RetryDelay != 0 {
-			config.RetryDelay = fileConfig.RetryDelay
-		}
-		if fileConfig.SystemPrompt != "" {
-			config.SystemPrompt = fileConfig.SystemPrompt
-		}
-		if fileConfig.DefaultPrompt != "" {
-			config.DefaultPrompt = fileConfig.DefaultPrompt
-		}
-		config.DisableTools = fileConfig.DisableTools
-		
-		// Merge presets (file presets override defaults)
-		if fileConfig.PromptPresets != nil {
-			for k, v := range fileConfig.PromptPresets {
-				config.PromptPresets[k] = v
+			// Only fail if config was explicitly specified or if it's a parsing error
+			if cliConfig.ConfigExplicit || !os.IsNotExist(err) {
+				return nil, fmt.Errorf("failed to load config file %s: %w", configFile, err)
+			}
+			// Default config file not found is acceptable - use defaults
+		} else {
+			// Merge file config with defaults
+			if fileConfig.OpenAIAPIKey != "" {
+				config.OpenAIAPIKey = fileConfig.OpenAIAPIKey
+			}
+			if fileConfig.OpenAIBaseURL != "" {
+				config.OpenAIBaseURL = fileConfig.OpenAIBaseURL
+			}
+			if fileConfig.Model != "" {
+				config.Model = fileConfig.Model
+			}
+			if fileConfig.MaxTokens > 0 {
+				config.MaxTokens = fileConfig.MaxTokens
+			}
+			if fileConfig.Temperature >= 0 {
+				config.Temperature = fileConfig.Temperature
+			}
+			if fileConfig.MaxAPICalls > 0 {
+				config.MaxAPICalls = fileConfig.MaxAPICalls
+			}
+			if fileConfig.TimeoutSeconds > 0 {
+				config.TimeoutSeconds = fileConfig.TimeoutSeconds
+			}
+			if fileConfig.MaxFileSize > 0 {
+				config.MaxFileSize = fileConfig.MaxFileSize
+			}
+			if fileConfig.ReadBufferSize > 0 {
+				config.ReadBufferSize = fileConfig.ReadBufferSize
+			}
+			if fileConfig.MaxRetries > 0 {
+				config.MaxRetries = fileConfig.MaxRetries
+			}
+			if fileConfig.RetryDelay > 0 {
+				config.RetryDelay = fileConfig.RetryDelay
+			}
+			if fileConfig.SystemPrompt != "" {
+				config.SystemPrompt = fileConfig.SystemPrompt
+			}
+			if fileConfig.DefaultPrompt != "" {
+				config.DefaultPrompt = fileConfig.DefaultPrompt
+			}
+			config.DisableTools = fileConfig.DisableTools
+
+			// Merge quota configuration
+			if fileConfig.QuotaMaxTokens > 0 {
+				config.QuotaMaxTokens = fileConfig.QuotaMaxTokens
+			}
+			if fileConfig.QuotaWeights.InputWeight > 0 {
+				config.QuotaWeights = fileConfig.QuotaWeights
+			}
+
+			// Merge presets (file presets override defaults)
+			if fileConfig.PromptPresets != nil {
+				for k, v := range fileConfig.PromptPresets {
+					config.PromptPresets[k] = v
+				}
 			}
 		}
 	}
-	
+
 	// Apply CLI overrides
 	// TODO: Apply CLI configuration overrides here
-	
+
 	return config, nil
 }
 
@@ -394,4 +548,76 @@ func LoadEnvironmentConfig(config *ConfigFile) {
 			config.TimeoutSeconds = parsed
 		}
 	}
+}
+
+// UpdateQuotaUsage updates quota usage statistics
+func (c *ConfigFile) UpdateQuotaUsage(inputTokens, cachedTokens, outputTokens int) {
+	// Update raw token counts
+	c.QuotaUsage.InputTokens += inputTokens
+	c.QuotaUsage.InputCachedTokens += cachedTokens
+	c.QuotaUsage.OutputTokens += outputTokens
+	c.QuotaUsage.APICalls++
+
+	// Calculate weighted usage
+	weightedInput := float64(inputTokens) * c.QuotaWeights.InputWeight
+	weightedCached := float64(cachedTokens) * c.QuotaWeights.InputCachedWeight
+	weightedOutput := float64(outputTokens) * c.QuotaWeights.OutputWeight
+
+	c.QuotaUsage.TotalWeightedTokens += weightedInput + weightedCached + weightedOutput
+}
+
+// IsQuotaExceeded checks if quota limit has been exceeded
+func (c *ConfigFile) IsQuotaExceeded() bool {
+	if c.QuotaMaxTokens <= 0 {
+		return false // No limit set
+	}
+	return c.QuotaUsage.TotalWeightedTokens >= float64(c.QuotaMaxTokens)
+}
+
+// GetQuotaStatusString returns a formatted quota status string for system prompts
+func (c *ConfigFile) GetQuotaStatusString() string {
+	// API calls information
+	remainingCalls := c.MaxAPICalls - c.QuotaUsage.APICalls
+	var apiStatus string
+	if remainingCalls > 0 {
+		apiStatus = fmt.Sprintf("API Calls: %d/%d (remaining: %d)",
+			c.QuotaUsage.APICalls, c.MaxAPICalls, remainingCalls)
+	} else {
+		apiStatus = fmt.Sprintf("API Calls: %d/%d (LIMIT REACHED)",
+			c.QuotaUsage.APICalls, c.MaxAPICalls)
+	}
+
+	// Token usage information
+	var tokenStatus string
+	if c.QuotaMaxTokens <= 0 {
+		tokenStatus = fmt.Sprintf("Token Usage: %.1f weighted tokens (no limit)",
+			c.QuotaUsage.TotalWeightedTokens)
+	} else {
+		remaining := float64(c.QuotaMaxTokens) - c.QuotaUsage.TotalWeightedTokens
+		percentage := (c.QuotaUsage.TotalWeightedTokens / float64(c.QuotaMaxTokens)) * 100
+		tokenStatus = fmt.Sprintf("Token Usage: %.1f/%.0f weighted tokens (%.1f%% used, %.1f remaining)",
+			c.QuotaUsage.TotalWeightedTokens, float64(c.QuotaMaxTokens), percentage, remaining)
+	}
+
+	return fmt.Sprintf("%s\n%s", apiStatus, tokenStatus)
+} // SaveConfigFile saves the current configuration to file
+func (c *ConfigFile) SaveConfigFile(path string) error {
+	// Create directory if it doesn't exist
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	// Marshal config to JSON
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	// Write to file
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	return nil
 }

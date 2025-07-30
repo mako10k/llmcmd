@@ -20,21 +20,22 @@ var (
 // Config holds all configuration for the application
 type Config struct {
 	// Command line options
-	Prompt       string   // -p: LLM prompt/instructions (free text)
-	Preset       string   // -r/--preset: Preset prompt key
-	ListPresets  bool     // --list-presets: Show available prompt presets
-	InputFiles   []string // -i: Input file paths (can be specified multiple times)
-	OutputFile   string   // -o: Output file path
-	Verbose      bool     // -v: Verbose logging
-	ShowStats    bool     // --stats: Show detailed statistics
-	ConfigFile   string   // -c: Configuration file path
-	NoStdin       bool     // --no-stdin: Skip reading from stdin
+	Prompt      string   // -p: LLM prompt/instructions (free text)
+	Preset      string   // -r/--preset: Preset prompt key
+	ListPresets bool     // --list-presets: Show available prompt presets
+	InputFiles  []string // -i: Input file paths (can be specified multiple times)
+	OutputFile  string   // -o: Output file path
+	Verbose     bool     // -v: Verbose logging
+	ShowStats   bool     // --stats: Show detailed statistics
+	ConfigFile  string   // -c: Configuration file path
+	NoStdin     bool     // --no-stdin: Skip reading from stdin
 
 	// Positional arguments
 	Instructions string // Remaining arguments as instructions
 
 	// Derived configuration
-	ConfigDir string // Directory containing config file
+	ConfigDir      string // Directory containing config file
+	ConfigExplicit bool   // Whether config file was explicitly specified
 }
 
 // ParseArgs parses command line arguments and returns configuration
@@ -49,7 +50,7 @@ func ParseArgs(args []string) (*Config, error) {
 	// Define flags with both short and long options where appropriate
 	fs.StringVar(&config.Prompt, "p", "", "LLM prompt/instructions (free text)")
 	fs.StringVar(&config.Prompt, "prompt", "", "LLM prompt/instructions (free text)")
-	
+
 	fs.StringVar(&config.Preset, "r", "", "Use predefined prompt preset (see --list-presets)")
 	fs.StringVar(&config.Preset, "preset", "", "Use predefined prompt preset (see --list-presets)")
 	fs.BoolVar(&config.ListPresets, "list-presets", false, "List available prompt presets and exit")
@@ -120,12 +121,18 @@ func ParseArgs(args []string) (*Config, error) {
 		return nil, err
 	}
 
+	// Capture whether config file was explicitly set
+	originalConfigFile := config.ConfigFile
+
 	// Set default config file if not specified
 	if config.ConfigFile == "" {
 		if home, err := os.UserHomeDir(); err == nil {
 			config.ConfigFile = filepath.Join(home, ".llmcmdrc")
 		}
 	}
+
+	// Mark as explicit if it was originally provided
+	config.ConfigExplicit = originalConfigFile != ""
 
 	// Set config directory
 	if config.ConfigFile != "" {

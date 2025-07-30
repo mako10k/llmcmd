@@ -53,7 +53,7 @@ func Cut(args []string, stdin io.Reader, stdout io.Writer) error {
 	scanner := bufio.NewScanner(stdin)
 	for scanner.Scan() {
 		line := scanner.Text()
-		
+
 		if useFields {
 			parts := strings.Split(line, delimiter)
 			var selected []string
@@ -117,7 +117,7 @@ func Uniq(args []string, stdin io.Reader, stdout io.Writer) error {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		
+
 		if first {
 			prevLine = line
 			count = 1
@@ -142,7 +142,7 @@ func Uniq(args []string, stdin io.Reader, stdout io.Writer) error {
 // Nl numbers lines
 func Nl(args []string, stdin io.Reader, stdout io.Writer) error {
 	numberNonEmpty := false
-	
+
 	// Parse flags
 	for _, arg := range args {
 		switch arg {
@@ -155,7 +155,7 @@ func Nl(args []string, stdin io.Reader, stdout io.Writer) error {
 	lineNum := 1
 	for scanner.Scan() {
 		line := scanner.Text()
-		
+
 		if numberNonEmpty && strings.TrimSpace(line) == "" {
 			fmt.Fprintln(stdout, line)
 		} else {
@@ -171,7 +171,7 @@ func Nl(args []string, stdin io.Reader, stdout io.Writer) error {
 func Tee(args []string, stdin io.Reader, stdout io.Writer) error {
 	// For security, we only support writing to stdout
 	// File writing should be handled by the main write tool
-	
+
 	scanner := bufio.NewScanner(stdin)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -187,12 +187,12 @@ func Rev(args []string, stdin io.Reader, stdout io.Writer) error {
 	for scanner.Scan() {
 		line := scanner.Text()
 		runes := []rune(line)
-		
+
 		// Reverse the runes
 		for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
 			runes[i], runes[j] = runes[j], runes[i]
 		}
-		
+
 		fmt.Fprintln(stdout, string(runes))
 	}
 
