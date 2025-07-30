@@ -63,7 +63,8 @@
 ### Security Requirements
 - **No external command execution**: All text processing via built-in functions
 - **File access limited**: Only specified input/output files
-- **API call limits**: Maximum 50 calls per session with 300s timeout
+- **API call limits**: Configurable maximum calls per session (default: 50)
+- **Quota management**: Weighted token tracking with limits
 - **Memory limits**: 4KB read buffer, 10MB file size limits
 
 ## Architecture
@@ -149,12 +150,19 @@
 - [x] wc: Counting (lines, words, characters)
 - [x] tr: Character translation
 
-### Phase 5: Integration & Testing (Days 18-22)
+### Phase 5: Integration & Testing (Days 18-22) - COMPLETED
 - [x] Main application logic
 - [x] Tool orchestration
 - [x] Comprehensive error handling
 - [x] Security feature integration
 - [x] Performance optimization
+
+### Phase 6: Advanced Features (v3.0.0) - COMPLETED
+- [x] Complete Quota System with weighted tokens
+- [x] Fail-First configuration validation
+- [x] API call limits and enforcement
+- [x] Enhanced error handling architecture
+- [x] Real-time quota tracking and display
 
 ### Additional Enhancement: Preset Prompt System
 - [x] Stage 1: CLI extension with --preset/-r flags
@@ -188,8 +196,10 @@ llmcmd/
 - Stream-based processing only
 
 ### API Cost Controls
-- Maximum 50 API calls per session
+- Configurable API call limits per session
 - 300-second execution timeout
+- Quota system with weighted token tracking (Input:1.0, Cached:0.25, Output:4.0)
+- Real-time quota monitoring and enforcement
 - 4KB read buffer limit
 - 10MB file size limits
 
