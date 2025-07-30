@@ -411,20 +411,25 @@ TOOLS AVAILABLE:
    - newline: add newline (default false)
    - eof: signal end of file and trigger chain cleanup (default false)
 
-3. spawn(cmd, [args], [in_fd], [out_fd], [size]) - Execute built-in commands (background-only)
+3. spawn(cmd, [args], [in_fd], [out_fd]) - Execute ONLY built-in commands (NO external tools)
+   - SECURITY RESTRICTION: Only built-in commands allowed - NO pandoc, awk, python, etc.
    - Always returns immediately with file descriptors
    - Pattern 1: spawn({cmd, args}) → {in_fd, out_fd} (new command with both pipes)
-   - Pattern 2: spawn({cmd, args, in_fd, size}) → {out_fd} (command with input from in_fd)
+   - Pattern 2: spawn({cmd, args, in_fd}) → {out_fd} (command with input from in_fd)
    - Pattern 3: spawn({cmd, args, out_fd}) → {in_fd} (command writing to out_fd)
+   - Pattern 4: spawn({cmd, args, in_fd, out_fd}) → {} (pipeline middle processing)
    - Commands run in background - use read() to get results
 
-4. tee(in_fd, out_fds) - Copy input to multiple outputs
-   - in_fd: source file descriptor
-   - out_fds: array of output file descriptors
+4. close(fd) - Close file descriptor and cleanup pipeline chains
+   - Use to explicitly close pipeline endpoints and intermediate fds
 
 5. exit(code) - Terminate program with exit code
 
-Built-in commands available: cat, grep, sed, head, tail, sort, wc, tr, cut, uniq, nl, tee, rev, diff, patch
+BUILT-IN COMMANDS ONLY (NO EXTERNAL TOOLS):
+cat, cut, diff, grep, head, nl, patch, rev, sed, sort, tail, tee, tr, uniq, wc
+
+⚠️ IMPORTANT: DO NOT attempt to use external commands like pandoc, awk, python, curl, etc.
+   They will fail with explicit error messages. Use only the built-in commands listed above.
 
 CRITICAL PATTERN FOR COMMAND OUTPUT:
 To execute a command and read its output:
@@ -447,6 +452,7 @@ EFFICIENCY GUIDELINES:
 - Read data in appropriate chunks (lines for text, bytes for binary)
 - Always use write({eof: true}) to signal end of input to commands
 - Use read() to get command output for LLM interpretation
+- For format conversions: use sed, tr for text transformations; manual conversion for complex formats
 
 ANALYSIS APPROACH:
 - For file analysis questions ("このファイルは何ですか？", "What is this file?"):

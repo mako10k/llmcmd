@@ -36,9 +36,9 @@ func TestCreateInitialMessages_EfficiencyPrompt(t *testing.T) {
 		t.Error("System message should explain critical pattern for command output")
 	}
 
-	// Check for background-only execution explanation
-	if !strings.Contains(systemMsg, "background-only") {
-		t.Error("System message should mention background-only execution")
+	// Check for background execution explanation
+	if !strings.Contains(systemMsg, "Commands run in background") {
+		t.Error("System message should mention background execution")
 	}
 
 	userMsg := messages[1].Content
