@@ -1,12 +1,11 @@
 package llmsh
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	
+	"github.com/mako10k/llmcmd/internal/llmsh/commands"
 	"github.com/mako10k/llmcmd/internal/llmsh/parser"
 	"github.com/mako10k/llmcmd/internal/tools/builtin"
 )
@@ -323,6 +322,7 @@ type Commands struct {
 	vfs          *VirtualFileSystem
 	help         *HelpSystem
 	quotaManager interface{}
+	manager      *commands.Manager
 }
 
 // NewCommands creates a new command manager
@@ -331,6 +331,7 @@ func NewCommands(vfs *VirtualFileSystem, help *HelpSystem, quotaManager interfac
 		vfs:          vfs,
 		help:         help,
 		quotaManager: quotaManager,
+		manager:      commands.NewManager(),
 	}
 }
 
@@ -344,6 +345,11 @@ func (c *Commands) Execute(name string, args []string, stdin io.ReadWriteCloser,
 		return c.executeLLMCmd(args, stdin, stdout, stderr)
 	case "llmsh":
 		return c.executeLLMSh(args, stdin, stdout, stderr)
+	}
+	
+	// Check new internal command implementations first
+	if c.manager.IsInternalCommand(name) {
+		return c.manager.Execute(name, args, stdin, stdout)
 	}
 	
 	// Check built-in commands
@@ -413,408 +419,11 @@ func (c *Commands) executeLLMSh(args []string, stdin io.ReadWriteCloser, stdout,
 	return err
 }
 
-// executeLLMCommand executes LLM-based commands (echo, printf, test, etc.)
+// executeLLMCommand executes remaining LLM-based commands not migrated to new packages
 func (c *Commands) executeLLMCommand(name string, args []string, stdin io.ReadWriteCloser, stdout, stderr io.ReadWriteCloser) error {
-	// Basic utilities
+	// Only commands not implemented in the new command packages
 	switch name {
-	case "echo":
-		return c.executeEcho(args, stdout)
-	case "printf":
-		return c.executePrintf(args, stdout)
-	case "true":
-		return nil
-	case "false":
-		return fmt.Errorf("command failed")
-	case "test", "[":
-		return c.executeTest(args)
-	case "yes":
-		return c.executeYes(args, stdout)
-	case "basename":
-		return c.executeBasename(args, stdout)
-	case "dirname":
-		return c.executeDirname(args, stdout)
-	case "seq":
-		return c.executeSeq(args, stdout)
-	
-	// Data conversion
-	case "base64":
-		return c.executeBase64(args, stdin, stdout, stderr)
-	case "od":
-		return c.executeOd(args, stdin, stdout)
-	case "hexdump":
-		return c.executeHexdump(args, stdin, stdout)
-	case "fmt":
-		return c.executeFmt(args, stdin, stdout)
-	case "fold":
-		return c.executeFold(args, stdin, stdout)
-	case "expand":
-		return c.executeExpand(args, stdin, stdout)
-	case "unexpand":
-		return c.executeUnexpand(args, stdin, stdout)
-	
-	// Calculation
-	case "bc":
-		return c.executeBc(args, stdin, stdout, stderr)
-	case "dc":
-		return c.executeDc(args, stdin, stdout, stderr)
-	case "expr":
-		return c.executeExpr(args, stdout)
-	
-	// Compression
-	case "gzip":
-		return c.executeGzip(args, stdin, stdout, stderr)
-	case "gunzip":
-		return c.executeGunzip(args, stdin, stdout, stderr)
-	
 	default:
 		return fmt.Errorf("command not found: %s", name)
 	}
-}
-
-// executeEcho implements basic echo command
-func (c *Commands) executeEcho(args []string, stdout io.ReadWriteCloser) error {
-	var output string
-	var noNewline bool
-	
-	// Parse -n flag
-	startIdx := 0
-	if len(args) > 0 && args[0] == "-n" {
-		noNewline = true
-		startIdx = 1
-	}
-	
-	if len(args) > startIdx {
-		output = strings.Join(args[startIdx:], " ")
-	}
-	
-	if !noNewline {
-		output += "\n"
-	}
-	
-	_, err := stdout.Write([]byte(output))
-	return err
-}
-
-// executePrintf implements basic printf command
-func (c *Commands) executePrintf(args []string, stdout io.ReadWriteCloser) error {
-	if len(args) == 0 {
-		return fmt.Errorf("printf: missing format string")
-	}
-	
-	// Very basic printf implementation
-	format := args[0]
-	format = strings.ReplaceAll(format, "\\n", "\n")
-	format = strings.ReplaceAll(format, "\\t", "\t")
-	
-	_, err := stdout.Write([]byte(format))
-	return err
-}
-
-// executeTest implements basic test command
-func (c *Commands) executeTest(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("test failed: no arguments")
-	}
-	
-	// Very basic test implementation
-	if len(args) == 3 && args[1] == "=" {
-		if args[0] == args[2] {
-			return nil
-		}
-		return fmt.Errorf("test failed: strings not equal")
-	}
-	
-	if len(args) == 2 && args[0] == "-z" {
-		if args[1] == "" {
-			return nil
-		}
-		return fmt.Errorf("test failed: string not empty")
-	}
-	
-	return fmt.Errorf("test: unsupported expression")
-}
-
-// === Basic Utilities ===
-
-// executeYes implements the yes command
-func (c *Commands) executeYes(args []string, stdout io.ReadWriteCloser) error {
-	text := "y"
-	if len(args) > 0 {
-		text = strings.Join(args, " ")
-	}
-	text += "\n"
-	
-	// Output the text repeatedly (limited for safety)
-	for i := 0; i < 1000; i++ {
-		_, err := stdout.Write([]byte(text))
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// executeBasename implements the basename command
-func (c *Commands) executeBasename(args []string, stdout io.ReadWriteCloser) error {
-	if len(args) == 0 {
-		return fmt.Errorf("basename: missing operand")
-	}
-	
-	path := args[0]
-	var suffix string
-	if len(args) > 1 {
-		suffix = args[1]
-	}
-	
-	// Extract basename
-	base := path
-	if lastSlash := strings.LastIndex(path, "/"); lastSlash != -1 {
-		base = path[lastSlash+1:]
-	}
-	
-	// Remove suffix if specified
-	if suffix != "" && strings.HasSuffix(base, suffix) {
-		base = base[:len(base)-len(suffix)]
-	}
-	
-	_, err := stdout.Write([]byte(base + "\n"))
-	return err
-}
-
-// executeDirname implements the dirname command
-func (c *Commands) executeDirname(args []string, stdout io.ReadWriteCloser) error {
-	if len(args) == 0 {
-		return fmt.Errorf("dirname: missing operand")
-	}
-	
-	path := args[0]
-	
-	// Find directory name
-	dir := "."
-	if lastSlash := strings.LastIndex(path, "/"); lastSlash != -1 {
-		if lastSlash == 0 {
-			dir = "/"
-		} else {
-			dir = path[:lastSlash]
-		}
-	}
-	
-	_, err := stdout.Write([]byte(dir + "\n"))
-	return err
-}
-
-// executeSeq implements the seq command
-func (c *Commands) executeSeq(args []string, stdout io.ReadWriteCloser) error {
-	if len(args) == 0 {
-		return fmt.Errorf("seq: missing operand")
-	}
-	
-	var start, end, step int
-	var err error
-	
-	switch len(args) {
-	case 1:
-		start = 1
-		step = 1
-		end, err = strconv.Atoi(args[0])
-	case 2:
-		step = 1
-		start, err = strconv.Atoi(args[0])
-		if err == nil {
-			end, err = strconv.Atoi(args[1])
-		}
-	case 3:
-		start, err = strconv.Atoi(args[0])
-		if err == nil {
-			step, err = strconv.Atoi(args[1])
-		}
-		if err == nil {
-			end, err = strconv.Atoi(args[2])
-		}
-	default:
-		return fmt.Errorf("seq: too many arguments")
-	}
-	
-	if err != nil {
-		return fmt.Errorf("seq: invalid number")
-	}
-	
-	if step == 0 {
-		return fmt.Errorf("seq: zero step")
-	}
-	
-	// Generate sequence
-	for i := start; (step > 0 && i <= end) || (step < 0 && i >= end); i += step {
-		_, err := stdout.Write([]byte(fmt.Sprintf("%d\n", i)))
-		if err != nil {
-			return err
-		}
-	}
-	
-	return nil
-}
-
-// === Data Conversion ===
-
-// executeBase64 implements the base64 command
-func (c *Commands) executeBase64(args []string, stdin io.ReadWriteCloser, stdout, stderr io.ReadWriteCloser) error {
-	decode := false
-	
-	// Parse arguments
-	for _, arg := range args {
-		if arg == "-d" || arg == "--decode" {
-			decode = true
-		} else if arg == "--help" {
-			help := "Usage: base64 [OPTION]... [FILE]\nBase64 encode or decode FILE, or standard input, to standard output.\n\n  -d, --decode          decode data\n      --help            display this help\n"
-			_, err := stdout.Write([]byte(help))
-			return err
-		}
-	}
-	
-	// Read input
-	input, err := io.ReadAll(stdin)
-	if err != nil {
-		return fmt.Errorf("base64: error reading input: %w", err)
-	}
-	
-	var output []byte
-	if decode {
-		// Decode base64
-		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(input)))
-		if err != nil {
-			return fmt.Errorf("base64: invalid input")
-		}
-		output = decoded
-	} else {
-		// Encode to base64
-		encoded := base64.StdEncoding.EncodeToString(input)
-		output = []byte(encoded + "\n")
-	}
-	
-	_, err = stdout.Write(output)
-	return err
-}
-
-// executeOd implements basic od command (octal dump)
-func (c *Commands) executeOd(args []string, stdin io.ReadWriteCloser, stdout io.ReadWriteCloser) error {
-	// Read input
-	input, err := io.ReadAll(stdin)
-	if err != nil {
-		return fmt.Errorf("od: error reading input: %w", err)
-	}
-	
-	// Simple octal dump implementation
-	for i, b := range input {
-		if i%16 == 0 {
-			if i > 0 {
-				_, err := stdout.Write([]byte("\n"))
-				if err != nil {
-					return err
-				}
-			}
-			_, err := stdout.Write([]byte(fmt.Sprintf("%07o ", i)))
-			if err != nil {
-				return err
-			}
-		}
-		_, err := stdout.Write([]byte(fmt.Sprintf("%03o ", b)))
-		if err != nil {
-			return err
-		}
-	}
-	
-	if len(input) > 0 {
-		_, err := stdout.Write([]byte("\n"))
-		if err != nil {
-			return err
-		}
-	}
-	
-	return nil
-}
-
-// executeHexdump implements basic hexdump command
-func (c *Commands) executeHexdump(args []string, stdin io.ReadWriteCloser, stdout io.ReadWriteCloser) error {
-	// Read input
-	input, err := io.ReadAll(stdin)
-	if err != nil {
-		return fmt.Errorf("hexdump: error reading input: %w", err)
-	}
-	
-	// Simple hex dump implementation
-	for i, b := range input {
-		if i%16 == 0 {
-			if i > 0 {
-				_, err := stdout.Write([]byte("\n"))
-				if err != nil {
-					return err
-				}
-			}
-			_, err := stdout.Write([]byte(fmt.Sprintf("%08x ", i)))
-			if err != nil {
-				return err
-			}
-		}
-		_, err := stdout.Write([]byte(fmt.Sprintf("%02x ", b)))
-		if err != nil {
-			return err
-		}
-	}
-	
-	if len(input) > 0 {
-		_, err := stdout.Write([]byte("\n"))
-		if err != nil {
-			return err
-		}
-	}
-	
-	return nil
-}
-
-
-// executeFmt implements basic fmt command (text formatting)
-func (c *Commands) executeFmt(args []string, stdin io.ReadWriteCloser, stdout io.ReadWriteCloser) error {
-	width := 75
-	
-	// Parse width argument
-	for i, arg := range args {
-		if arg == "-w" && i+1 < len(args) {
-			if w, err := strconv.Atoi(args[i+1]); err == nil {
-				width = w
-			}
-		}
-	}
-	
-	// Read input
-	input, err := io.ReadAll(stdin)
-	if err != nil {
-		return fmt.Errorf("fmt: error reading input: %w", err)
-	}
-	
-	text := string(input)
-	words := strings.Fields(text)
-	
-	var line strings.Builder
-	for _, word := range words {
-		if line.Len()+len(word)+1 > width && line.Len() > 0 {
-			_, err := stdout.Write([]byte(line.String() + "\n"))
-			if err != nil {
-				return err
-			}
-			line.Reset()
-		}
-		if line.Len() > 0 {
-			line.WriteString(" ")
-		}
-		line.WriteString(word)
-	}
-	
-	if line.Len() > 0 {
-		_, err := stdout.Write([]byte(line.String() + "\n"))
-		if err != nil {
-			return err
-		}
-	}
-	
-	return nil
 }
