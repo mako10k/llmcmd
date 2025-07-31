@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestGetUsages(t *testing.T) {
+func TestGetHelp(t *testing.T) {
 	tests := []struct {
 		name           string
 		args           []string
@@ -46,7 +46,7 @@ func TestGetUsages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			err := GetUsages(tt.args, nil, &buf)
+			err := GetHelp(tt.args, nil, &buf)
 
 			if tt.expectError {
 				if err == nil {

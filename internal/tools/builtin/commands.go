@@ -27,10 +27,10 @@ var Commands = map[string]CommandFunc{
 	"uniq":       Uniq,
 	"nl":         Nl,
 	"tee":        Tee,
-	"rev":        Rev,
-	"diff":       Diff,
-	"patch":      Patch,
-	"get_usages": GetUsages,
+	"rev":   Rev,
+	"diff":  Diff,
+	"patch": Patch,
+	"help":  GetHelp,
 }
 
 // compileRegex compiles a regex pattern and returns an error if invalid

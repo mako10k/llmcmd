@@ -684,8 +684,8 @@ func (e *Engine) ExecuteToolCall(toolCall map[string]interface{}) (string, error
 		return e.executeClose(args)
 	case "exit":
 		return e.executeExit(args)
-	case "get_usages":
-		return e.executeGetUsages(args)
+	case "help":
+		return e.executeHelp(args)
 	default:
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("unknown function: %s", functionName)
@@ -1173,12 +1173,12 @@ func (e *Engine) readLines(fd int, lines int) (string, error) {
 	return resultStr, nil
 }
 
-// executeGetUsages implements the get_usages tool
-func (e *Engine) executeGetUsages(args map[string]interface{}) (string, error) {
+// executeHelp implements the help tool
+func (e *Engine) executeHelp(args map[string]interface{}) (string, error) {
 	keysInterface, ok := args["keys"].([]interface{})
 	if !ok {
 		e.stats.ErrorCount++
-		return "", fmt.Errorf("get_usages: missing or invalid 'keys' parameter")
+		return "", fmt.Errorf("help: missing or invalid 'keys' parameter")
 	}
 
 	keys := make([]string, len(keysInterface))
@@ -1186,7 +1186,7 @@ func (e *Engine) executeGetUsages(args map[string]interface{}) (string, error) {
 		key, ok := keyInterface.(string)
 		if !ok {
 			e.stats.ErrorCount++
-			return "", fmt.Errorf("get_usages: invalid key at index %d", i)
+			return "", fmt.Errorf("help: invalid key at index %d", i)
 		}
 		keys[i] = key
 	}
@@ -1194,11 +1194,11 @@ func (e *Engine) executeGetUsages(args map[string]interface{}) (string, error) {
 	// Create a buffer to capture output
 	var outputBuf bytes.Buffer
 
-	// Call builtin GetUsages function
-	err := builtin.GetUsages(keys, nil, &outputBuf)
+	// Call builtin GetHelp function
+	err := builtin.GetHelp(keys, nil, &outputBuf)
 	if err != nil {
 		e.stats.ErrorCount++
-		return "", fmt.Errorf("get_usages: %w", err)
+		return "", fmt.Errorf("help: %w", err)
 	}
 
 	return outputBuf.String(), nil
