@@ -326,6 +326,41 @@ func ToolDefinitions() []Tool {
 		{
 			Type: "function",
 			Function: ToolFunction{
+				Name:        "get_usages",
+				Description: "Get comprehensive usage information for specific tool categories. Provides detailed guidance, examples, and best practices organized by subsections.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"keys": map[string]interface{}{
+							"type":        "array",
+							"description": "Usage categories to retrieve: data_analysis, text_processing, file_operations, content_search, format_conversion, log_analysis, batch_processing, interactive_workflow, debugging, basic_operations, command_usage",
+							"items": map[string]interface{}{
+								"type": "string",
+								"enum": []string{
+									"data_analysis",
+									"text_processing",
+									"file_operations",
+									"content_search",
+									"format_conversion",
+									"log_analysis",
+									"batch_processing",
+									"interactive_workflow",
+									"debugging",
+									"basic_operations",
+									"command_usage",
+								},
+							},
+							"minItems": 1,
+							"maxItems": 11,
+						},
+					},
+					"required": []string{"keys"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolFunction{
 				Name:        "exit",
 				Description: "Exit the program with specified code",
 				Parameters: map[string]interface{}{

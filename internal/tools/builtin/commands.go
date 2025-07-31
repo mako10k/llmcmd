@@ -15,21 +15,22 @@ type CommandFunc func(args []string, stdin io.Reader, stdout io.Writer) error
 
 // Commands maps command names to their implementations
 var Commands = map[string]CommandFunc{
-	"cat":   Cat,
-	"grep":  Grep,
-	"sed":   Sed,
-	"head":  Head,
-	"tail":  Tail,
-	"sort":  Sort,
-	"wc":    Wc,
-	"tr":    Tr,
-	"cut":   Cut,
-	"uniq":  Uniq,
-	"nl":    Nl,
-	"tee":   Tee,
-	"rev":   Rev,
-	"diff":  Diff,
-	"patch": Patch,
+	"cat":        Cat,
+	"grep":       Grep,
+	"sed":        Sed,
+	"head":       Head,
+	"tail":       Tail,
+	"sort":       Sort,
+	"wc":         Wc,
+	"tr":         Tr,
+	"cut":        Cut,
+	"uniq":       Uniq,
+	"nl":         Nl,
+	"tee":        Tee,
+	"rev":        Rev,
+	"diff":       Diff,
+	"patch":      Patch,
+	"get_usages": GetUsages,
 }
 
 // compileRegex compiles a regex pattern and returns an error if invalid
