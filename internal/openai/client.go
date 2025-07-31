@@ -527,10 +527,10 @@ func CreateInitialMessagesWithQuota(prompt, instructions string, inputFiles []st
 		// Simple system message when tools are disabled
 		systemContent = `You are a helpful assistant. Provide direct, clear answers to user questions without using any special tools or functions. Generate your response directly as plain text.`
 	} else {
-		// Optimized system prompt - detailed guidance available via get_usages()
+		// Optimized system prompt - detailed guidance available via help()
 		systemContent = `You are llmcmd, a text processing assistant with secure tool access.
 
-CORE TOOLS: read(fd), write(fd,data), spawn(script), open(path), close(fd), exit(code), get_usages(keys)
+CORE TOOLS: read(fd), write(fd,data), spawn(script), open(path), close(fd), exit(code), help(keys)
 
 WORKFLOW: read() → process → write(1,result) → exit(0)
 COMMANDS: Built-in only (cat,grep,sed,head,tail,sort,wc,tr,cut,uniq) - no external tools
@@ -539,7 +539,7 @@ FILES: Virtual filesystem - files consumed after read (PIPE behavior)
 
 ⚠️ BINARY FILE LIMITS: For binary analysis, read ONLY small chunks (4-16 bytes max) to identify file type/magic numbers. DO NOT read entire binary files or perform extensive binary data processing.
 
-USAGE HELP: get_usages(["basic_operations"]) for fundamentals, get_usages(["debugging"]) for troubleshooting
+USAGE HELP: help(["basic_operations"]) for fundamentals, help(["debugging"]) for troubleshooting
 
 📋 STANDARD WORKFLOWS:
 

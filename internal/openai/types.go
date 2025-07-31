@@ -326,7 +326,7 @@ func ToolDefinitions() []Tool {
 		{
 			Type: "function",
 			Function: ToolFunction{
-				Name:        "get_usages",
+				Name:        "help",
 				Description: "Get comprehensive usage information for specific tool categories. Provides detailed guidance, examples, and best practices organized by subsections.",
 				Parameters: map[string]interface{}{
 					"type": "object",
