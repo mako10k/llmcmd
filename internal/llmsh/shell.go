@@ -7,6 +7,8 @@ import (
 // Version information
 var (
 	Version     = "3.1.1" // Will be overridden by build-time ldflags
+	BuildCommit = "unknown" // Will be overridden by build-time ldflags
+	BuildTime   = "unknown" // Will be overridden by build-time ldflags
 	Name        = "llmsh"
 	Description = "Minimal shell for LLM text processing"
 )
