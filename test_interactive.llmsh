@@ -1,0 +1,9 @@
+#!/usr/bin/llmsh
+# Test interactive commands
+help
+echo "Testing echo command"
+echo "Hello" | cat
+echo "Testing pipe with grep"
+echo -e "line1\nline2\ntest line\nline3" | grep "test"
+help text
+exit
