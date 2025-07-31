@@ -18,10 +18,11 @@ type ApplicationMetadata struct {
 
 // ExecutionContext contains runtime context for llmcmd execution
 type ExecutionContext struct {
-	IsInternal  bool                       // true if called from llmsh
-	SharedQuota *openai.SharedQuotaManager // shared quota manager (if internal)
-	ProcessID   string                     // process ID for quota tracking
-	ParentID    string                     // parent process ID
+	IsInternal    bool                       // true if called from llmsh
+	SharedQuota   *openai.SharedQuotaManager // shared quota manager (if internal)
+	ProcessID     string                     // process ID for quota tracking
+	ParentID      string                     // parent process ID
+	IsTopLevelCmd bool                       // true if this is the top-level llmcmd in call stack
 }
 
 // LLMCmdCore represents the core llmcmd functionality
@@ -65,12 +66,12 @@ func (core *LLMCmdCore) ExecuteWithArgs(args []string) error {
 		return fmt.Errorf("configuration error: %w", err)
 	}
 
-	// Model selection priority: user-facing calls use main model, internal calls use internal model
-	if core.context.IsInternal && mergedConfig.InternalModel != "" {
-		// Internal call (llmcmd → llmsh → llmcmd): use internal model
+	// Model selection priority: top-level llmcmd uses main model, nested llmcmd uses internal model
+	if !core.context.IsTopLevelCmd && mergedConfig.InternalModel != "" {
+		// Nested llmcmd call: use internal model
 		mergedConfig.Model = mergedConfig.InternalModel
 	}
-	// User-facing calls (standalone llmcmd/llmsh): keep main model setting
+	// Top-level llmcmd call: keep main model setting
 
 	// Resolve preset if specified
 	finalPrompt, err := core.resolvePrompt(config, mergedConfig)
@@ -185,10 +186,11 @@ func (core *LLMCmdCore) setupLogging(config *cli.Config) {
 // ExecuteExternal executes llmcmd as an external command (standalone)
 func ExecuteExternal(metadata ApplicationMetadata, args []string) error {
 	context := &ExecutionContext{
-		IsInternal:  false,
-		SharedQuota: nil,
-		ProcessID:   "",
-		ParentID:    "",
+		IsInternal:    false,
+		SharedQuota:   nil,
+		ProcessID:     "",
+		ParentID:      "",
+		IsTopLevelCmd: true, // External calls are always top-level
 	}
 
 	core := NewLLMCmdCore(metadata, context)
@@ -196,12 +198,13 @@ func ExecuteExternal(metadata ApplicationMetadata, args []string) error {
 }
 
 // ExecuteInternal executes llmcmd as an internal command (from llmsh)
-func ExecuteInternal(metadata ApplicationMetadata, args []string, sharedQuota *openai.SharedQuotaManager, processID, parentID string) error {
+func ExecuteInternal(metadata ApplicationMetadata, args []string, sharedQuota *openai.SharedQuotaManager, processID, parentID string, isTopLevel bool) error {
 	context := &ExecutionContext{
-		IsInternal:  true,
-		SharedQuota: sharedQuota,
-		ProcessID:   processID,
-		ParentID:    parentID,
+		IsInternal:    true,
+		SharedQuota:   sharedQuota,
+		ProcessID:     processID,
+		ParentID:      parentID,
+		IsTopLevelCmd: isTopLevel,
 	}
 
 	core := NewLLMCmdCore(metadata, context)
