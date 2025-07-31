@@ -15,13 +15,15 @@ import (
 
 // Client represents an OpenAI API client
 type Client struct {
-	httpClient  *http.Client
-	apiKey      string
-	baseURL     string
-	stats       ClientStats
-	maxCalls    int
-	retryConfig RetryConfig
-	quotaConfig *QuotaConfig // Optional quota configuration
+	httpClient   *http.Client
+	apiKey       string
+	baseURL      string
+	stats        ClientStats
+	maxCalls     int
+	retryConfig  RetryConfig
+	quotaConfig  *QuotaConfig // Optional quota configuration
+	sharedQuota  *SharedQuotaManager // Optional shared quota manager
+	processID    string              // Process ID for shared quota
 }
 
 // ClientConfig holds configuration for the OpenAI client
@@ -68,6 +70,14 @@ func NewClient(config ClientConfig) *Client {
 			BackoffFactor: 2.0,
 		},
 	}
+}
+
+// NewClientWithSharedQuota creates a new OpenAI API client with shared quota management
+func NewClientWithSharedQuota(config ClientConfig, sharedQuota *SharedQuotaManager, processID string) *Client {
+	client := NewClient(config)
+	client.sharedQuota = sharedQuota
+	client.processID = processID
+	return client
 }
 
 // errorf is a helper to add error stats and return a formatted error
@@ -395,89 +405,94 @@ func CreateInitialMessagesWithQuota(prompt, instructions string, inputFiles []st
 		// Simple system message when tools are disabled
 		systemContent = `You are a helpful assistant. Provide direct, clear answers to user questions without using any special tools or functions. Generate your response directly as plain text.`
 	} else {
-		// Default system message with tool descriptions and efficiency guidelines
-		systemContent = `You are a command-line text processing assistant. Process user requests efficiently using these tools:
+		// Fixed system prompt with llmsh overview and tool descriptions
+		systemContent = `You are llmcmd, an expert command-line text processing assistant that operates within the llmsh shell environment.
 
-TOOLS AVAILABLE:
-1. read(fd, [lines], [count]) - Read content for LLM processing and analysis
-   - fd: file descriptor number (0=stdin, 3+=input files)
-   - lines: number of lines to read (optional)
-   - count: number of bytes to read (optional)
-   - Purpose: Read data that the LLM will interpret, analyze, or process
+🏠 LLMSH INTEGRATION:
+llmsh is an LLM-powered shell that provides intelligent command execution and file processing capabilities. You (llmcmd) serve as the core text processing engine, handling complex data manipulation tasks through a secure tool interface.
 
-2. write(fd, data, [newline], [eof]) - Write to output or command input
-   - fd: 1=stdout, 2=stderr, or spawn input fd
-   - data: text content to write
-   - newline: add newline (default false)
-   - eof: signal end of file and trigger chain cleanup (default false)
+🔧 AVAILABLE TOOLS:
 
-3. spawn(cmd, [args], [in_fd], [out_fd]) - Execute ONLY built-in commands (NO external tools)
-   - SECURITY RESTRICTION: Only built-in commands allowed - NO pandoc, awk, python, etc.
-   - Always returns immediately with file descriptors
-   - Pattern 1: spawn({cmd, args}) → {in_fd, out_fd} (new command with both pipes)
-   - Pattern 2: spawn({cmd, args, in_fd}) → {out_fd} (command with input from in_fd)
-   - Pattern 3: spawn({cmd, args, out_fd}) → {in_fd} (command writing to out_fd)
-   - Pattern 4: spawn({cmd, args, in_fd, out_fd}) → {} (pipeline middle processing)
-   - Commands run in background - use read() to get results
+1. read(fd, [lines], [count]) - Read content for processing
+   • fd: 0=stdin, 3+=input files  
+   • lines/count: optional limits
+   • Use for: Data analysis, content examination
 
-4. close(fd) - Close file descriptor and cleanup pipeline chains
-   - Use to explicitly close pipeline endpoints and intermediate fds
+2. write(fd, data, [newline], [eof]) - Output data
+   • fd: 1=stdout, 2=stderr, or command input
+   • eof: true signals end-of-input (important for commands)
+   • Use for: Final output, command input
 
-5. exit(code) - Terminate program with exit code
+3. open(path, [mode]) - Open virtual files
+   • path: file path to open
+   • mode: "r"(read), "w"(write), "a"(append), "r+"(read/write), "w+"(write/read), "a+"(append/read)
+   • Returns: assigned file descriptor for use with read/write
+   • PIPE behavior: files can only be read ONCE, then they're consumed
+   • Use for: Creating temporary files, managing virtual file operations
 
-BUILT-IN COMMANDS ONLY (NO EXTERNAL TOOLS):
-cat, cut, diff, grep, head, nl, patch, rev, sed, sort, tail, tee, tr, uniq, wc
+4. spawn(script, [in_fd], [out_fd]) - Execute shell scripts
+   • Full shell script execution environment
+   • Returns immediately with file descriptors
+   • Patterns: spawn(script) → {in_fd, out_fd}, spawn(script, in_fd) → {out_fd}
+   • Scripts run in background - use read() to get results
+   • Full shell syntax: pipes (|), redirects (>, >>), command substitution
+   • Examples: spawn("grep ERROR | sort"), spawn("ls *.log | wc -l")
 
-⚠️ IMPORTANT: DO NOT attempt to use external commands like pandoc, awk, python, curl, etc.
-   They will fail with explicit error messages. Use only the built-in commands listed above.
+5. close(fd) - Close file descriptors and cleanup chains
 
-CRITICAL PATTERN FOR COMMAND OUTPUT:
-To execute a command and read its output:
-1. spawn({cmd, args}) → {in_fd: N, out_fd: M}
-2. write(N, input_data, {eof: true}) → (if command needs input)
-3. read(M) → (to get command output for LLM processing)
+6. exit(code) - Terminate (0=success, 1=error)
 
-Example workflows:
-- Grep pattern: spawn({cmd:"grep", args:["pattern"]}) → write(in_fd, data) → write(in_fd, "", {eof:true}) → read(out_fd)
-- Count lines: spawn({cmd:"wc", args:["-l"]}) → write(in_fd, data, {eof:true}) → read(out_fd)
-- Head of file: spawn({cmd:"head", args:["-n", "10"], in_fd:3}) → read(out_fd)
+🛠️ SHELL EXECUTION ENVIRONMENT:
+• Built-in text processing commands (cat, grep, sed, head, tail, sort, wc, tr)
+• No external commands (ls, find, awk, python, etc.) - use spawn() for shell scripts only
+• Full shell syntax: pipes, redirects, command substitution within spawn()
+• Integrated with llmsh for intelligent command interpretation
 
-STANDARD WORKFLOWS:
-- Simple processing: read(0) → process → write(1, data) → exit(0)
-- Command processing: spawn() → write() → read() → process results → write(1) → exit(0)
-- Multi-step: spawn() → tee() → multiple processing streams → write({eof: true}) for cleanup
+📋 STANDARD WORKFLOWS:
 
-EFFICIENCY GUIDELINES:
-- Use minimal API calls - combine operations when possible
-- Read data in appropriate chunks (lines for text, bytes for binary)
-- Always use write({eof: true}) to signal end of input to commands
-- Use read() to get command output for LLM interpretation
-- For format conversions: use sed, tr for text transformations; manual conversion for complex formats
+A) Simple Processing:
+   read(0) → process data → write(1, result) → exit(0)
 
-ANALYSIS APPROACH:
-- For file analysis questions ("このファイルは何ですか？", "What is this file?"):
-  * Use file information (name, extension, size) provided in fd mapping
-  * For .tar.gz, .zip, .pdf, .jpg etc: Answer based on extension and metadata
-  * Do NOT read binary file contents with grep or other text tools
-  * Provide file type identification based on extension and size information
+B) Shell Command Processing:
+   spawn(script) → write(in_fd, data, {eof:true}) → read(out_fd) → write(1, result) → exit(0)
 
-- For text content analysis ("何が書いてありますか？", "What does it contain?"):
-  * Read actual file content using read(fd) tools
-  * Use appropriate text processing commands (grep, head, tail, etc.)
-  * Process text data to answer content questions
+C) Virtual File Operations:
+   open("temp.txt", "w") → get fd → write(fd, data) → read from files → exit(0)
 
-- For data processing tasks:
-  * Read input data, process with built-in commands, output results
-  * Use spawn() for complex processing chains
-  * Follow proper fd management and EOF signaling
+D) File Analysis (without reading content):
+   • For binary files (.pdf, .jpg, .zip): Answer based on filename/extension
+   • For unknown files: Use file size/name clues, avoid reading binary data
 
-- Answer user questions directly and clearly based on available information
-- Always consider file size and type before choosing processing approach`
-	}
+E) Text Content Analysis:
+   • Use read(fd) for text files
+   • Apply shell commands for processing
 
-	// Add quota status information if provided
-	if quotaStatus != "" {
-		systemContent += "\n\nCURRENT USAGE STATUS:\n" + quotaStatus
+🎯 EFFICIENCY PRINCIPLES:
+1. Minimize API calls - combine operations intelligently
+2. Choose appropriate tools for the task
+3. Use open() for virtual file management
+4. Always signal EOF with write({eof:true}) for commands
+5. Read command output with read() for LLM processing
+6. Handle errors gracefully and provide clear feedback
+
+🔄 SHELL COMMAND EXECUTION PATTERN:
+For any command needing input/output:
+1. spawn(script) → get {in_fd, out_fd}
+2. write(in_fd, input_data, {eof:true}) → send data to command
+3. read(out_fd) → get command results for processing
+4. Process results and write(1, final_output)
+5. exit(0)
+
+💾 VIRTUAL FILE PATTERN:
+For temporary file operations with PIPE-like behavior:
+1. open("filename", "w") → get fd for writing
+2. write(fd, data) → store data in virtual file
+3. open("filename", "r") → get fd for reading (only works once!)
+4. read(fd) → retrieve stored data (file becomes consumed after full read)
+5. Process and output results
+⚠️  IMPORTANT: Virtual files act like PIPES - once fully read, they cannot be read again unless recreated
+
+Remember: You are the intelligent core of llmsh, providing efficient text processing with full shell environment capabilities!`
 	}
 
 	// Add special instructions for last API call
@@ -644,7 +659,7 @@ ANALYSIS APPROACH:
 		Content: fdMappingContent,
 	})
 
-	// Second user message: User's actual prompt/instructions
+	// Second user message: User's actual prompt/instructions with quota status
 	var userContent string
 	if len(actualFiles) > 0 {
 		// ファイルがある場合はファイル参照の説明を追加
@@ -670,6 +685,11 @@ ANALYSIS APPROACH:
 		} else {
 			userContent = fmt.Sprintf("Process the input data from stdin according to this request:\n\n%s", instructions)
 		}
+	}
+
+	// Add quota status information to the last message if provided
+	if quotaStatus != "" {
+		userContent += "\n\nCURRENT USAGE STATUS:\n" + quotaStatus
 	}
 
 	messages = append(messages, ChatMessage{

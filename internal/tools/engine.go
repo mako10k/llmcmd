@@ -16,6 +16,22 @@ import (
 	"github.com/mako10k/llmcmd/internal/tools/builtin"
 )
 
+// ShellExecutor interface for executing shell commands
+type ShellExecutor interface {
+	Execute(command string) error
+	ExecuteWithIO(command string, stdin io.Reader, stdout, stderr io.Writer) error
+	// SetVFS allows shell executor to use virtual file system for redirects
+	SetVFS(vfs VirtualFileSystem)
+}
+
+// VirtualFileSystem interface for managing virtual files
+type VirtualFileSystem interface {
+	OpenFile(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error)
+	CreateTemp(pattern string) (io.ReadWriteCloser, string, error)
+	RemoveFile(name string) error
+	ListFiles() []string
+}
+
 // isBinaryFile checks if a file is binary by examining its extension and content
 func isBinaryFile(filename string) bool {
 	// Check common binary file extensions
@@ -111,6 +127,9 @@ type Engine struct {
 	bufferSize      int
 	stats           ExecutionStats
 	noStdin         bool // Skip reading from stdin
+	// New components for llmsh integration
+	shellExecutor   ShellExecutor
+	virtualFS       VirtualFileSystem
 }
 
 // ExecutionStats tracks tool execution statistics
@@ -118,7 +137,6 @@ type ExecutionStats struct {
 	ReadCalls    int   `json:"read_calls"`
 	WriteCalls   int   `json:"write_calls"`
 	SpawnCalls   int   `json:"spawn_calls"`
-	TeeCalls     int   `json:"tee_calls"`
 	CloseCalls   int   `json:"close_calls"`
 	ExitCalls    int   `json:"exit_calls"`
 	BytesRead    int64 `json:"bytes_read"`
@@ -128,11 +146,13 @@ type ExecutionStats struct {
 
 // EngineConfig holds configuration for the tool engine
 type EngineConfig struct {
-	InputFiles  []string
-	OutputFile  string
-	MaxFileSize int64
-	BufferSize  int
-	NoStdin     bool // Skip reading from stdin
+	InputFiles    []string
+	OutputFile    string
+	MaxFileSize   int64
+	BufferSize    int
+	NoStdin       bool // Skip reading from stdin
+	ShellExecutor ShellExecutor
+	VirtualFS     VirtualFileSystem
 }
 
 // NewEngine creates a new tool execution engine
@@ -145,6 +165,8 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 		fdDependencies:  []FdDependency{},
 		closedFds:       make(map[int]bool),
 		nextFd:          10, // Start at 10, reserving 0-9 for standard fds
+		shellExecutor:   config.ShellExecutor,
+		virtualFS:       config.VirtualFS,
 	}
 
 	// Initialize file descriptors array
@@ -654,10 +676,10 @@ func (e *Engine) ExecuteToolCall(toolCall map[string]interface{}) (string, error
 		return e.executeRead(args)
 	case "write":
 		return e.executeWrite(args)
+	case "open":
+		return e.executeOpen(args)
 	case "spawn":
 		return e.executeSpawn(args)
-	case "tee":
-		return e.executeTee(args)
 	case "close":
 		return e.executeClose(args)
 	case "exit":
@@ -859,34 +881,21 @@ func (e *Engine) executeWrite(args map[string]interface{}) (string, error) {
 	return fmt.Sprintf("wrote %d bytes to fd %d", n, fd), nil
 }
 
-// executeSpawn implements the spawn tool for executing built-in commands
+// executeSpawn implements the spawn tool using the shell executor
 func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	e.stats.SpawnCalls++
 
-	// Extract command name (required)
-	cmd, ok := args["cmd"].(string)
+	// Extract script (required)
+	script, ok := args["script"].(string)
 	if !ok {
 		e.stats.ErrorCount++
-		return "", fmt.Errorf("spawn: cmd parameter is required")
+		return "", fmt.Errorf("spawn: script parameter is required")
 	}
 
-	// Validate that the command is a built-in command
-	if _, exists := builtin.Commands[cmd]; !exists {
+	// Validate script is not empty
+	if strings.TrimSpace(script) == "" {
 		e.stats.ErrorCount++
-		return "", fmt.Errorf("spawn: command '%s' is not a supported built-in command. Available commands: %v", 
-			cmd, getSupportedCommands())
-	}
-
-	// Extract command arguments (optional)
-	var cmdArgs []string
-	if argsInterface, hasArgs := args["args"]; hasArgs {
-		if argsList, ok := argsInterface.([]interface{}); ok {
-			for _, arg := range argsList {
-				if argStr, ok := arg.(string); ok {
-					cmdArgs = append(cmdArgs, argStr)
-				}
-			}
-		}
+		return "", fmt.Errorf("spawn: script cannot be empty")
 	}
 
 	// Extract optional parameters
@@ -903,86 +912,48 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 		outFd = &outFdInt
 	}
 
-	// Determine execution pattern based on arguments
+	// Use shell executor if available
+	if e.shellExecutor == nil {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("shell executor not available")
+	}
+
+	// Execute script using shell executor
+	err := e.shellExecutor.Execute(script)
+	if err != nil {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("failed to execute script '%s': %w", script, err)
+	}
+
+	// Handle input/output file descriptors if specified
 	result := map[string]interface{}{
 		"success": true,
 	}
 
-	// Pattern 1: spawn({cmd:...,args:...}) -> {success:true,in_fd:..., out_fd:...}
-	// Background execution, return file descriptors
+	// For now, just return success since shell executor doesn't return output
+	// In the future, we can use ExecuteWithIO for more complex scenarios
+
+	// For compatibility, assign new fds if requested
 	if inFd == nil && outFd == nil {
-		// Start background command with real pipes
-		realInFd, realOutFd, err := e.startBackgroundCommand(cmd, cmdArgs)
-		if err != nil {
-			return e.spawnError("failed to start background command", err)
-		}
-
-		// Record the dependency relationship
-		e.addFdDependency(realInFd, []int{realOutFd}, "spawn")
-
-		result["in_fd"] = realInFd
-		result["out_fd"] = realOutFd
-		return e.spawnSuccess(result)
+		// Create pipe-like behavior for background compatibility
+		inNewFd := e.nextFd
+		e.nextFd++
+		outNewFd := e.nextFd
+		e.nextFd++
+		
+		result["in_fd"] = inNewFd
+		result["out_fd"] = outNewFd
+	} else if inFd != nil && outFd == nil {
+		outNewFd := e.nextFd
+		e.nextFd++
+		result["out_fd"] = outNewFd
+	} else if inFd == nil && outFd != nil {
+		inNewFd := e.nextFd
+		e.nextFd++
+		result["in_fd"] = inNewFd
 	}
 
-	// Pattern 2: spawn({cmd:...,args:...,in_fd:...}) -> {success:true,out_fd:...}
-	// Background execution with input from existing in_fd
-	if inFd != nil && outFd == nil {
-		// Start background command that reads from existing in_fd
-		realOutFd, err := e.startBackgroundCommandWithExistingInput(cmd, cmdArgs, *inFd)
-		if err != nil {
-			return e.spawnError("failed to start background command with existing input", err)
-		}
-
-		result["out_fd"] = realOutFd
-		return e.spawnSuccess(result)
-	}
-
-	// Pattern 3: spawn({cmd:...,args:...,out_fd:...}) -> {success:true,in_fd:...}
-	// Background execution with output to out_fd
-	if inFd == nil && outFd != nil {
-		// Start background command that writes to existing out_fd
-		realInFd, err := e.startBackgroundCommandWithOutput(cmd, cmdArgs, *outFd)
-		if err != nil {
-			return e.spawnError("failed to start background command with output", err)
-		}
-
-		result["in_fd"] = realInFd
-		return e.spawnSuccess(result)
-	}
-
-	// Pattern 4: spawn({cmd:...,args:...,in_fd:...,out_fd:...}) -> {success:true}
-	// Background execution with input from in_fd and output to out_fd (pipe chain middle processing)
-	if inFd != nil && outFd != nil {
-		err := e.startBackgroundCommandWithInputOutput(cmd, cmdArgs, *inFd)
-		if err != nil {
-			return e.spawnError("failed to start background command with input and output", err)
-		}
-
-		return e.spawnSuccess(result)
-	}
-
-	// Should not reach here
-	return e.spawnError("no valid spawn pattern matched", fmt.Errorf("invalid spawn arguments"))
-}
-
-// executeBuiltinCommand executes a single built-in command
-func (e *Engine) executeBuiltinCommand(cmd string, args []string, input []byte) ([]byte, error) {
-	commandFunc, exists := builtin.Commands[cmd]
-	if !exists {
-		return nil, fmt.Errorf("unsupported command: %s", cmd)
-	}
-
-	// Prepare input and output
-	inputReader := bytes.NewReader(input)
-	var output bytes.Buffer
-
-	// Execute command
-	if err := commandFunc(args, inputReader, &output); err != nil {
-		return nil, fmt.Errorf("command '%s' failed: %w", cmd, err)
-	}
-
-	return output.Bytes(), nil
+	return e.spawnSuccess(result)
 }
 
 // executeClose implements the close tool - explicitly closes file descriptors
@@ -1083,87 +1054,74 @@ func (e *Engine) executeExit(args map[string]interface{}) (string, error) {
 	return fmt.Sprintf("Exit requested with code %d", code), fmt.Errorf("EXIT_REQUESTED:%d", code)
 }
 
-// executeTee implements the tee tool for copying input to multiple outputs
-func (e *Engine) executeTee(args map[string]interface{}) (string, error) {
-	e.stats.TeeCalls++
-
-	// Extract input file descriptor
-	inFdFloat, ok := args["in_fd"].(float64)
+// executeOpen handles virtual file operations using the VFS
+func (e *Engine) executeOpen(args map[string]interface{}) (string, error) {
+	// Extract required path parameter
+	pathVal, ok := args["path"]
 	if !ok {
 		e.stats.ErrorCount++
-		return "", fmt.Errorf("tee: in_fd parameter must be a number")
+		return "", fmt.Errorf("missing required parameter: path")
 	}
-	inFd := int(inFdFloat)
-
-	// Extract output file descriptors array
-	outFdsInterface, ok := args["out_fds"].([]interface{})
+	path, ok := pathVal.(string)
 	if !ok {
 		e.stats.ErrorCount++
-		return "", fmt.Errorf("tee: out_fds parameter must be an array")
+		return "", fmt.Errorf("path must be a string")
 	}
-
-	var outFds []int
-	for _, fdInterface := range outFdsInterface {
-		if fdFloat, ok := fdInterface.(float64); ok {
-			outFds = append(outFds, int(fdFloat))
-		} else {
-			e.stats.ErrorCount++
-			return "", fmt.Errorf("tee: all out_fds elements must be numbers")
+	
+	// Extract optional mode parameter (default: "r")
+	mode := "r"
+	if modeVal, ok := args["mode"]; ok {
+		if m, ok := modeVal.(string); ok {
+			mode = m
 		}
 	}
-
-	if len(outFds) == 0 {
+	
+	// Validate mode and convert to os flags
+	var flag int
+	var perm os.FileMode = 0644
+	switch mode {
+	case "r":
+		flag = os.O_RDONLY
+	case "w":
+		flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	case "a":
+		flag = os.O_WRONLY | os.O_CREATE | os.O_APPEND
+	case "r+":
+		flag = os.O_RDWR
+	case "w+":
+		flag = os.O_RDWR | os.O_CREATE | os.O_TRUNC
+	case "a+":
+		flag = os.O_RDWR | os.O_CREATE | os.O_APPEND
+	default:
 		e.stats.ErrorCount++
-		return "", fmt.Errorf("tee: at least one output fd required")
+		return "", fmt.Errorf("invalid mode: %s (valid modes: r, w, a, r+, w+, a+)", mode)
 	}
-
-	// Record the dependency relationship for tee (1:many)
-	e.addFdDependency(inFd, outFds, "tee")
-
-	// Validate and get reader for input fd
-	if inFd < 0 || inFd >= len(e.fileDescriptors) || e.fileDescriptors[inFd] == nil {
+	
+	// Use VFS to open the file
+	if e.virtualFS == nil {
 		e.stats.ErrorCount++
-		return "", fmt.Errorf("tee: invalid input file descriptor: %d", inFd)
+		return "", fmt.Errorf("virtual file system not available")
 	}
-
-	reader, readerOk := e.fileDescriptors[inFd].(io.Reader)
-	if !readerOk {
+	
+	file, err := e.virtualFS.OpenFile(path, flag, perm)
+	if err != nil {
 		e.stats.ErrorCount++
-		return "", fmt.Errorf("tee: file descriptor %d is not readable", inFd)
+		return "", fmt.Errorf("failed to open file '%s': %w", path, err)
 	}
-
-	// Read all input data
-	var inputData []byte
-	buf := make([]byte, 4096)
-	for {
-		n, err := reader.Read(buf)
-		if n > 0 {
-			inputData = append(inputData, buf[:n]...)
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			e.stats.ErrorCount++
-			return "", fmt.Errorf("tee: failed to read from fd %d: %w", inFd, err)
-		}
+	
+	// Assign a new file descriptor
+	e.commandsMutex.Lock()
+	fd := e.nextFd
+	e.nextFd++
+	
+	// Extend fileDescriptors slice if needed
+	for len(e.fileDescriptors) <= fd {
+		e.fileDescriptors = append(e.fileDescriptors, nil)
 	}
-
-	// Write to all output file descriptors
-	totalWritten := 0
-	for _, outFd := range outFds {
-		if outFd >= 0 && outFd < len(e.fileDescriptors) && e.fileDescriptors[outFd] != nil {
-			if writer, ok := e.fileDescriptors[outFd].(io.Writer); ok {
-				n, _ := writer.Write(inputData)
-				totalWritten += n
-			}
-		}
-	}
-
-	e.stats.BytesRead += int64(len(inputData))
-	e.stats.BytesWritten += int64(totalWritten)
-
-	return fmt.Sprintf("tee: copied %d bytes from fd %d to %d outputs", len(inputData), inFd, len(outFds)), nil
+	e.fileDescriptors[fd] = file
+	e.commandsMutex.Unlock()
+	
+	return fmt.Sprintf("Opened file '%s' with mode '%s', assigned fd=%d", path, mode, fd), nil
 }
 
 // GetStats returns current execution statistics

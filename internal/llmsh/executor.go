@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 	
+	"github.com/mako10k/llmcmd/internal/app"
 	"github.com/mako10k/llmcmd/internal/llmsh/commands"
 	"github.com/mako10k/llmcmd/internal/llmsh/parser"
+	"github.com/mako10k/llmcmd/internal/openai"
 	"github.com/mako10k/llmcmd/internal/tools/builtin"
 )
 
@@ -323,15 +326,27 @@ type Commands struct {
 	help         *HelpSystem
 	quotaManager interface{}
 	manager      *commands.Manager
+	sharedQuota  *openai.SharedQuotaManager // For llmcmd quota sharing
 }
 
 // NewCommands creates a new command manager
 func NewCommands(vfs *VirtualFileSystem, help *HelpSystem, quotaManager interface{}) *Commands {
+	// Create shared quota manager for llmcmd calls
+	// TODO: This should use actual quota configuration
+	defaultQuotaConfig := &openai.QuotaConfig{
+		MaxTokens:    4096,
+		InputWeight:  1.0,
+		CachedWeight: 0.25,
+		OutputWeight: 4.0,
+	}
+	sharedQuota := openai.NewSharedQuotaManager(defaultQuotaConfig)
+	
 	return &Commands{
 		vfs:          vfs,
 		help:         help,
 		quotaManager: quotaManager,
 		manager:      commands.NewManager(),
+		sharedQuota:  sharedQuota,
 	}
 }
 
@@ -382,34 +397,81 @@ func (c *Commands) executeHelp(args []string, stdout io.ReadWriteCloser) error {
 
 // executeLLMCmd executes llmcmd (recursive LLM execution)
 func (c *Commands) executeLLMCmd(args []string, stdin io.ReadWriteCloser, stdout, stderr io.ReadWriteCloser) error {
-	// TODO: Implement recursive LLM execution with gpt-4o-mini
 	if len(args) == 0 {
 		return fmt.Errorf("llmcmd requires a prompt argument")
 	}
 	
-	prompt := strings.Join(args, " ")
+	// Read input from stdin if available
+	input, err := io.ReadAll(stdin)
+	if err != nil {
+		return fmt.Errorf("llmcmd: error reading input: %w", err)
+	}
 	
-	// For now, just echo the prompt with a prefix
-	output := fmt.Sprintf("[LLM processing] %s\n", prompt)
-	_, err := stdout.Write([]byte(output))
-	return err
+	// Prepare llmcmd arguments
+	var llmcmdArgs []string
+	if len(input) > 0 {
+		// If we have stdin input, pass it via -i flag
+		llmcmdArgs = append(llmcmdArgs, "-i", string(input), "-p", strings.Join(args, " "))
+	} else {
+		llmcmdArgs = append(llmcmdArgs, "-p", strings.Join(args, " "))
+	}
+	
+	// Generate process ID for this llmcmd call
+	processID := fmt.Sprintf("llmcmd-%d", time.Now().UnixNano())
+	parentID := "llmsh"
+	
+	// Register process with shared quota
+	if err := c.sharedQuota.RegisterProcess(processID, parentID); err != nil {
+		return fmt.Errorf("llmcmd: failed to register process: %w", err)
+	}
+	defer c.sharedQuota.UnregisterProcess(processID)
+	
+	// Check quota before execution
+	if !c.sharedQuota.CanMakeCall(processID) {
+		return fmt.Errorf("llmcmd: quota exceeded")
+	}
+	
+	// Execute llmcmd internally with shared quota
+	metadata := app.ApplicationMetadata{
+		Name:    "llmcmd",
+		Version: "3.0.3",
+	}
+	
+	// Execute with internal context
+	err = app.ExecuteInternal(metadata, llmcmdArgs, c.sharedQuota, processID, parentID)
+	if err != nil {
+		return fmt.Errorf("llmcmd: execution failed: %w", err)
+	}
+	
+	return nil
 }
 
 // executeLLMSh executes llmsh subshell
 func (c *Commands) executeLLMSh(args []string, stdin io.ReadWriteCloser, stdout, stderr io.ReadWriteCloser) error {
+	// Generate process ID for this llmsh call
+	processID := fmt.Sprintf("llmsh-%d", time.Now().UnixNano())
+	parentID := "llmsh-parent"
+	
+	// Register process with shared quota
+	if err := c.sharedQuota.RegisterProcess(processID, parentID); err != nil {
+		return fmt.Errorf("llmsh: failed to register process: %w", err)
+	}
+	defer c.sharedQuota.UnregisterProcess(processID)
+	
 	// Handle -c option for command execution
 	if len(args) >= 2 && args[0] == "-c" {
 		// Join all arguments after -c as the command
 		command := strings.Join(args[1:], " ")
 		
-		// Create a new shell instance for the subshell with default config
+		// Create a new shell instance for the subshell with shared quota
 		config := &Config{}
 		subShell, err := NewShell(config)
 		if err != nil {
 			return fmt.Errorf("failed to create subshell: %w", err)
 		}
 		
-		// Execute the command in the subshell
+		// Set shared quota in subshell (if Shell supports it)
+		// For now, execute the command in the subshell
 		return subShell.Execute(command)
 	}
 	
