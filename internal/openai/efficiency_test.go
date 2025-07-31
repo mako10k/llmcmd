@@ -23,8 +23,8 @@ func TestCreateInitialMessages_EfficiencyPrompt(t *testing.T) {
 		t.Error("System message should mention read tool")
 	}
 
-	if !strings.Contains(systemMsg, "get_usages(keys)") {
-		t.Error("System message should mention get_usages tool")
+	if !strings.Contains(systemMsg, "help(keys)") {
+		t.Error("System message should mention help tool")
 	}
 
 	// Check for workflow pattern
@@ -45,8 +45,8 @@ func TestCreateInitialMessages_WorkflowExamples(t *testing.T) {
 	systemMsg := messages[0].Content
 
 	// Check for usage help reference
-	if !strings.Contains(systemMsg, "get_usages") {
-		t.Error("System message should mention get_usages for help")
+	if !strings.Contains(systemMsg, "help") {
+		t.Error("System message should mention help for help")
 	}
 
 	// Check for built-in commands

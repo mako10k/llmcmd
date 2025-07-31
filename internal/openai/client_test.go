@@ -32,12 +32,12 @@ func TestToolDefinitions(t *testing.T) {
 
 	expected := map[string]bool{
 		"read":       false,
-		"write":      false,
-		"open":       false,
-		"spawn":      false,
-		"close":      false,
-		"get_usages": false,
-		"exit":       false,
+		"write": false,
+		"open":  false,
+		"spawn": false,
+		"close": false,
+		"help":  false,
+		"exit":  false,
 	}
 
 	for _, tool := range tools {
