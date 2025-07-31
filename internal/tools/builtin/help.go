@@ -515,8 +515,8 @@ func (u *UsageData) initKeyMappings() {
 	}
 }
 
-// GetUsages implements the get_usages command
-func GetUsages(args []string, stdin io.Reader, stdout io.Writer) error {
+// GetHelp implements the help command
+func GetHelp(args []string, stdin io.Reader, stdout io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("no keys provided")
 	}
