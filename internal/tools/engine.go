@@ -116,7 +116,7 @@ type FdDependency struct {
 type Engine struct {
 	inputFiles      []*os.File
 	outputFile      *os.File
-	fileDescriptors []interface{} // Can hold io.Reader, io.Writer, or io.ReadWriter
+	fileDescriptors []interface{}           // Can hold io.Reader, io.Writer, or io.ReadWriter
 	runningCommands map[int]*RunningCommand // Maps fd to running command
 	commandsMutex   sync.RWMutex
 	fdDependencies  []FdDependency // Tracks fd dependencies for spawns and tees
@@ -128,8 +128,8 @@ type Engine struct {
 	stats           ExecutionStats
 	noStdin         bool // Skip reading from stdin
 	// New components for llmsh integration
-	shellExecutor   ShellExecutor
-	virtualFS       VirtualFileSystem
+	shellExecutor ShellExecutor
+	virtualFS     VirtualFileSystem
 }
 
 // ExecutionStats tracks tool execution statistics
@@ -635,7 +635,7 @@ func (e *Engine) Close() error {
 		}
 	}
 
-	// Close output file (this might overlap with fd 1, but Close() is idempotent)  
+	// Close output file (this might overlap with fd 1, but Close() is idempotent)
 	if e.outputFile != nil {
 		if err := e.outputFile.Close(); err != nil {
 			errors = append(errors, err)
@@ -745,7 +745,7 @@ func (e *Engine) executeRead(args map[string]interface{}) (string, error) {
 	// Read data with blocking I/O
 	buffer := make([]byte, count)
 	n, err := reader.Read(buffer)
-	
+
 	// Handle all possible outcomes explicitly (Fail-First principle)
 	if err != nil {
 		if err == io.EOF {
@@ -940,7 +940,7 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 		e.nextFd++
 		outNewFd := e.nextFd
 		e.nextFd++
-		
+
 		result["in_fd"] = inNewFd
 		result["out_fd"] = outNewFd
 	} else if inFd != nil && outFd == nil {
@@ -1011,7 +1011,7 @@ func (e *Engine) executeClose(args map[string]interface{}) (string, error) {
 	var summary strings.Builder
 	summary.WriteString(fmt.Sprintf("closed fd %d, chain traversal results:\n", fd))
 	for _, result := range chainResults {
-		summary.WriteString(fmt.Sprintf("  fd %d: %s (exit: %d, cmd: %s)\n", 
+		summary.WriteString(fmt.Sprintf("  fd %d: %s (exit: %d, cmd: %s)\n",
 			result.Fd, result.Message, result.ExitCode, result.Command))
 	}
 
@@ -1067,7 +1067,7 @@ func (e *Engine) executeOpen(args map[string]interface{}) (string, error) {
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("path must be a string")
 	}
-	
+
 	// Extract optional mode parameter (default: "r")
 	mode := "r"
 	if modeVal, ok := args["mode"]; ok {
@@ -1075,7 +1075,7 @@ func (e *Engine) executeOpen(args map[string]interface{}) (string, error) {
 			mode = m
 		}
 	}
-	
+
 	// Validate mode and convert to os flags
 	var flag int
 	var perm os.FileMode = 0644
@@ -1096,31 +1096,31 @@ func (e *Engine) executeOpen(args map[string]interface{}) (string, error) {
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("invalid mode: %s (valid modes: r, w, a, r+, w+, a+)", mode)
 	}
-	
+
 	// Use VFS to open the file
 	if e.virtualFS == nil {
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("virtual file system not available")
 	}
-	
+
 	file, err := e.virtualFS.OpenFile(path, flag, perm)
 	if err != nil {
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("failed to open file '%s': %w", path, err)
 	}
-	
+
 	// Assign a new file descriptor
 	e.commandsMutex.Lock()
 	fd := e.nextFd
 	e.nextFd++
-	
+
 	// Extend fileDescriptors slice if needed
 	for len(e.fileDescriptors) <= fd {
 		e.fileDescriptors = append(e.fileDescriptors, nil)
 	}
 	e.fileDescriptors[fd] = file
 	e.commandsMutex.Unlock()
-	
+
 	return fmt.Sprintf("Opened file '%s' with mode '%s', assigned fd=%d", path, mode, fd), nil
 }
 

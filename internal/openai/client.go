@@ -15,15 +15,15 @@ import (
 
 // Client represents an OpenAI API client
 type Client struct {
-	httpClient   *http.Client
-	apiKey       string
-	baseURL      string
-	stats        ClientStats
-	maxCalls     int
-	retryConfig  RetryConfig
-	quotaConfig  *QuotaConfig // Optional quota configuration
-	sharedQuota  *SharedQuotaManager // Optional shared quota manager
-	processID    string              // Process ID for shared quota
+	httpClient  *http.Client
+	apiKey      string
+	baseURL     string
+	stats       ClientStats
+	maxCalls    int
+	retryConfig RetryConfig
+	quotaConfig *QuotaConfig        // Optional quota configuration
+	sharedQuota *SharedQuotaManager // Optional shared quota manager
+	processID   string              // Process ID for shared quota
 }
 
 // ClientConfig holds configuration for the OpenAI client

@@ -28,8 +28,8 @@ type App struct {
 	exitRequested  bool
 	exitCode       int
 	// Shared quota support
-	sharedQuota    *openai.SharedQuotaManager
-	processID      string
+	sharedQuota *openai.SharedQuotaManager
+	processID   string
 }
 
 // New creates a new application instance
@@ -48,10 +48,10 @@ func NewWithSharedQuota(config *cli.Config, quotaManager *openai.SharedQuotaMana
 		sharedQuota: quotaManager,
 		processID:   processID,
 	}
-	
+
 	// Register process with quota manager
 	quotaManager.RegisterProcess(processID, metadata.Name)
-	
+
 	return app
 }
 
@@ -143,10 +143,10 @@ func (a *App) initializeOpenAI() error {
 func (a *App) initializeToolEngine() error {
 	shellExecutor := &SimpleShellExecutor{}
 	virtualFS := NewSimpleVirtualFS()
-	
+
 	// Configure shell executor with VFS for redirect support
 	shellExecutor.SetVFS(virtualFS)
-	
+
 	config := tools.EngineConfig{
 		InputFiles:    a.config.InputFiles,
 		OutputFile:    a.config.OutputFile,
@@ -624,19 +624,19 @@ func (s *SimpleShellExecutor) ExecuteWithIO(command string, stdin io.Reader, std
 
 // SimpleVirtualFS implements tools.VirtualFileSystem interface
 type SimpleVirtualFS struct {
-	files     map[string]*VirtualFile
-	consumed  map[string]bool // Track files that have been fully read (PIPE behavior)
-	mutex     sync.RWMutex
+	files    map[string]*VirtualFile
+	consumed map[string]bool // Track files that have been fully read (PIPE behavior)
+	mutex    sync.RWMutex
 }
 
 // VirtualFile represents a virtual file in memory
 type VirtualFile struct {
-	name    string
-	data    []byte
-	offset  int64
-	flag    int
-	perm    os.FileMode
-	closed  bool
+	name   string
+	data   []byte
+	offset int64
+	flag   int
+	perm   os.FileMode
+	closed bool
 }
 
 // VirtualFileWrapper wraps VirtualFile to handle consumption tracking
@@ -649,7 +649,7 @@ type VirtualFileWrapper struct {
 // Read implements io.Reader with consumption tracking
 func (w *VirtualFileWrapper) Read(p []byte) (n int, err error) {
 	n, err = w.file.Read(p)
-	
+
 	// Check if file has been fully consumed
 	if w.file.data == nil || w.file.offset >= int64(len(w.file.data)) {
 		// Mark as consumed in VFS
@@ -657,7 +657,7 @@ func (w *VirtualFileWrapper) Read(p []byte) (n int, err error) {
 		w.vfs.consumed[w.name] = true
 		w.vfs.mutex.Unlock()
 	}
-	
+
 	return n, err
 }
 
@@ -681,14 +681,14 @@ func (f *VirtualFile) Read(p []byte) (n int, err error) {
 	}
 	n = copy(p, f.data[f.offset:])
 	f.offset += int64(n)
-	
+
 	// PIPE behavior: once data is read, it's consumed and removed
 	// This simulates pipe consumption where data can only be read once
 	if f.offset >= int64(len(f.data)) {
 		// All data has been read, mark as consumed
 		f.data = nil // Clear data to prevent re-reading
 	}
-	
+
 	return n, nil
 }
 
@@ -786,13 +786,13 @@ func (vfs *SimpleVirtualFS) CreateTemp(pattern string) (io.ReadWriteCloser, stri
 	vfs.files[name] = file
 	// Clear consumed flag for new temp file
 	delete(vfs.consumed, name)
-	
+
 	wrapper := &VirtualFileWrapper{
 		file: file,
 		vfs:  vfs,
 		name: name,
 	}
-	
+
 	return wrapper, name, nil
 }
 

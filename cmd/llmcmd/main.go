@@ -18,7 +18,7 @@ func main() {
 		Name:    AppName,
 		Version: AppVersion,
 	}
-	
+
 	// Execute as external command
 	if err := app.ExecuteExternal(metadata, os.Args[1:]); err != nil {
 		log.Fatalf("Application error: %v", err)

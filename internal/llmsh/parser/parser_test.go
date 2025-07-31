@@ -30,17 +30,17 @@ func TestTokenizer(t *testing.T) {
 			expected: []TokenType{WORD, WORD, SEMICOLON, WORD, WORD, EOF},
 		},
 	}
-	
+
 	for _, test := range tests {
 		tokenizer := NewTokenizer(test.input)
-		
+
 		for i, expectedType := range test.expected {
 			token, err := tokenizer.NextToken()
 			if err != nil {
 				t.Errorf("Error tokenizing '%s': %v", test.input, err)
 				break
 			}
-			
+
 			if token.Type != expectedType {
 				t.Errorf("Test '%s' token %d: expected %v, got %v", test.input, i, expectedType, token.Type)
 			}
@@ -74,24 +74,24 @@ func TestParser(t *testing.T) {
 			expectError: false,
 		},
 		{
-			input:       "cat |",  // Invalid: pipe without right side
+			input:       "cat |", // Invalid: pipe without right side
 			expectError: true,
 		},
 		{
-			input:       "echo >",  // Invalid: redirection without target
+			input:       "echo >", // Invalid: redirection without target
 			expectError: true,
 		},
 	}
-	
+
 	parser := NewParser()
-	
+
 	for _, test := range tests {
 		_, err := parser.Parse(test.input)
-		
+
 		if test.expectError && err == nil {
 			t.Errorf("Expected error for input '%s', but got none", test.input)
 		}
-		
+
 		if !test.expectError && err != nil {
 			t.Errorf("Unexpected error for input '%s': %v", test.input, err)
 		}
@@ -109,21 +109,21 @@ func TestQuotedStrings(t *testing.T) {
 		{`"newline\nhere"`, "newline\nhere"},
 		{`"tab\there"`, "tab\there"},
 	}
-	
+
 	for _, test := range tests {
 		tokenizer := NewTokenizer(test.input)
 		token, err := tokenizer.NextToken()
-		
+
 		if err != nil {
 			t.Errorf("Error tokenizing '%s': %v", test.input, err)
 			continue
 		}
-		
+
 		if token.Type != QUOTED_STRING {
 			t.Errorf("Expected QUOTED_STRING for '%s', got %v", test.input, token.Type)
 			continue
 		}
-		
+
 		if token.Value != test.expected {
 			t.Errorf("Expected '%s' for input '%s', got '%s'", test.expected, test.input, token.Value)
 		}
@@ -152,19 +152,19 @@ func TestComments(t *testing.T) {
 			expected: []TokenType{WORD, WORD, NEWLINE, WORD, WORD, EOF},
 		},
 	}
-	
+
 	for _, test := range tests {
 		tokenizer := NewTokenizer(test.input)
-		
+
 		for i, expectedType := range test.expected {
 			token, err := tokenizer.NextToken()
 			if err != nil {
 				t.Errorf("Error tokenizing '%s': %v", test.input, err)
 				break
 			}
-			
+
 			if token.Type != expectedType {
-				t.Errorf("Test '%s' token %d: expected %v, got %v (value: '%s')", 
+				t.Errorf("Test '%s' token %d: expected %v, got %v (value: '%s')",
 					test.input, i, expectedType, token.Type, token.Value)
 			}
 		}

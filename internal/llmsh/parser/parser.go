@@ -19,7 +19,7 @@ func NewParser() *Parser {
 // Parse parses the input string and returns an AST
 func (p *Parser) Parse(input string) (Node, error) {
 	p.tokenizer = NewTokenizer(input)
-	
+
 	// Get first token
 	token, err := p.tokenizer.NextToken()
 	if err != nil {
@@ -27,7 +27,7 @@ func (p *Parser) Parse(input string) (Node, error) {
 	}
 	p.current = token
 	p.position = 0
-	
+
 	// Parse the script
 	return p.parseScript()
 }
@@ -54,24 +54,24 @@ func (p *Parser) expect(tokenType TokenType) error {
 // parseScript parses the top-level script
 func (p *Parser) parseScript() (Node, error) {
 	var statements []Node
-	
+
 	// Skip leading newlines
 	for p.current.Type == NEWLINE {
 		if err := p.advance(); err != nil {
 			return nil, err
 		}
 	}
-	
+
 	for p.current.Type != EOF {
 		stmt, err := p.parseStatement()
 		if err != nil {
 			return nil, err
 		}
-		
+
 		if stmt != nil {
 			statements = append(statements, stmt)
 		}
-		
+
 		// Skip statement separators
 		for p.current.Type == NEWLINE || p.current.Type == SEMICOLON {
 			if err := p.advance(); err != nil {
@@ -79,15 +79,15 @@ func (p *Parser) parseScript() (Node, error) {
 			}
 		}
 	}
-	
+
 	if len(statements) == 0 {
 		return nil, nil
 	}
-	
+
 	if len(statements) == 1 {
 		return statements[0], nil
 	}
-	
+
 	return &ScriptNode{Statements: statements}, nil
 }
 
@@ -97,72 +97,72 @@ func (p *Parser) parseStatement() (Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Handle conditional operators (&& and ||)
 	for p.current.Type == AND || p.current.Type == OR {
 		operator := p.current.Value
 		if err := p.advance(); err != nil {
 			return nil, err
 		}
-		
+
 		right, err := p.parseSequence()
 		if err != nil {
 			return nil, err
 		}
-		
+
 		left = &ConditionalNode{
 			Left:     left,
 			Operator: operator,
 			Right:    right,
 		}
 	}
-	
+
 	return left, nil
 }
 
 // parseSequence parses a sequence of commands separated by semicolons
 func (p *Parser) parseSequence() (Node, error) {
 	var commands []Node
-	
+
 	cmd, err := p.parseComplexCommand()
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if cmd != nil {
 		commands = append(commands, cmd)
 	}
-	
+
 	for p.current.Type == SEMICOLON {
 		if err := p.advance(); err != nil {
 			return nil, err
 		}
-		
+
 		// Skip newlines after semicolon
 		for p.current.Type == NEWLINE {
 			if err := p.advance(); err != nil {
 				return nil, err
 			}
 		}
-		
+
 		cmd, err := p.parseComplexCommand()
 		if err != nil {
 			return nil, err
 		}
-		
+
 		if cmd != nil {
 			commands = append(commands, cmd)
 		}
 	}
-	
+
 	if len(commands) == 0 {
 		return nil, nil
 	}
-	
+
 	if len(commands) == 1 {
 		return commands[0], nil
 	}
-	
+
 	return &SequenceNode{Commands: commands}, nil
 }
 
@@ -172,13 +172,13 @@ func (p *Parser) parseComplexCommand() (Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if pipeline == nil {
 		return nil, nil
 	}
-	
+
 	var redirections []*RedirectionNode
-	
+
 	// Parse redirections
 	for p.isRedirection() {
 		redir, err := p.parseRedirection()
@@ -187,11 +187,11 @@ func (p *Parser) parseComplexCommand() (Node, error) {
 		}
 		redirections = append(redirections, redir)
 	}
-	
+
 	if len(redirections) == 0 {
 		return pipeline, nil
 	}
-	
+
 	return &ComplexCommandNode{
 		Pipeline:     pipeline,
 		Redirections: redirections,
@@ -201,35 +201,35 @@ func (p *Parser) parseComplexCommand() (Node, error) {
 // parsePipeline parses a pipeline of commands
 func (p *Parser) parsePipeline() (*PipelineNode, error) {
 	var commands []*CommandNode
-	
+
 	cmd, err := p.parseCommand()
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if cmd == nil {
 		return nil, nil
 	}
-	
+
 	commands = append(commands, cmd)
-	
+
 	for p.current.Type == PIPE {
 		if err := p.advance(); err != nil {
 			return nil, err
 		}
-		
+
 		cmd, err := p.parseCommand()
 		if err != nil {
 			return nil, err
 		}
-		
+
 		if cmd == nil {
 			return nil, fmt.Errorf("expected command after pipe at position %d", p.current.Position)
 		}
-		
+
 		commands = append(commands, cmd)
 	}
-	
+
 	return &PipelineNode{Commands: commands}, nil
 }
 
@@ -238,21 +238,21 @@ func (p *Parser) parseCommand() (*CommandNode, error) {
 	if p.current.Type != WORD && p.current.Type != QUOTED_STRING {
 		return nil, nil
 	}
-	
+
 	name := p.current.Value
 	if err := p.advance(); err != nil {
 		return nil, err
 	}
-	
+
 	var args []string
-	
+
 	for p.current.Type == WORD || p.current.Type == QUOTED_STRING {
 		args = append(args, p.current.Value)
 		if err := p.advance(); err != nil {
 			return nil, err
 		}
 	}
-	
+
 	return &CommandNode{
 		Name: name,
 		Args: args,
@@ -272,7 +272,7 @@ func (p *Parser) isRedirection() bool {
 // parseRedirection parses a redirection
 func (p *Parser) parseRedirection() (*RedirectionNode, error) {
 	var redirType RedirectionType
-	
+
 	switch p.current.Type {
 	case REDIRECT_OUT:
 		redirType = RedirOut
@@ -287,20 +287,20 @@ func (p *Parser) parseRedirection() (*RedirectionNode, error) {
 	default:
 		return nil, fmt.Errorf("expected redirection operator at position %d", p.current.Position)
 	}
-	
+
 	if err := p.advance(); err != nil {
 		return nil, err
 	}
-	
+
 	if p.current.Type != WORD && p.current.Type != QUOTED_STRING {
 		return nil, fmt.Errorf("expected filename after redirection at position %d", p.current.Position)
 	}
-	
+
 	target := p.current.Value
 	if err := p.advance(); err != nil {
 		return nil, err
 	}
-	
+
 	return &RedirectionNode{
 		Type:   redirType,
 		Target: target,

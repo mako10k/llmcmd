@@ -46,16 +46,16 @@ func (p *PipelineNode) String() string {
 type RedirectionType int
 
 const (
-	RedirOut RedirectionType = iota // >
-	RedirAppend                     // >>
-	RedirIn                         // <
-	RedirErr                        // 2>
-	RedirAll                        // &>
+	RedirOut    RedirectionType = iota // >
+	RedirAppend                        // >>
+	RedirIn                            // <
+	RedirErr                           // 2>
+	RedirAll                           // &>
 )
 
 // RedirectionNode represents input/output redirection
 type RedirectionNode struct {
-	Type RedirectionType
+	Type   RedirectionType
 	Target string // File name or fd
 }
 
@@ -92,9 +92,9 @@ func (c *ComplexCommandNode) String() string {
 
 // ConditionalNode represents conditional execution (&& or ||)
 type ConditionalNode struct {
-	Left      Node
-	Operator  string // "&&" or "||"
-	Right     Node
+	Left     Node
+	Operator string // "&&" or "||"
+	Right    Node
 }
 
 func (c *ConditionalNode) String() string {

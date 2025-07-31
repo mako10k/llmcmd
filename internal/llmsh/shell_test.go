@@ -10,7 +10,7 @@ func TestShellBasicCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create shell: %v", err)
 	}
-	
+
 	tests := []struct {
 		name        string
 		script      string
@@ -62,15 +62,15 @@ func TestShellBasicCommands(t *testing.T) {
 			expectError: true,
 		},
 	}
-	
+
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			err := shell.Execute(test.script)
-			
+
 			if test.expectError && err == nil {
 				t.Errorf("Expected error for script '%s', but got none", test.script)
 			}
-			
+
 			if !test.expectError && err != nil {
 				t.Errorf("Unexpected error for script '%s': %v", test.script, err)
 			}
@@ -83,7 +83,7 @@ func TestShellPipelineExecution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create shell: %v", err)
 	}
-	
+
 	// Test pipeline with built-in commands
 	script := "echo hello world | tr ' ' '\\n'"
 	err = shell.Execute(script)
@@ -94,35 +94,35 @@ func TestShellPipelineExecution(t *testing.T) {
 
 func TestHelpSystem(t *testing.T) {
 	help := NewHelpSystem()
-	
+
 	// Test help for existing command
 	helpText, err := help.FormatHelp("echo")
 	if err != nil {
 		t.Errorf("Failed to get help for echo: %v", err)
 	}
-	
+
 	if !strings.Contains(helpText, "echo") {
 		t.Errorf("Help text should contain command name")
 	}
-	
+
 	// Test help for non-existing command
 	_, err = help.FormatHelp("nonexistent")
 	if err == nil {
 		t.Errorf("Expected error for non-existing command")
 	}
-	
+
 	// Test command list
 	commands := help.ListCommands()
 	if len(commands) == 0 {
 		t.Errorf("Command list should not be empty")
 	}
-	
+
 	// Check if basic commands are included
 	commandMap := make(map[string]bool)
 	for _, cmd := range commands {
 		commandMap[cmd] = true
 	}
-	
+
 	requiredCommands := []string{"echo", "help", "cat", "grep", "llmcmd"}
 	for _, cmd := range requiredCommands {
 		if !commandMap[cmd] {
