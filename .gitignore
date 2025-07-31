@@ -58,5 +58,18 @@ output.txt
 stats.txt
 test_*.txt
 test_*.conf
+test_*.json
+test_*.yaml
+test_*.md
+test_*.go
+test_*.patch
+test_*.bin
 dist/
 llmsh
+
+# Debug and test binaries
+llmcmd-debug
+llmcmd-v*
+llmsh-test
+*-debug
+*-test
