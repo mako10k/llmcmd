@@ -11,7 +11,129 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
+
+// Token estimation constants
+const (
+	// Rough token estimation: 1 token ≈ 4 characters for English, 1-2 for Japanese
+	EstimatedCharsPerToken        = 3.5  // Conservative estimate
+	DefaultMaxInputTokensForTools = 8000 // Default safe limit for input when tools disabled
+)
+
+// parseQuotaStatus extracts remaining quota information from quota status string
+func parseQuotaStatus(quotaStatus string) (int, bool) {
+	if quotaStatus == "" {
+		return DefaultMaxInputTokensForTools, false
+	}
+
+	// Look for patterns like "4352.0 remaining" in the quota status
+	// Example: "Token Usage: 648.0/5000 weighted tokens (13.0% used, 4352.0 remaining)"
+	if strings.Contains(quotaStatus, "remaining") {
+		// Extract the remaining tokens number
+		parts := strings.Split(quotaStatus, "remaining")
+		if len(parts) > 0 {
+			beforeRemaining := parts[0]
+			// Find the last number before "remaining"
+			words := strings.Fields(beforeRemaining)
+			for i := len(words) - 1; i >= 0; i-- {
+				word := strings.TrimSuffix(words[i], ",")
+				var remaining float64
+				if n, err := fmt.Sscanf(word, "%f", &remaining); err == nil && n == 1 {
+					// Calculate max input considering output weight
+					// Standard weights: input=1x, output=4x
+					// Reserve space for response (estimated 500-1000 output tokens)
+					// Output tokens will cost 4x, so we need to reserve 4x500 = 2000 weighted tokens
+					reservedForOutput := 2000.0 // Conservative estimate for response
+
+					availableForInput := remaining - reservedForOutput
+					if availableForInput <= 0 {
+						// Very little quota left - allow minimal input
+						return 500, true
+					}
+
+					// Use 80% of available quota for input to be safe
+					maxInputWeighted := availableForInput * 0.8
+
+					// Convert weighted tokens back to actual input tokens (weight=1x for input)
+					maxInputTokens := int(maxInputWeighted)
+
+					// Ensure reasonable bounds
+					if maxInputTokens < 500 {
+						maxInputTokens = 500 // Minimum usable amount
+					} else if maxInputTokens > DefaultMaxInputTokensForTools {
+						maxInputTokens = DefaultMaxInputTokensForTools // Don't exceed default max
+					}
+
+					return maxInputTokens, true
+				}
+			}
+		}
+	}
+
+	// Fallback to default if parsing fails
+	return DefaultMaxInputTokensForTools, false
+}
+
+// estimateTokens provides a rough estimate of token count from text
+func estimateTokens(text string) int {
+	if text == "" {
+		return 0
+	}
+	// Count characters and estimate tokens
+	charCount := utf8.RuneCountInString(text)
+	return int(float64(charCount) / EstimatedCharsPerToken)
+}
+
+// readFileWithTokenLimit reads a file with token limit consideration
+func readFileWithTokenLimit(filePath string, maxTokens int) (string, bool, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", false, err
+	}
+	defer file.Close()
+
+	// Get file size
+	stat, err := file.Stat()
+	if err != nil {
+		return "", false, err
+	}
+
+	// Estimate if file is too large
+	estimatedTokens := int(float64(stat.Size()) / EstimatedCharsPerToken)
+	if estimatedTokens > maxTokens {
+		// Read only portion that fits within token limit
+		maxBytes := int(float64(maxTokens) * EstimatedCharsPerToken)
+
+		buffer := make([]byte, maxBytes)
+		n, err := file.Read(buffer)
+		if err != nil && err != io.EOF {
+			return "", false, err
+		}
+
+		// Ensure we don't cut in the middle of a UTF-8 character
+		content := string(buffer[:n])
+		if !utf8.ValidString(content) {
+			// Find the last valid UTF-8 boundary
+			for i := n - 1; i >= 0; i-- {
+				if utf8.ValidString(string(buffer[:i])) {
+					content = string(buffer[:i])
+					break
+				}
+			}
+		}
+
+		return content, true, nil // true indicates truncation
+	}
+
+	// File is small enough, read entirely
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return "", false, err
+	}
+
+	return string(content), false, nil
+}
 
 // Client represents an OpenAI API client
 type Client struct {
@@ -415,6 +537,8 @@ COMMANDS: Built-in only (cat,grep,sed,head,tail,sort,wc,tr,cut,uniq) - no extern
 PIPES: spawn("cmd1 | cmd2") for multi-stage processing
 FILES: Virtual filesystem - files consumed after read (PIPE behavior)
 
+⚠️ BINARY FILE LIMITS: For binary analysis, read ONLY small chunks (4-16 bytes max) to identify file type/magic numbers. DO NOT read entire binary files or perform extensive binary data processing.
+
 USAGE HELP: get_usages(["basic_operations"]) for fundamentals, get_usages(["debugging"]) for troubleshooting
 
 📋 STANDARD WORKFLOWS:
@@ -428,40 +552,7 @@ B) Shell Command Processing:
 C) Virtual File Operations:
    open("temp.txt", "w") → get fd → write(fd, data) → read from files → exit(0)
 
-D) File Analysis (without reading content):
-   • For binary files (.pdf, .jpg, .zip): Answer based on filename/extension
-   • For unknown files: Use file size/name clues, avoid reading binary data
-
-E) Text Content Analysis:
-   • Use read(fd) for text files
-   • Apply shell commands for processing
-
-🎯 EFFICIENCY PRINCIPLES:
-1. Minimize API calls - combine operations intelligently
-2. Choose appropriate tools for the task
-3. Use open() for virtual file management
-4. Always signal EOF with write({eof:true}) for commands
-5. Read command output with read() for LLM processing
-6. Handle errors gracefully and provide clear feedback
-
-🔄 SHELL COMMAND EXECUTION PATTERN:
-For any command needing input/output:
-1. spawn(script) → get {in_fd, out_fd}
-2. write(in_fd, input_data, {eof:true}) → send data to command
-3. read(out_fd) → get command results for processing
-4. Process results and write(1, final_output)
-5. exit(0)
-
-💾 VIRTUAL FILE PATTERN:
-For temporary file operations with PIPE-like behavior:
-1. open("filename", "w") → get fd for writing
-2. write(fd, data) → store data in virtual file
-3. open("filename", "r") → get fd for reading (only works once!)
-4. read(fd) → retrieve stored data (file becomes consumed after full read)
-5. Process and output results
-⚠️  IMPORTANT: Virtual files act like PIPES - once fully read, they cannot be read again unless recreated
-
-Remember: You are the intelligent core of llmsh, providing efficient text processing with full shell environment capabilities!`
+`
 	}
 
 	// Add special instructions for last API call
@@ -476,13 +567,132 @@ Remember: You are the intelligent core of llmsh, providing efficient text proces
 
 	// Skip FD mapping and technical details if tools are disabled
 	if disableTools {
-		// For disabled tools, just add the user instruction directly
-		userContent := instructions
-		if prompt != "" {
-			if userContent != "" {
-				userContent = prompt + "\n\n" + userContent
+		// For disabled tools, include input data directly in prompt
+		userContent := ""
+
+		// First, process input files if any
+		var actualFiles []string
+		for _, file := range inputFiles {
+			if file != "-" {
+				actualFiles = append(actualFiles, file)
+			}
+		}
+
+		// Calculate remaining token budget for input data
+		// Use quota-aware limit if available, otherwise use default
+		maxInputTokens, quotaAware := parseQuotaStatus(quotaStatus)
+
+		// Reserve tokens for prompt, instructions, system message, and response
+		basePromptTokens := estimateTokens(prompt + instructions + systemContent)
+		remainingTokens := maxInputTokens - basePromptTokens
+
+		// If quota-aware, we already reserved for output; otherwise reserve additional space
+		if !quotaAware {
+			remainingTokens -= 1000 // Reserve 1000 for response when using default limits
+		}
+
+		if remainingTokens <= 0 {
+			// Prompt itself is too large
+			userContent = "Error: Prompt and instructions are too large for tools-disabled mode."
+		} else {
+			// Read input data within token limits
+			var inputData strings.Builder
+			totalTokensUsed := 0
+
+			// Try to read from input files first
+			if len(actualFiles) > 0 {
+				inputData.WriteString("INPUT FILES:\n\n")
+
+				for i, file := range actualFiles {
+					if totalTokensUsed >= remainingTokens {
+						inputData.WriteString("\n[Remaining files truncated due to token limit]\n")
+						break
+					}
+
+					tokensForThisFile := (remainingTokens - totalTokensUsed) / (len(actualFiles) - i)
+					if tokensForThisFile < 100 {
+						tokensForThisFile = remainingTokens - totalTokensUsed
+					}
+
+					content, truncated, err := readFileWithTokenLimit(file, tokensForThisFile)
+					if err != nil {
+						inputData.WriteString(fmt.Sprintf("=== %s ===\n[Error reading file: %v]\n\n", filepath.Base(file), err))
+					} else {
+						inputData.WriteString(fmt.Sprintf("=== %s ===\n", filepath.Base(file)))
+						inputData.WriteString(content)
+						if truncated {
+							inputData.WriteString(fmt.Sprintf("\n[File truncated - showing first %d tokens estimated]\n", tokensForThisFile))
+						}
+						inputData.WriteString("\n\n")
+
+						totalTokensUsed += estimateTokens(content)
+					}
+				}
 			} else {
-				userContent = prompt
+				// Try to read from stdin if no files specified
+				stdinInfo := getStdFileInfo(0)
+				if stdinInfo["type"] == "file" {
+					// Stdin is redirected from a file
+					if filePath, ok := stdinInfo["file_path"].(string); ok {
+						content, truncated, err := readFileWithTokenLimit(filePath, remainingTokens)
+						if err != nil {
+							inputData.WriteString(fmt.Sprintf("STDIN INPUT:\n[Error reading: %v]\n\n", err))
+						} else {
+							inputData.WriteString("STDIN INPUT:\n")
+							inputData.WriteString(content)
+							if truncated {
+								inputData.WriteString(fmt.Sprintf("\n[Input truncated - showing first %d tokens estimated]", remainingTokens))
+							}
+							inputData.WriteString("\n\n")
+						}
+					}
+				} else {
+					// Stdin is a pipe or terminal - try to read directly
+					content, err := io.ReadAll(os.Stdin)
+					if err != nil {
+						inputData.WriteString(fmt.Sprintf("STDIN INPUT:\n[Error reading: %v]\n\n", err))
+					} else if len(content) > 0 {
+						contentStr := string(content)
+						estimatedTokens := estimateTokens(contentStr)
+
+						if estimatedTokens > remainingTokens {
+							// Truncate content to fit token limit
+							maxBytes := int(float64(remainingTokens) * EstimatedCharsPerToken)
+							if maxBytes < len(contentStr) {
+								contentStr = contentStr[:maxBytes]
+								// Ensure we don't cut in the middle of a UTF-8 character
+								if !utf8.ValidString(contentStr) {
+									for i := len(contentStr) - 1; i >= 0; i-- {
+										if utf8.ValidString(contentStr[:i]) {
+											contentStr = contentStr[:i]
+											break
+										}
+									}
+								}
+							}
+							inputData.WriteString("STDIN INPUT:\n")
+							inputData.WriteString(contentStr)
+							inputData.WriteString(fmt.Sprintf("\n[Input truncated - showing first %d tokens estimated]\n\n", remainingTokens))
+						} else {
+							inputData.WriteString("STDIN INPUT:\n")
+							inputData.WriteString(contentStr)
+							inputData.WriteString("\n\n")
+						}
+					} else {
+						inputData.WriteString("STDIN INPUT: [No input data available]\n\n")
+					}
+				}
+			}
+
+			// Combine prompt, instructions, and input data
+			if prompt != "" && instructions != "" {
+				userContent = fmt.Sprintf("PROMPT: %s\n\nINSTRUCTIONS: %s\n\n%s", prompt, instructions, inputData.String())
+			} else if prompt != "" {
+				userContent = fmt.Sprintf("PROMPT: %s\n\n%s", prompt, inputData.String())
+			} else if instructions != "" {
+				userContent = fmt.Sprintf("INSTRUCTIONS: %s\n\n%s", instructions, inputData.String())
+			} else {
+				userContent = inputData.String()
 			}
 		}
 
