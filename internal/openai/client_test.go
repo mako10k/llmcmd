@@ -26,17 +26,18 @@ func TestNewClient(t *testing.T) {
 
 func TestToolDefinitions(t *testing.T) {
 	tools := ToolDefinitions()
-	if len(tools) != 6 {
-		t.Errorf("Expected 6 tools, got %d", len(tools))
+	if len(tools) != 7 {
+		t.Errorf("Expected 7 tools, got %d", len(tools))
 	}
 
 	expected := map[string]bool{
-		"read":  false,
-		"write": false,
-		"open":  false,
-		"spawn": false,
-		"close": false,
-		"exit":  false,
+		"read":       false,
+		"write":      false,
+		"open":       false,
+		"spawn":      false,
+		"close":      false,
+		"get_usages": false,
+		"exit":       false,
 	}
 
 	for _, tool := range tools {
