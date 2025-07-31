@@ -24,6 +24,20 @@ type QuotaWeights struct {
 	OutputWeight      float64 `json:"output_weight"`       // Weight for output tokens
 }
 
+// ModelQuotaWeights defines quota weights for specific models
+type ModelQuotaWeights struct {
+	Model        string       `json:"model"`
+	QuotaWeights QuotaWeights `json:"weights"`
+	Description  string       `json:"description"`
+}
+
+// ModelSystemPrompt defines model-specific system prompts
+type ModelSystemPrompt struct {
+	Model       string `json:"model"`
+	SystemPrompt string `json:"system_prompt"`
+	Description string `json:"description"`
+}
+
 // QuotaUsage tracks quota consumption statistics
 type QuotaUsage struct {
 	TotalWeightedTokens float64 `json:"total_weighted_tokens"` // Total weighted token consumption
@@ -37,7 +51,8 @@ type QuotaUsage struct {
 type ConfigFile struct {
 	OpenAIAPIKey   string                  `json:"openai_api_key"`
 	OpenAIBaseURL  string                  `json:"openai_base_url"`
-	Model          string                  `json:"model"`
+	Model          string                  `json:"model"`            // Primary model for external llmcmd calls
+	InternalModel  string                  `json:"internal_model"`  // Model for internal llmcmd calls from llmsh
 	MaxTokens      int                     `json:"max_tokens"`
 	Temperature    float64                 `json:"temperature"`
 	MaxAPICalls    int                     `json:"max_api_calls"`
@@ -51,9 +66,11 @@ type ConfigFile struct {
 	DisableTools   bool                    `json:"disable_tools"`
 	PromptPresets  map[string]PromptPreset `json:"prompt_presets"`
 	// Quota system configuration
-	QuotaMaxTokens int          `json:"quota_max_tokens"` // Maximum weighted tokens allowed
-	QuotaWeights   QuotaWeights `json:"quota_weights"`    // Token type weights
-	QuotaUsage     QuotaUsage   `json:"quota_usage"`      // Current usage statistics
+	QuotaMaxTokens    int                     `json:"quota_max_tokens"`    // Maximum weighted tokens allowed
+	QuotaWeights      QuotaWeights            `json:"quota_weights"`       // Token type weights
+	QuotaUsage        QuotaUsage              `json:"quota_usage"`         // Current usage statistics
+	ModelQuotaWeights map[string]QuotaWeights `json:"model_quota_weights"` // Model-specific quota weights
+	ModelSystemPrompts map[string]string      `json:"model_system_prompts"` // Model-specific system prompts
 }
 
 // DefaultConfig returns default configuration values
@@ -61,6 +78,7 @@ func DefaultConfig() *ConfigFile {
 	return &ConfigFile{
 		OpenAIBaseURL:  "https://api.openai.com/v1",
 		Model:          "gpt-4o-mini",
+		InternalModel:  "gpt-4o-mini", // Default to same model for internal calls
 		MaxTokens:      4096,
 		Temperature:    0.1,
 		MaxAPICalls:    50,
@@ -87,6 +105,8 @@ func DefaultConfig() *ConfigFile {
 			OutputTokens:        0,
 			APICalls:            0,
 		},
+		ModelQuotaWeights:  getDefaultModelQuotaWeights(),
+		ModelSystemPrompts: getDefaultModelSystemPrompts(),
 	}
 }
 
@@ -558,10 +578,11 @@ func (c *ConfigFile) UpdateQuotaUsage(inputTokens, cachedTokens, outputTokens in
 	c.QuotaUsage.OutputTokens += outputTokens
 	c.QuotaUsage.APICalls++
 
-	// Calculate weighted usage
-	weightedInput := float64(inputTokens) * c.QuotaWeights.InputWeight
-	weightedCached := float64(cachedTokens) * c.QuotaWeights.InputCachedWeight
-	weightedOutput := float64(outputTokens) * c.QuotaWeights.OutputWeight
+	// Calculate weighted usage using effective model weights
+	effectiveWeights := c.GetEffectiveQuotaWeights()
+	weightedInput := float64(inputTokens) * effectiveWeights.InputWeight
+	weightedCached := float64(cachedTokens) * effectiveWeights.InputCachedWeight
+	weightedOutput := float64(outputTokens) * effectiveWeights.OutputWeight
 
 	c.QuotaUsage.TotalWeightedTokens += weightedInput + weightedCached + weightedOutput
 }
@@ -600,6 +621,43 @@ func (c *ConfigFile) GetQuotaStatusString() string {
 	}
 
 	return fmt.Sprintf("%s\n%s", apiStatus, tokenStatus)
+}
+
+// GetEffectiveQuotaWeights returns the quota weights for the current model
+func (c *ConfigFile) GetEffectiveQuotaWeights() QuotaWeights {
+	// Initialize ModelQuotaWeights if it's empty (for backward compatibility)
+	if c.ModelQuotaWeights == nil {
+		c.ModelQuotaWeights = getDefaultModelQuotaWeights()
+	}
+	
+	// Check if model-specific weights exist
+	if modelWeights, exists := c.ModelQuotaWeights[c.Model]; exists {
+		return modelWeights
+	}
+	
+	// Fall back to default weights
+	return c.QuotaWeights
+}
+
+// GetEffectiveSystemPrompt returns the system prompt for the current model
+func (c *ConfigFile) GetEffectiveSystemPrompt() string {
+	// If user has set a custom system prompt, use it regardless of model
+	if c.SystemPrompt != "" {
+		return c.SystemPrompt
+	}
+	
+	// Initialize ModelSystemPrompts if it's empty (for backward compatibility)
+	if c.ModelSystemPrompts == nil {
+		c.ModelSystemPrompts = getDefaultModelSystemPrompts()
+	}
+	
+	// Check if model-specific system prompt exists
+	if modelPrompt, exists := c.ModelSystemPrompts[c.Model]; exists {
+		return modelPrompt
+	}
+	
+	// Fall back to empty string (will use default built-in prompt)
+	return ""
 } // SaveConfigFile saves the current configuration to file
 func (c *ConfigFile) SaveConfigFile(path string) error {
 	// Create directory if it doesn't exist
@@ -620,4 +678,88 @@ func (c *ConfigFile) SaveConfigFile(path string) error {
 	}
 
 	return nil
+}
+
+// getDefaultModelQuotaWeights returns default model-specific quota weights
+func getDefaultModelQuotaWeights() map[string]QuotaWeights {
+	return map[string]QuotaWeights{
+		"gpt-4o-mini": {
+			InputWeight:       1.0,   // Base model: $0.150 / 1M tokens
+			InputCachedWeight: 0.25,  // 50% discount: $0.075 / 1M tokens  
+			OutputWeight:      4.0,   // $0.600 / 1M tokens
+		},
+		"gpt-4o": {
+			InputWeight:       16.67, // $2.50 / 1M tokens (16.67x of gpt-4o-mini)
+			InputCachedWeight: 8.33,  // $1.25 / 1M tokens (50% discount)
+			OutputWeight:      66.67, // $10.00 / 1M tokens (16.67x of gpt-4o-mini)
+		},
+		"o1-mini": {
+			InputWeight:       20.0,  // $3.00 / 1M tokens (20x of gpt-4o-mini)
+			InputCachedWeight: 20.0,  // No caching discount for o1 models
+			OutputWeight:      80.0,  // $12.00 / 1M tokens (20x of gpt-4o-mini)
+		},
+		"o1-preview": {
+			InputWeight:       100.0, // $15.00 / 1M tokens (100x of gpt-4o-mini)
+			InputCachedWeight: 100.0, // No caching discount for o1 models
+			OutputWeight:      400.0, // $60.00 / 1M tokens (100x of gpt-4o-mini)
+		},
+		"o3-mini": {
+			InputWeight:       20.0,  // Estimated same as o1-mini
+			InputCachedWeight: 20.0,  // No caching discount for o3 models
+			OutputWeight:      80.0,  // Estimated same as o1-mini
+		},
+	}
+}
+
+// getDefaultModelSystemPrompts returns default model-specific system prompts
+func getDefaultModelSystemPrompts() map[string]string {
+	return map[string]string{
+		"o1-mini": `You are llmcmd, the intelligent text processing core of llmsh. You excel at complex reasoning and multi-step analysis through secure tool interfaces.
+
+🏠 LLMSH INTEGRATION: llmsh is an LLM-powered shell that provides intelligent command execution. You serve as the text processing engine for complex data tasks.
+
+🧠 O1-MINI REASONING:
+- Apply step-by-step logical thinking to text processing challenges
+- Break down complex problems systematically  
+- Plan efficient multi-tool workflows
+- Handle ambiguous requirements through reasoning
+
+🔧 TOOLS: read, write, open, spawn, close, exit
+🛠️ SHELL ACCESS: Full shell environment via spawn(script)
+⚠️ SECURITY: Secure sandboxed execution environment
+
+🎯 WORKFLOW: Leverage reasoning capabilities for optimal text processing solutions`,
+
+		"o1-preview": `You are llmcmd, the advanced reasoning core of llmsh. You excel at sophisticated problem-solving and complex data analysis through intelligent tool usage.
+
+🏠 LLMSH INTEGRATION: llmsh is an LLM-powered shell environment. You provide the advanced reasoning engine for complex text processing and data manipulation tasks.
+
+🧠 O1-PREVIEW EXCELLENCE:
+- Apply sophisticated logical analysis to complex text challenges
+- Design optimal multi-stage data processing pipelines
+- Anticipate edge cases and provide robust solutions
+- Handle highly complex and ambiguous requirements
+
+🔧 TOOLS: read, write, open, spawn, close, exit  
+🛠️ SHELL ACCESS: Complete shell environment via spawn(script)
+⚠️ SECURITY: Advanced sandboxed execution with full capability
+
+🎯 APPROACH: Use superior reasoning for complex text processing workflows`,
+
+		"gpt-4o": `You are llmcmd, the capable text processing engine within llmsh. You handle complex tasks with excellent context understanding and efficient execution.
+
+🏠 LLMSH INTEGRATION: llmsh is an intelligent shell environment. You provide sophisticated text processing capabilities with strong contextual awareness.
+
+🎯 GPT-4O STRENGTHS:
+- Superior context understanding for complex requests
+- Efficient multi-file and data format handling
+- Strong pattern recognition and analysis
+- Optimized workflow execution
+
+� TOOLS: read, write, open, spawn, close, exit
+🛠️ SHELL ACCESS: Full command environment via spawn(script)  
+⚠️ SECURITY: Secure tool-based execution environment
+
+🎯 FOCUS: Deliver efficient, accurate text processing with contextual intelligence`,
+	}
 }

@@ -388,16 +388,34 @@ Writes data to file descriptors or output streams.
 }
 ```
 
-### pipe(cmd, [args], [in_fd], [out_fd], [size])
-Executes built-in commands with flexible input/output patterns.
+### spawn(script, [in_fd], [out_fd])
+Executes shell scripts with full shell syntax support.
+
+**Parameters**:
+- `script`: Shell script/command to execute. Supports full shell syntax including pipes, redirects, command substitution
+- `in_fd`: Input file descriptor (optional)
+- `out_fd`: Output file descriptor (optional)
 
 **Four Execution Patterns**:
-1. `pipe({cmd, args})` → `{in_fd, out_fd}` - Background execution with new file descriptors
-2. `pipe({cmd, args, in_fd, size})` → `{out_fd}` - Background with input from existing fd
-3. `pipe({cmd, args, out_fd})` → `{in_fd}` - Background with output to existing fd
-4. `pipe({cmd, args, in_fd, out_fd, [size]})` → `{exit_code}` - Foreground synchronous execution
+1. `spawn({script})` → `{in_fd, out_fd}` - Background execution with new file descriptors
+2. `spawn({script, in_fd})` → `{out_fd}` - Background with input from existing fd
+3. `spawn({script, out_fd})` → `{in_fd}` - Background with output to existing fd
+4. `spawn({script, in_fd, out_fd})` → `{exit_code}` - Foreground synchronous execution
 
-**Supported commands**: cat, grep, sed, head, tail, sort, wc, tr, cut, uniq, nl, rev
+**Script Examples**:
+```json
+// Simple command
+spawn({script: "ls -la"})
+
+// Pipeline processing
+spawn({script: "grep ERROR | sort | uniq -c"})
+
+// File operations with redirects
+spawn({script: "cat file1.txt file2.txt | sort > output.txt"})
+
+// Complex shell operations
+spawn({script: "find . -name '*.log' | xargs grep 'warning' | wc -l"})
+```
 
 **Response examples**:
 ```json
@@ -408,22 +426,19 @@ Executes built-in commands with flexible input/output patterns.
 {"success": true, "exit_code": 0}
 ```
 
-### tee(in_fd, out_fds)
-Copies input from one file descriptor to multiple outputs (1:many relationship).
+### exit(code)
+Terminates the program.
 
 **Parameters**:
-- `in_fd`: Source file descriptor to read from
-- `out_fds`: Array of destination file descriptors (1=stdout, 2=stderr, or other fds)
+- `code`: Exit code (0=success, 1-255=error)
 
 **Response example**:
 ```json
 {
   "success": true,
-  "bytes_copied": 1024
+  "message": "Exit requested with code 0"
 }
 ```
-
-### close(fd)
 Closes file descriptor and waits for command termination. Returns exit code for command input fds.
 
 **Parameters**:
@@ -471,16 +486,15 @@ echo "data" | llmcmd "extract lines containing 'error', sort them, and count uni
 ```
 
 The LLM will automatically:
-1. Use `pipe()` to start grep in background
-2. Use `pipe()` to start sort with grep output as input  
-3. Use `pipe()` to start uniq with sort output
+1. Use `spawn()` to start grep in background
+2. Use `spawn()` to start sort with grep output as input  
+3. Use `spawn()` to start uniq with sort output
 4. Return final count
 
 ### Dependency Management
 Automatic dependency tracking prevents deadlocks:
 
-- **pipe()** creates 1:1 dependencies (input_fd → output_fd)
-- **tee()** creates 1:many dependencies (input_fd → [output_fds])
+- **spawn()** creates 1:1 dependencies (input_fd → output_fd)
 - **close()** enforces proper order (outputs before inputs)
 
 ```json

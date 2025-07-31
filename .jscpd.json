@@ -1,0 +1,22 @@
+{
+  "threshold": 5,
+  "minLines": 5,
+  "minTokens": 50,
+  "maxLines": 10000,
+  "maxSize": "1000kb",
+  "ignore": [
+    "**/*.test.go",
+    "**/testdata/**",
+    "node_modules/**",
+    "vendor/**",
+    "**/*.pb.go",
+    "docs/**",
+    "examples/**"
+  ],
+  "blame": false,
+  "gitignore": true,
+  "reporters": ["html", "console", "json"],
+  "output": "./reports/jscpd",
+  "format": ["go", "javascript", "typescript", "markdown"],
+  "verbose": false
+}

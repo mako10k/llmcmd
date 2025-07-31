@@ -259,61 +259,49 @@ func ToolDefinitions() []Tool {
 			Type: "function",
 			Function: ToolFunction{
 				Name:        "spawn",
-				Description: "Execute ONLY built-in commands (no external tools allowed). Background execution for security. Pattern 1: spawn({cmd,args}) returns new file descriptors. Pattern 2: spawn({cmd,args,in_fd}) reads from existing fd. Pattern 3: spawn({cmd,args,out_fd}) writes to existing fd. Pattern 4: spawn({cmd,args,in_fd,out_fd}) for pipeline middle. Commands limited to built-in security sandbox.",
+				Description: "Execute shell scripts using the full shell execution environment. Supports complete shell syntax including pipes, redirects, and complex commands. Pattern 1: spawn({script}) returns new file descriptors. Pattern 2: spawn({script,in_fd}) reads from existing fd. Pattern 3: spawn({script,out_fd}) writes to existing fd. Pattern 4: spawn({script,in_fd,out_fd}) for pipeline middle.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
-						"cmd": map[string]interface{}{
+						"script": map[string]interface{}{
 							"type":        "string",
-							"description": "Built-in command name (NO external commands like pandoc, awk, etc.)",
-							"enum":        []string{"cat", "cut", "diff", "grep", "head", "nl", "patch", "rev", "sed", "sort", "tail", "tee", "tr", "uniq", "wc"},
-						},
-						"args": map[string]interface{}{
-							"type":        "array",
-							"description": "Command arguments array",
-							"items": map[string]interface{}{
-								"type": "string",
-							},
+							"description": "Shell script/command to execute. Supports full shell syntax: pipes (|), redirects (>, >>), command substitution, etc. Examples: 'grep ERROR | sort', 'ls -la *.log | wc -l', 'cat file1 file2 | sort > output'",
 						},
 						"in_fd": map[string]interface{}{
 							"type":        "integer",
-							"description": "Input file descriptor for command (optional). When provided with out_fd, runs synchronously.",
+							"description": "Input file descriptor for script (optional). When provided with out_fd, runs synchronously.",
 							"minimum":     0,
 						},
 						"out_fd": map[string]interface{}{
 							"type":        "integer",
-							"description": "Output file descriptor for command (optional). When provided with in_fd, runs synchronously.",
+							"description": "Output file descriptor for script (optional). When provided with in_fd, runs synchronously.",
 							"minimum":     1,
 						},
 					},
-					"required": []string{"cmd"},
+					"required": []string{"script"},
 				},
 			},
 		},
 		{
 			Type: "function",
 			Function: ToolFunction{
-				Name:        "tee",
-				Description: "Copy input from one fd to multiple output fds (1:many relationship). Creates dependency that requires all output fds to be closed before input fd.",
+				Name:        "open",
+				Description: "Open virtual files for read/write operations. Creates virtual file descriptors that can be used with read/write tools. Useful for temporary file operations and data storage.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
-						"in_fd": map[string]interface{}{
-							"type":        "integer",
-							"description": "Source file descriptor to read from",
-							"minimum":     0,
+						"path": map[string]interface{}{
+							"type":        "string",
+							"description": "Virtual file path to open",
 						},
-						"out_fds": map[string]interface{}{
-							"type":        "array",
-							"description": "Array of destination file descriptors (1=stdout, 2=stderr, or other fds)",
-							"items": map[string]interface{}{
-								"type":    "integer",
-								"minimum": 1,
-							},
-							"minItems": 1,
+						"mode": map[string]interface{}{
+							"type":        "string",
+							"description": "File mode: 'r' (read), 'w' (write), 'a' (append), 'r+' (read/write), 'w+' (write/read), 'a+' (append/read)",
+							"enum":        []string{"r", "w", "a", "r+", "w+", "a+"},
+							"default":     "r",
 						},
 					},
-					"required": []string{"in_fd", "out_fds"},
+					"required": []string{"path"},
 				},
 			},
 		},

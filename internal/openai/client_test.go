@@ -30,24 +30,24 @@ func TestToolDefinitions(t *testing.T) {
 		t.Errorf("Expected 6 tools, got %d", len(tools))
 	}
 
-	expectedTools := map[string]bool{
+	expected := map[string]bool{
 		"read":  false,
 		"write": false,
+		"open":  false,
 		"spawn": false,
-		"tee":   false,
 		"close": false,
 		"exit":  false,
 	}
-
+	
 	for _, tool := range tools {
-		if _, exists := expectedTools[tool.Function.Name]; exists {
-			expectedTools[tool.Function.Name] = true
+		if _, exists := expected[tool.Function.Name]; exists {
+			expected[tool.Function.Name] = true
 		} else {
 			t.Errorf("Unexpected tool: %s", tool.Function.Name)
 		}
 	}
 
-	for name, found := range expectedTools {
+	for name, found := range expected {
 		if !found {
 			t.Errorf("Missing tool: %s", name)
 		}

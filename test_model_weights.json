@@ -1,0 +1,10 @@
+{
+  "openai_api_key": "test-key",
+  "model": "gpt-4o",
+  "quota_max_tokens": 1000,
+  "quota_weights": {
+    "input_weight": 1.0,
+    "input_cached_weight": 0.25,
+    "output_weight": 4.0
+  }
+}
