@@ -15,30 +15,21 @@ func TestCreateInitialMessages_EfficiencyPrompt(t *testing.T) {
 	systemMsg := messages[0].Content
 
 	// Check for basic tool definitions
-	if !strings.Contains(systemMsg, "AVAILABLE TOOLS") {
-		t.Error("System message should contain tools available section")
+	if !strings.Contains(systemMsg, "CORE TOOLS") {
+		t.Error("System message should contain core tools section")
 	}
 
-	if !strings.Contains(systemMsg, "read(fd") {
+	if !strings.Contains(systemMsg, "read(fd)") {
 		t.Error("System message should mention read tool")
 	}
 
-	if !strings.Contains(systemMsg, "write(fd, data") {
-		t.Error("System message should mention write tool")
+	if !strings.Contains(systemMsg, "get_usages(keys)") {
+		t.Error("System message should mention get_usages tool")
 	}
 
-	if !strings.Contains(systemMsg, "spawn(script") {
-		t.Error("System message should mention spawn tool")
-	}
-
-	// Check for shell execution environment explanation
-	if !strings.Contains(systemMsg, "SHELL EXECUTION ENVIRONMENT") {
-		t.Error("System message should explain shell execution environment")
-	}
-
-	// Check for background execution explanation
-	if !strings.Contains(systemMsg, "run in background") || !strings.Contains(systemMsg, "Returns immediately") {
-		t.Error("System message should mention background execution")
+	// Check for workflow pattern
+	if !strings.Contains(systemMsg, "WORKFLOW") {
+		t.Error("System message should contain workflow section")
 	}
 
 	userMsg := messages[1].Content
@@ -53,18 +44,18 @@ func TestCreateInitialMessages_WorkflowExamples(t *testing.T) {
 	messages := CreateInitialMessages("", "test", []string{}, "", false)
 	systemMsg := messages[0].Content
 
-	// Check for spawn examples with correct pattern
-	if !strings.Contains(systemMsg, "spawn(\"grep ERROR | sort\")") {
-		t.Error("System message should contain grep workflow example")
+	// Check for usage help reference
+	if !strings.Contains(systemMsg, "get_usages") {
+		t.Error("System message should mention get_usages for help")
 	}
 
 	// Check for built-in commands
-	if !strings.Contains(systemMsg, "Built-in text processing commands") {
-		t.Error("System message should contain built-in commands info")
+	if !strings.Contains(systemMsg, "Built-in only") {
+		t.Error("System message should mention built-in commands")
 	}
 
-	// Check for shell syntax support
-	if !strings.Contains(systemMsg, "Full shell syntax") {
-		t.Error("System message should contain shell syntax info")
+	// Check for pipe behavior
+	if !strings.Contains(systemMsg, "PIPE behavior") {
+		t.Error("System message should mention PIPE behavior")
 	}
 }
