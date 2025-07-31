@@ -65,12 +65,12 @@ func (core *LLMCmdCore) ExecuteWithArgs(args []string) error {
 		return fmt.Errorf("configuration error: %w", err)
 	}
 
-	// Model selection priority: llmsh calls use main model, standalone llmcmd uses internal model
-	if !core.context.IsInternal && mergedConfig.InternalModel != "" {
-		// Standalone llmcmd: use internal model
+	// Model selection priority: user-facing calls use main model, internal calls use internal model
+	if core.context.IsInternal && mergedConfig.InternalModel != "" {
+		// Internal call (llmcmd → llmsh → llmcmd): use internal model
 		mergedConfig.Model = mergedConfig.InternalModel
 	}
-	// llmsh calls (IsInternal=true): keep original model setting
+	// User-facing calls (standalone llmcmd/llmsh): keep main model setting
 
 	// Resolve preset if specified
 	finalPrompt, err := core.resolvePrompt(config, mergedConfig)
