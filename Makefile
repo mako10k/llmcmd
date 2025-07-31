@@ -10,7 +10,9 @@ GOMOD=$(GOCMD) mod
 
 # Build parameters
 BINARY_NAME=llmcmd
+LLMSH_NAME=llmsh
 BINARY_PATH=./cmd/llmcmd
+LLMSH_PATH=./cmd/llmsh
 BUILD_DIR=build
 DIST_DIR=dist
 
@@ -20,7 +22,8 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME ?= $(shell date -u '+%Y-%m-%d %H:%M:%S UTC')
 
 # Build flags
-LDFLAGS=-ldflags "-X 'main.AppVersion=$(VERSION)' -X 'main.BuildCommit=$(COMMIT)' -X 'main.BuildTime=$(BUILD_TIME)' -w -s"
+LDFLAGS_LLMCMD=-ldflags "-X 'main.AppVersion=$(VERSION)' -X 'main.BuildCommit=$(COMMIT)' -X 'main.BuildTime=$(BUILD_TIME)' -w -s"
+LDFLAGS_LLMSH=-ldflags "-X 'github.com/mako10k/llmcmd/internal/llmsh.Version=$(VERSION)' -X 'github.com/mako10k/llmcmd/internal/llmsh.BuildCommit=$(COMMIT)' -X 'github.com/mako10k/llmcmd/internal/llmsh.BuildTime=$(BUILD_TIME)' -w -s"
 
 # Platform targets
 PLATFORMS=linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
@@ -30,18 +33,26 @@ PLATFORMS=linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 all: build
 
 ## Build commands
-build: ## Build the binary for current platform
+build: build-llmcmd build-llmsh ## Build both binaries for current platform
+
+build-llmcmd: ## Build llmcmd binary
 	@echo "Building $(BINARY_NAME) $(VERSION)..."
-	$(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME) $(BINARY_PATH)
+	$(GOBUILD) $(LDFLAGS_LLMCMD) -o $(BINARY_NAME) $(BINARY_PATH)
+
+build-llmsh: ## Build llmsh binary
+	@echo "Building $(LLMSH_NAME) $(VERSION)..."
+	$(GOBUILD) $(LDFLAGS_LLMSH) -o $(LLMSH_NAME) $(LLMSH_PATH)
 
 build-debug: ## Build with debug info
 	@echo "Building debug version..."
 	$(GOBUILD) -o $(BINARY_NAME) $(BINARY_PATH)
+	$(GOBUILD) -o $(LLMSH_NAME) $(LLMSH_PATH)
 
 clean: ## Clean build artifacts
 	@echo "Cleaning..."
 	$(GOCLEAN)
 	rm -f $(BINARY_NAME)
+	rm -f $(LLMSH_NAME)
 	rm -rf $(BUILD_DIR)
 	rm -rf $(DIST_DIR)
 
@@ -54,13 +65,18 @@ test-coverage: ## Run tests with coverage
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
 
 ## Installation commands
-install: build ## Install system-wide (requires sudo)
+install: build ## Install both binaries system-wide (requires sudo)
 	@echo "Installing $(BINARY_NAME) system-wide..."
 	sudo ./$(BINARY_NAME) --install
+	@echo "Installing $(LLMSH_NAME) to /usr/local/bin..."
+	sudo cp ./$(LLMSH_NAME) /usr/local/bin/$(LLMSH_NAME)
+	sudo chmod +x /usr/local/bin/$(LLMSH_NAME)
 
-uninstall: ## Uninstall system-wide (requires sudo)
+uninstall: ## Uninstall both binaries system-wide (requires sudo)
 	@echo "Uninstalling $(BINARY_NAME)..."
 	sudo rm -f /usr/local/bin/$(BINARY_NAME)
+	@echo "Uninstalling $(LLMSH_NAME)..."
+	sudo rm -f /usr/local/bin/$(LLMSH_NAME)
 
 ## Distribution commands
 dist: ## Build for all platforms
