@@ -684,6 +684,8 @@ func (e *Engine) ExecuteToolCall(toolCall map[string]interface{}) (string, error
 		return e.executeClose(args)
 	case "exit":
 		return e.executeExit(args)
+	case "get_usages":
+		return e.executeGetUsages(args)
 	default:
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("unknown function: %s", functionName)
@@ -1169,4 +1171,35 @@ func (e *Engine) readLines(fd int, lines int) (string, error) {
 	resultStr := result.String()
 	e.stats.BytesRead += int64(len(resultStr))
 	return resultStr, nil
+}
+
+// executeGetUsages implements the get_usages tool
+func (e *Engine) executeGetUsages(args map[string]interface{}) (string, error) {
+	keysInterface, ok := args["keys"].([]interface{})
+	if !ok {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("get_usages: missing or invalid 'keys' parameter")
+	}
+
+	keys := make([]string, len(keysInterface))
+	for i, keyInterface := range keysInterface {
+		key, ok := keyInterface.(string)
+		if !ok {
+			e.stats.ErrorCount++
+			return "", fmt.Errorf("get_usages: invalid key at index %d", i)
+		}
+		keys[i] = key
+	}
+
+	// Create a buffer to capture output
+	var outputBuf bytes.Buffer
+
+	// Call builtin GetUsages function
+	err := builtin.GetUsages(keys, nil, &outputBuf)
+	if err != nil {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("get_usages: %w", err)
+	}
+
+	return outputBuf.String(), nil
 }
