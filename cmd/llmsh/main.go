@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
-	
+
 	"github.com/mako10k/llmcmd/internal/llmsh"
 )
 
@@ -14,7 +14,7 @@ func main() {
 	var inputFile, outputFile string
 	var script string
 	var interactive bool
-	
+
 	args := os.Args[1:]
 	for i, arg := range args {
 		switch arg {
@@ -48,7 +48,7 @@ func main() {
 			}
 		}
 	}
-	
+
 	// If no script provided, check if we should read from stdin or be interactive
 	if script == "" {
 		stat, err := os.Stdin.Stat()
@@ -65,26 +65,26 @@ func main() {
 			interactive = true
 		}
 	}
-	
+
 	// Create shell configuration
 	config := &llmsh.Config{
 		InputFile:  inputFile,
 		OutputFile: outputFile,
 		Debug:      false,
 	}
-	
+
 	// Create shell instance
 	shell, err := llmsh.NewShell(config)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating shell: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	if interactive {
 		// Start interactive mode
 		fmt.Printf("Welcome to %s %s\n", llmsh.Name, llmsh.Version)
 		fmt.Println("Type 'help' for available commands, 'exit' to quit")
-		
+
 		err = shell.Interactive()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error in interactive mode: %v\n", err)

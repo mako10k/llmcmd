@@ -33,9 +33,9 @@ type ModelQuotaWeights struct {
 
 // ModelSystemPrompt defines model-specific system prompts
 type ModelSystemPrompt struct {
-	Model       string `json:"model"`
+	Model        string `json:"model"`
 	SystemPrompt string `json:"system_prompt"`
-	Description string `json:"description"`
+	Description  string `json:"description"`
 }
 
 // QuotaUsage tracks quota consumption statistics
@@ -51,8 +51,8 @@ type QuotaUsage struct {
 type ConfigFile struct {
 	OpenAIAPIKey   string                  `json:"openai_api_key"`
 	OpenAIBaseURL  string                  `json:"openai_base_url"`
-	Model          string                  `json:"model"`            // Primary model for external llmcmd calls
-	InternalModel  string                  `json:"internal_model"`  // Model for internal llmcmd calls from llmsh
+	Model          string                  `json:"model"`          // Primary model for external llmcmd calls
+	InternalModel  string                  `json:"internal_model"` // Model for internal llmcmd calls from llmsh
 	MaxTokens      int                     `json:"max_tokens"`
 	Temperature    float64                 `json:"temperature"`
 	MaxAPICalls    int                     `json:"max_api_calls"`
@@ -66,11 +66,11 @@ type ConfigFile struct {
 	DisableTools   bool                    `json:"disable_tools"`
 	PromptPresets  map[string]PromptPreset `json:"prompt_presets"`
 	// Quota system configuration
-	QuotaMaxTokens    int                     `json:"quota_max_tokens"`    // Maximum weighted tokens allowed
-	QuotaWeights      QuotaWeights            `json:"quota_weights"`       // Token type weights
-	QuotaUsage        QuotaUsage              `json:"quota_usage"`         // Current usage statistics
-	ModelQuotaWeights map[string]QuotaWeights `json:"model_quota_weights"` // Model-specific quota weights
-	ModelSystemPrompts map[string]string      `json:"model_system_prompts"` // Model-specific system prompts
+	QuotaMaxTokens     int                     `json:"quota_max_tokens"`     // Maximum weighted tokens allowed
+	QuotaWeights       QuotaWeights            `json:"quota_weights"`        // Token type weights
+	QuotaUsage         QuotaUsage              `json:"quota_usage"`          // Current usage statistics
+	ModelQuotaWeights  map[string]QuotaWeights `json:"model_quota_weights"`  // Model-specific quota weights
+	ModelSystemPrompts map[string]string       `json:"model_system_prompts"` // Model-specific system prompts
 }
 
 // DefaultConfig returns default configuration values
@@ -629,12 +629,12 @@ func (c *ConfigFile) GetEffectiveQuotaWeights() QuotaWeights {
 	if c.ModelQuotaWeights == nil {
 		c.ModelQuotaWeights = getDefaultModelQuotaWeights()
 	}
-	
+
 	// Check if model-specific weights exist
 	if modelWeights, exists := c.ModelQuotaWeights[c.Model]; exists {
 		return modelWeights
 	}
-	
+
 	// Fall back to default weights
 	return c.QuotaWeights
 }
@@ -645,17 +645,17 @@ func (c *ConfigFile) GetEffectiveSystemPrompt() string {
 	if c.SystemPrompt != "" {
 		return c.SystemPrompt
 	}
-	
+
 	// Initialize ModelSystemPrompts if it's empty (for backward compatibility)
 	if c.ModelSystemPrompts == nil {
 		c.ModelSystemPrompts = getDefaultModelSystemPrompts()
 	}
-	
+
 	// Check if model-specific system prompt exists
 	if modelPrompt, exists := c.ModelSystemPrompts[c.Model]; exists {
 		return modelPrompt
 	}
-	
+
 	// Fall back to empty string (will use default built-in prompt)
 	return ""
 } // SaveConfigFile saves the current configuration to file
@@ -684,9 +684,9 @@ func (c *ConfigFile) SaveConfigFile(path string) error {
 func getDefaultModelQuotaWeights() map[string]QuotaWeights {
 	return map[string]QuotaWeights{
 		"gpt-4o-mini": {
-			InputWeight:       1.0,   // Base model: $0.150 / 1M tokens
-			InputCachedWeight: 0.25,  // 50% discount: $0.075 / 1M tokens  
-			OutputWeight:      4.0,   // $0.600 / 1M tokens
+			InputWeight:       1.0,  // Base model: $0.150 / 1M tokens
+			InputCachedWeight: 0.25, // 50% discount: $0.075 / 1M tokens
+			OutputWeight:      4.0,  // $0.600 / 1M tokens
 		},
 		"gpt-4o": {
 			InputWeight:       16.67, // $2.50 / 1M tokens (16.67x of gpt-4o-mini)
@@ -694,9 +694,9 @@ func getDefaultModelQuotaWeights() map[string]QuotaWeights {
 			OutputWeight:      66.67, // $10.00 / 1M tokens (16.67x of gpt-4o-mini)
 		},
 		"o1-mini": {
-			InputWeight:       20.0,  // $3.00 / 1M tokens (20x of gpt-4o-mini)
-			InputCachedWeight: 20.0,  // No caching discount for o1 models
-			OutputWeight:      80.0,  // $12.00 / 1M tokens (20x of gpt-4o-mini)
+			InputWeight:       20.0, // $3.00 / 1M tokens (20x of gpt-4o-mini)
+			InputCachedWeight: 20.0, // No caching discount for o1 models
+			OutputWeight:      80.0, // $12.00 / 1M tokens (20x of gpt-4o-mini)
 		},
 		"o1-preview": {
 			InputWeight:       100.0, // $15.00 / 1M tokens (100x of gpt-4o-mini)
@@ -704,9 +704,9 @@ func getDefaultModelQuotaWeights() map[string]QuotaWeights {
 			OutputWeight:      400.0, // $60.00 / 1M tokens (100x of gpt-4o-mini)
 		},
 		"o3-mini": {
-			InputWeight:       20.0,  // Estimated same as o1-mini
-			InputCachedWeight: 20.0,  // No caching discount for o3 models
-			OutputWeight:      80.0,  // Estimated same as o1-mini
+			InputWeight:       20.0, // Estimated same as o1-mini
+			InputCachedWeight: 20.0, // No caching discount for o3 models
+			OutputWeight:      80.0, // Estimated same as o1-mini
 		},
 	}
 }

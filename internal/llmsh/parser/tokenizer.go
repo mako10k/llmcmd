@@ -11,22 +11,22 @@ type TokenType int
 
 const (
 	// Basic tokens
-	WORD TokenType = iota
-	PIPE           // |
-	REDIRECT_OUT   // >
-	REDIRECT_APPEND // >>
-	REDIRECT_IN    // <
-	REDIRECT_ERR   // 2>
-	REDIRECT_ALL   // &>
-	AND            // &&
-	OR             // ||
-	SEMICOLON      // ;
-	NEWLINE        // \n
+	WORD            TokenType = iota
+	PIPE                      // |
+	REDIRECT_OUT              // >
+	REDIRECT_APPEND           // >>
+	REDIRECT_IN               // <
+	REDIRECT_ERR              // 2>
+	REDIRECT_ALL              // &>
+	AND                       // &&
+	OR                        // ||
+	SEMICOLON                 // ;
+	NEWLINE                   // \n
 	EOF
-	
+
 	// Special tokens
-	QUOTED_STRING  // "string" or 'string'
-	BACKGROUND     // & (not implemented for security)
+	QUOTED_STRING // "string" or 'string'
+	BACKGROUND    // & (not implemented for security)
 )
 
 // Token represents a single token
@@ -49,7 +49,7 @@ func NewTokenizer(input string) *Tokenizer {
 		input:    input,
 		position: 0,
 	}
-	
+
 	// Handle shebang line specially
 	if strings.HasPrefix(input, "#!") {
 		// Skip the entire shebang line
@@ -58,13 +58,13 @@ func NewTokenizer(input string) *Tokenizer {
 		}
 		// Position at newline or EOF
 	}
-	
+
 	if t.position < len(input) {
 		t.current = rune(input[t.position])
 	} else {
 		t.current = 0
 	}
-	
+
 	return t
 }
 
@@ -113,7 +113,7 @@ func (t *Tokenizer) readWord() string {
 func (t *Tokenizer) readQuotedString(quote rune) (string, error) {
 	start := t.position
 	t.advance() // skip opening quote
-	
+
 	var result strings.Builder
 	for t.current != 0 && t.current != quote {
 		if t.current == '\\' {
@@ -141,12 +141,12 @@ func (t *Tokenizer) readQuotedString(quote rune) (string, error) {
 		}
 		t.advance()
 	}
-	
+
 	if t.current != quote {
 		return "", fmt.Errorf("unterminated quoted string at position %d", start)
 	}
 	t.advance() // skip closing quote
-	
+
 	return result.String(), nil
 }
 
@@ -164,28 +164,28 @@ func (t *Tokenizer) isSpecialChar() bool {
 func (t *Tokenizer) NextToken() (Token, error) {
 	for {
 		t.skipWhitespace()
-		
+
 		if t.current == 0 {
 			return Token{Type: EOF, Position: t.position}, nil
 		}
-		
+
 		// Skip comments (# to end of line)
 		if t.current == '#' {
 			t.skipComment()
 			continue
 		}
-		
+
 		position := t.position
-		
+
 		switch t.current {
 		case '\n':
 			t.advance()
 			return Token{Type: NEWLINE, Value: "\n", Position: position}, nil
-			
+
 		case ';':
 			t.advance()
 			return Token{Type: SEMICOLON, Value: ";", Position: position}, nil
-			
+
 		case '|':
 			if t.peek() == '|' {
 				t.advance()
@@ -194,7 +194,7 @@ func (t *Tokenizer) NextToken() (Token, error) {
 			}
 			t.advance()
 			return Token{Type: PIPE, Value: "|", Position: position}, nil
-			
+
 		case '&':
 			if t.peek() == '&' {
 				t.advance()
@@ -208,7 +208,7 @@ func (t *Tokenizer) NextToken() (Token, error) {
 			}
 			// & alone is background execution (not supported for security)
 			return Token{}, fmt.Errorf("background execution (&) not supported for security reasons at position %d", position)
-			
+
 		case '>':
 			if t.peek() == '>' {
 				t.advance()
@@ -217,11 +217,11 @@ func (t *Tokenizer) NextToken() (Token, error) {
 			}
 			t.advance()
 			return Token{Type: REDIRECT_OUT, Value: ">", Position: position}, nil
-			
+
 		case '<':
 			t.advance()
 			return Token{Type: REDIRECT_IN, Value: "<", Position: position}, nil
-			
+
 		case '2':
 			if t.peek() == '>' {
 				t.advance()
@@ -231,7 +231,7 @@ func (t *Tokenizer) NextToken() (Token, error) {
 			// Fall through to word parsing
 			word := t.readWord()
 			return Token{Type: WORD, Value: word, Position: position}, nil
-			
+
 		case '"', '\'':
 			quote := t.current
 			value, err := t.readQuotedString(quote)
@@ -239,7 +239,7 @@ func (t *Tokenizer) NextToken() (Token, error) {
 				return Token{}, err
 			}
 			return Token{Type: QUOTED_STRING, Value: value, Position: position}, nil
-			
+
 		default:
 			word := t.readWord()
 			if word == "" {
@@ -253,19 +253,19 @@ func (t *Tokenizer) NextToken() (Token, error) {
 // TokenizeAll returns all tokens from the input
 func (t *Tokenizer) TokenizeAll() ([]Token, error) {
 	var tokens []Token
-	
+
 	for {
 		token, err := t.NextToken()
 		if err != nil {
 			return nil, err
 		}
-		
+
 		tokens = append(tokens, token)
-		
+
 		if token.Type == EOF {
 			break
 		}
 	}
-	
+
 	return tokens, nil
 }

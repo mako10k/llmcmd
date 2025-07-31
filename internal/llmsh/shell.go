@@ -6,8 +6,8 @@ import (
 
 // Version information
 const (
-	Version = "0.1.0"
-	Name    = "llmsh"
+	Version     = "0.1.0"
+	Name        = "llmsh"
 	Description = "Minimal shell for LLM text processing"
 )
 
@@ -15,16 +15,16 @@ const (
 type Shell struct {
 	// Configuration
 	config *Config
-	
+
 	// Virtual filesystem for pipes and temporary files
 	vfs *VirtualFileSystem
-	
+
 	// Command executor
 	executor *Executor
-	
+
 	// Parser for shell syntax
 	parser *parser.Parser
-	
+
 	// Help system
 	help *HelpSystem
 }
@@ -34,10 +34,10 @@ type Config struct {
 	// Allowed input/output files from command line
 	InputFile  string
 	OutputFile string
-	
+
 	// Quota management (inherited from parent llmcmd)
 	QuotaManager interface{}
-	
+
 	// Debug mode
 	Debug bool
 }
@@ -47,13 +47,13 @@ func NewShell(config *Config) (*Shell, error) {
 	if config == nil {
 		config = &Config{}
 	}
-	
+
 	// Initialize components
 	vfs := NewVirtualFileSystem(config.InputFile, config.OutputFile)
 	help := NewHelpSystem()
 	parser := parser.NewParser()
 	executor := NewExecutor(vfs, help, config.QuotaManager)
-	
+
 	return &Shell{
 		config:   config,
 		vfs:      vfs,
@@ -70,7 +70,7 @@ func (s *Shell) Execute(input string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	// Execute the parsed commands
 	return s.executor.Execute(ast)
 }

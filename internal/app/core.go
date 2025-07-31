@@ -18,10 +18,10 @@ type ApplicationMetadata struct {
 
 // ExecutionContext contains runtime context for llmcmd execution
 type ExecutionContext struct {
-	IsInternal     bool                      // true if called from llmsh
-	SharedQuota    *openai.SharedQuotaManager // shared quota manager (if internal)
-	ProcessID      string                    // process ID for quota tracking
-	ParentID       string                    // parent process ID
+	IsInternal  bool                       // true if called from llmsh
+	SharedQuota *openai.SharedQuotaManager // shared quota manager (if internal)
+	ProcessID   string                     // process ID for quota tracking
+	ParentID    string                     // parent process ID
 }
 
 // LLMCmdCore represents the core llmcmd functionality
@@ -188,7 +188,7 @@ func ExecuteExternal(metadata ApplicationMetadata, args []string) error {
 		ProcessID:   "",
 		ParentID:    "",
 	}
-	
+
 	core := NewLLMCmdCore(metadata, context)
 	return core.ExecuteWithArgs(args)
 }
@@ -201,7 +201,7 @@ func ExecuteInternal(metadata ApplicationMetadata, args []string, sharedQuota *o
 		ProcessID:   processID,
 		ParentID:    parentID,
 	}
-	
+
 	core := NewLLMCmdCore(metadata, context)
 	return core.ExecuteWithArgs(args)
 }

@@ -38,11 +38,11 @@ func NewHelpSystem() *HelpSystem {
 	h := &HelpSystem{
 		commands: make(map[string]*CommandHelp),
 	}
-	
+
 	h.initializeBuiltinHelp()
 	h.initializeLLMHelp()
 	h.initializeSpecialHelp()
-	
+
 	return h
 }
 
@@ -51,7 +51,7 @@ func (h *HelpSystem) GetHelp(command string) (*CommandHelp, error) {
 	if help, exists := h.commands[command]; exists {
 		return help, nil
 	}
-	
+
 	return nil, fmt.Errorf("no help available for command: %s", command)
 }
 
@@ -71,12 +71,12 @@ func (h *HelpSystem) FormatHelp(command string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	
+
 	var result strings.Builder
-	
+
 	result.WriteString(fmt.Sprintf("NAME\n    %s - %s\n\n", help.Name, help.Description))
 	result.WriteString(fmt.Sprintf("USAGE\n    %s\n\n", help.Usage))
-	
+
 	if len(help.Options) > 0 {
 		result.WriteString("OPTIONS\n")
 		for _, opt := range help.Options {
@@ -84,7 +84,7 @@ func (h *HelpSystem) FormatHelp(command string) (string, error) {
 		}
 		result.WriteString("\n")
 	}
-	
+
 	if len(help.Examples) > 0 {
 		result.WriteString("EXAMPLES\n")
 		for _, ex := range help.Examples {
@@ -92,21 +92,21 @@ func (h *HelpSystem) FormatHelp(command string) (string, error) {
 			result.WriteString(fmt.Sprintf("        %s\n\n", ex.Description))
 		}
 	}
-	
+
 	if len(help.Related) > 0 {
 		result.WriteString(fmt.Sprintf("SEE ALSO\n    %s\n", strings.Join(help.Related, ", ")))
 	}
-	
+
 	return result.String(), nil
 }
 
 // FormatCommandList formats the list of all commands
 func (h *HelpSystem) FormatCommandList() string {
 	var result strings.Builder
-	
+
 	result.WriteString("LLMSH - Minimal Shell for LLM Text Processing\n\n")
 	result.WriteString("AVAILABLE COMMANDS\n\n")
-	
+
 	categories := map[string][]string{
 		"Built-in Text Processing": {},
 		"Basic Utilities":          {},
@@ -115,21 +115,21 @@ func (h *HelpSystem) FormatCommandList() string {
 		"Compression":              {},
 		"Special Commands":         {},
 	}
-	
+
 	builtins := []string{"cat", "grep", "sed", "head", "tail", "sort", "wc", "tr", "cut", "uniq", "nl", "tee", "rev", "diff", "patch"}
 	utilities := []string{"echo", "printf", "true", "false", "test", "[", "yes", "basename", "dirname", "seq"}
 	conversion := []string{"od", "hexdump", "base64", "uuencode", "uudecode", "fmt", "fold", "expand", "unexpand", "join", "comm", "csplit", "split"}
 	calculation := []string{"bc", "dc", "expr"}
 	compression := []string{"gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz"}
 	special := []string{"llmcmd", "llmsh", "help", "man"}
-	
+
 	categories["Built-in Text Processing"] = builtins
 	categories["Basic Utilities"] = utilities
 	categories["Data Conversion"] = conversion
 	categories["Calculation"] = calculation
 	categories["Compression"] = compression
 	categories["Special Commands"] = special
-	
+
 	for category, commands := range categories {
 		result.WriteString(fmt.Sprintf("%s:\n", category))
 		for i, cmd := range commands {
@@ -140,12 +140,12 @@ func (h *HelpSystem) FormatCommandList() string {
 		}
 		result.WriteString("\n\n")
 	}
-	
+
 	result.WriteString("For help on a specific command, use:\n")
 	result.WriteString("    help <command>\n")
 	result.WriteString("    man <command>\n")
 	result.WriteString("    <command> --help\n")
-	
+
 	return result.String()
 }
 
@@ -161,7 +161,7 @@ func (h *HelpSystem) initializeBuiltinHelp() {
 		},
 		Related: []string{"head", "tail", "less"},
 	}
-	
+
 	h.commands["grep"] = &CommandHelp{
 		Name:        "grep",
 		Usage:       "grep [options] pattern [file...]",
@@ -178,7 +178,7 @@ func (h *HelpSystem) initializeBuiltinHelp() {
 		},
 		Related: []string{"sed", "awk"},
 	}
-	
+
 	h.commands["sed"] = &CommandHelp{
 		Name:        "sed",
 		Usage:       "sed 's/pattern/replacement/flags' [file...]",
@@ -189,7 +189,7 @@ func (h *HelpSystem) initializeBuiltinHelp() {
 		},
 		Related: []string{"grep", "tr"},
 	}
-	
+
 	// Add more built-in commands...
 	h.addMoreBuiltinHelp()
 }
@@ -209,7 +209,7 @@ func (h *HelpSystem) initializeLLMHelp() {
 		},
 		Related: []string{"printf"},
 	}
-	
+
 	h.commands["test"] = &CommandHelp{
 		Name:        "test",
 		Usage:       "test expression",
@@ -226,7 +226,7 @@ func (h *HelpSystem) initializeLLMHelp() {
 		},
 		Related: []string{"["},
 	}
-	
+
 	// Add more LLM commands...
 	h.addMoreLLMHelp()
 }
@@ -243,7 +243,7 @@ func (h *HelpSystem) initializeSpecialHelp() {
 		},
 		Related: []string{"llmsh"},
 	}
-	
+
 	h.commands["llmsh"] = &CommandHelp{
 		Name:        "llmsh",
 		Usage:       "llmsh [script]",
@@ -253,7 +253,7 @@ func (h *HelpSystem) initializeSpecialHelp() {
 		},
 		Related: []string{"llmcmd"},
 	}
-	
+
 	h.commands["help"] = &CommandHelp{
 		Name:        "help",
 		Usage:       "help [command]",
@@ -264,7 +264,7 @@ func (h *HelpSystem) initializeSpecialHelp() {
 		},
 		Related: []string{"man"},
 	}
-	
+
 	h.commands["man"] = &CommandHelp{
 		Name:        "man",
 		Usage:       "man command",
@@ -291,7 +291,7 @@ func (h *HelpSystem) addMoreBuiltinHelp() {
 		},
 		Related: []string{"tail", "cat"},
 	}
-	
+
 	h.commands["tail"] = &CommandHelp{
 		Name:        "tail",
 		Usage:       "tail [-n lines] [file...]",
@@ -304,7 +304,7 @@ func (h *HelpSystem) addMoreBuiltinHelp() {
 		},
 		Related: []string{"head", "cat"},
 	}
-	
+
 	// Add more as needed...
 }
 
@@ -319,7 +319,7 @@ func (h *HelpSystem) addMoreLLMHelp() {
 		},
 		Related: []string{"echo"},
 	}
-	
+
 	h.commands["base64"] = &CommandHelp{
 		Name:        "base64",
 		Usage:       "base64 [-d] [file]",
@@ -333,6 +333,6 @@ func (h *HelpSystem) addMoreLLMHelp() {
 		},
 		Related: []string{"od", "hexdump"},
 	}
-	
+
 	// Add more as needed...
 }

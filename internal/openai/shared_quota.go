@@ -17,17 +17,17 @@ type SharedQuotaManager struct {
 
 // ProcessQuotaInfo tracks quota usage for a specific process
 type ProcessQuotaInfo struct {
-	ProcessID   string
-	ParentID    string    // Parent process ID for inheritance
-	StartTime   time.Time
-	LocalUsage  *QuotaUsage
-	IsActive    bool
+	ProcessID  string
+	ParentID   string // Parent process ID for inheritance
+	StartTime  time.Time
+	LocalUsage *QuotaUsage
+	IsActive   bool
 }
 
 // NewSharedQuotaManager creates a new shared quota manager
 func NewSharedQuotaManager(config *QuotaConfig) *SharedQuotaManager {
 	return &SharedQuotaManager{
-		config:      config,
+		config: config,
 		globalUsage: &QuotaUsage{
 			RemainingQuota: float64(config.MaxTokens),
 		},
@@ -40,7 +40,7 @@ func NewSharedQuotaManager(config *QuotaConfig) *SharedQuotaManager {
 func (sm *SharedQuotaManager) RegisterProcess(processID, parentID string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	
+
 	sm.processMap[processID] = &ProcessQuotaInfo{
 		ProcessID:  processID,
 		ParentID:   parentID,
@@ -48,7 +48,7 @@ func (sm *SharedQuotaManager) RegisterProcess(processID, parentID string) error 
 		LocalUsage: &QuotaUsage{},
 		IsActive:   true,
 	}
-	
+
 	return nil
 }
 
@@ -56,7 +56,7 @@ func (sm *SharedQuotaManager) RegisterProcess(processID, parentID string) error 
 func (sm *SharedQuotaManager) CanMakeCall(processID string) bool {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	
+
 	return sm.globalUsage.RemainingQuota > 0
 }
 
@@ -64,28 +64,28 @@ func (sm *SharedQuotaManager) CanMakeCall(processID string) bool {
 func (sm *SharedQuotaManager) ConsumeTokens(processID string, usage *QuotaUsage) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	
+
 	process, exists := sm.processMap[processID]
 	if !exists {
 		return fmt.Errorf("process %s not registered", processID)
 	}
-	
+
 	// Update local process usage
 	process.LocalUsage.InputTokens += usage.InputTokens
 	process.LocalUsage.CachedTokens += usage.CachedTokens
 	process.LocalUsage.OutputTokens += usage.OutputTokens
-	
+
 	// Calculate weighted tokens
 	weightedInputs := float64(usage.InputTokens) * sm.config.InputWeight
 	weightedCached := float64(usage.CachedTokens) * sm.config.CachedWeight
 	weightedOutputs := float64(usage.OutputTokens) * sm.config.OutputWeight
 	totalWeighted := weightedInputs + weightedCached + weightedOutputs
-	
+
 	process.LocalUsage.WeightedInputs += weightedInputs
 	process.LocalUsage.WeightedCached += weightedCached
 	process.LocalUsage.WeightedOutputs += weightedOutputs
 	process.LocalUsage.TotalWeighted += totalWeighted
-	
+
 	// Update global usage
 	sm.globalUsage.InputTokens += usage.InputTokens
 	sm.globalUsage.CachedTokens += usage.CachedTokens
@@ -95,7 +95,7 @@ func (sm *SharedQuotaManager) ConsumeTokens(processID string, usage *QuotaUsage)
 	sm.globalUsage.WeightedOutputs += weightedOutputs
 	sm.globalUsage.TotalWeighted += totalWeighted
 	sm.globalUsage.RemainingQuota = float64(sm.config.MaxTokens) - sm.globalUsage.TotalWeighted
-	
+
 	return nil
 }
 
@@ -103,7 +103,7 @@ func (sm *SharedQuotaManager) ConsumeTokens(processID string, usage *QuotaUsage)
 func (sm *SharedQuotaManager) GetGlobalUsage() *QuotaUsage {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	
+
 	// Return a copy to avoid race conditions
 	usage := *sm.globalUsage
 	return &usage
@@ -113,12 +113,12 @@ func (sm *SharedQuotaManager) GetGlobalUsage() *QuotaUsage {
 func (sm *SharedQuotaManager) GetProcessUsage(processID string) (*QuotaUsage, error) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	
+
 	process, exists := sm.processMap[processID]
 	if !exists {
 		return nil, fmt.Errorf("process %s not found", processID)
 	}
-	
+
 	// Return a copy
 	usage := *process.LocalUsage
 	return &usage, nil
@@ -128,16 +128,16 @@ func (sm *SharedQuotaManager) GetProcessUsage(processID string) (*QuotaUsage, er
 func (sm *SharedQuotaManager) UnregisterProcess(processID string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	
+
 	process, exists := sm.processMap[processID]
 	if !exists {
 		return fmt.Errorf("process %s not found", processID)
 	}
-	
+
 	process.IsActive = false
 	// Note: We keep the process in the map for historical tracking
 	// In production, you might want to implement cleanup logic
-	
+
 	return nil
 }
 
@@ -145,14 +145,14 @@ func (sm *SharedQuotaManager) UnregisterProcess(processID string) error {
 func (sm *SharedQuotaManager) GetActiveProcesses() []string {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	
+
 	var active []string
 	for id, process := range sm.processMap {
 		if process.IsActive {
 			active = append(active, id)
 		}
 	}
-	
+
 	return active
 }
 
@@ -160,6 +160,6 @@ func (sm *SharedQuotaManager) GetActiveProcesses() []string {
 func (sm *SharedQuotaManager) IsQuotaExceeded() bool {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	
+
 	return sm.globalUsage.RemainingQuota <= 0
 }

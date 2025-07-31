@@ -38,7 +38,7 @@ func TestToolDefinitions(t *testing.T) {
 		"close": false,
 		"exit":  false,
 	}
-	
+
 	for _, tool := range tools {
 		if _, exists := expected[tool.Function.Name]; exists {
 			expected[tool.Function.Name] = true
