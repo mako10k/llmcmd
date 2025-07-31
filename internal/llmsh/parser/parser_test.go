@@ -129,3 +129,44 @@ func TestQuotedStrings(t *testing.T) {
 		}
 	}
 }
+
+func TestComments(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected []TokenType
+	}{
+		{
+			input:    "echo hello # this is a comment",
+			expected: []TokenType{WORD, WORD, EOF},
+		},
+		{
+			input:    "# full line comment\necho world",
+			expected: []TokenType{NEWLINE, WORD, WORD, EOF},
+		},
+		{
+			input:    "#!/usr/bin/llmsh\necho test",
+			expected: []TokenType{NEWLINE, WORD, WORD, EOF},
+		},
+		{
+			input:    "echo before # comment\necho after",
+			expected: []TokenType{WORD, WORD, NEWLINE, WORD, WORD, EOF},
+		},
+	}
+	
+	for _, test := range tests {
+		tokenizer := NewTokenizer(test.input)
+		
+		for i, expectedType := range test.expected {
+			token, err := tokenizer.NextToken()
+			if err != nil {
+				t.Errorf("Error tokenizing '%s': %v", test.input, err)
+				break
+			}
+			
+			if token.Type != expectedType {
+				t.Errorf("Test '%s' token %d: expected %v, got %v (value: '%s')", 
+					test.input, i, expectedType, token.Type, token.Value)
+			}
+		}
+	}
+}

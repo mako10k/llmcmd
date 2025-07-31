@@ -47,6 +47,16 @@ func TestShellBasicCommands(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name:        "comment support",
+			script:      "echo hello # this is a comment",
+			expectError: false,
+		},
+		{
+			name:        "shebang script",
+			script:      "#!/usr/bin/llmsh\necho test",
+			expectError: false,
+		},
+		{
 			name:        "invalid command",
 			script:      "nonexistent_command",
 			expectError: true,

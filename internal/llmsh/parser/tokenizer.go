@@ -49,9 +49,22 @@ func NewTokenizer(input string) *Tokenizer {
 		input:    input,
 		position: 0,
 	}
-	if len(input) > 0 {
-		t.current = rune(input[0])
+	
+	// Handle shebang line specially
+	if strings.HasPrefix(input, "#!") {
+		// Skip the entire shebang line
+		for t.position < len(input) && input[t.position] != '\n' {
+			t.position++
+		}
+		// Position at newline or EOF
 	}
+	
+	if t.position < len(input) {
+		t.current = rune(input[t.position])
+	} else {
+		t.current = 0
+	}
+	
 	return t
 }
 
@@ -76,6 +89,13 @@ func (t *Tokenizer) peek() rune {
 // skipWhitespace skips spaces and tabs but not newlines
 func (t *Tokenizer) skipWhitespace() {
 	for t.current != 0 && (t.current == ' ' || t.current == '\t') {
+		t.advance()
+	}
+}
+
+// skipComment skips from # to end of line
+func (t *Tokenizer) skipComment() {
+	for t.current != 0 && t.current != '\n' {
 		t.advance()
 	}
 }
@@ -147,6 +167,12 @@ func (t *Tokenizer) NextToken() (Token, error) {
 		
 		if t.current == 0 {
 			return Token{Type: EOF, Position: t.position}, nil
+		}
+		
+		// Skip comments (# to end of line)
+		if t.current == '#' {
+			t.skipComment()
+			continue
 		}
 		
 		position := t.position

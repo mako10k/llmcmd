@@ -1,0 +1,5 @@
+#!/usr/bin/llmsh
+# This is a comment line
+echo "Hello from llmsh script!" # inline comment
+# Another comment
+echo "Testing comments"
