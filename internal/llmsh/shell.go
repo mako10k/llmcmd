@@ -5,8 +5,8 @@ import (
 )
 
 // Version information
-const (
-	Version     = "0.1.0"
+var (
+	Version     = "3.1.1" // Will be overridden by build-time ldflags
 	Name        = "llmsh"
 	Description = "Minimal shell for LLM text processing"
 )

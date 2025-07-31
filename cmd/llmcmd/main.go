@@ -8,9 +8,9 @@ import (
 )
 
 // Application metadata
-const (
+var (
 	AppName    = "llmcmd"
-	AppVersion = "3.1.0"
+	AppVersion = "3.1.1" // Will be overridden by build-time ldflags
 )
 
 func main() {
