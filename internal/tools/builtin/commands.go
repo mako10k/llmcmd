@@ -4,11 +4,63 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 )
+
+// VFS interface for file operations
+type VFS interface {
+	OpenFileWithContext(name string, flag int, perm os.FileMode, isInternal bool) (io.ReadWriteCloser, error)
+}
+
+var currentVFS VFS
+
+// SetVFS sets the VFS instance for builtin commands
+func SetVFS(vfs VFS) {
+	currentVFS = vfs
+}
+
+// openFileForReading opens a file for reading, using VFS if available
+func openFileForReading(filename string) (io.ReadCloser, error) {
+	if currentVFS != nil {
+		return currentVFS.OpenFileWithContext(filename, os.O_RDONLY, 0644, true)
+	}
+	return os.Open(filename)
+}
+
+// processInput processes either stdin or files based on args
+func processInput(args []string, stdin io.Reader, processor func(io.Reader) error) error {
+	// Remove flags from args to get file arguments
+	var files []string
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			files = append(files, arg)
+		}
+	}
+	
+	// If no files specified, process stdin
+	if len(files) == 0 {
+		return processor(stdin)
+	}
+	
+	// Process each file
+	for _, filename := range files {
+		file, err := openFileForReading(filename)
+		if err != nil {
+			return fmt.Errorf("cannot open %s: %v", filename, err)
+		}
+		err = processor(file)
+		file.Close()
+		if err != nil {
+			return err
+		}
+	}
+	
+	return nil
+}
 
 // CommandFunc represents a built-in command function
 type CommandFunc func(args []string, stdin io.Reader, stdout io.Writer) error
@@ -55,9 +107,10 @@ func appendCount(output []string, count int, condition bool) []string {
 
 // Cat copies input to output (like Unix cat)
 func Cat(args []string, stdin io.Reader, stdout io.Writer) error {
-	// cat simply copies stdin to stdout
-	_, err := io.Copy(stdout, stdin)
-	return err
+	return processInput(args, stdin, func(input io.Reader) error {
+		_, err := io.Copy(stdout, input)
+		return err
+	})
 }
 
 // Grep searches for patterns in text (basic regex support)
@@ -66,13 +119,13 @@ func Grep(args []string, stdin io.Reader, stdout io.Writer) error {
 		return fmt.Errorf("grep: missing pattern")
 	}
 
-	pattern := args[0]
+	// Parse flags and pattern
 	invertMatch := false
 	ignoreCase := false
 	lineNumber := false
+	var pattern string
+	var files []string
 
-	// Parse flags (simplified)
-	finalPattern := pattern
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "-") {
 			switch arg {
@@ -83,35 +136,61 @@ func Grep(args []string, stdin io.Reader, stdout io.Writer) error {
 			case "-n":
 				lineNumber = true
 			}
+		} else if pattern == "" {
+			pattern = arg
 		} else {
-			finalPattern = arg
-			break
+			files = append(files, arg)
 		}
 	}
 
+	if pattern == "" {
+		return fmt.Errorf("grep: missing pattern")
+	}
+
 	// Compile regex using common function
-	regex, err := compileRegex(finalPattern, ignoreCase)
+	regex, err := compileRegex(pattern, ignoreCase)
 	if err != nil {
 		return err
 	}
 
-	scanner := bufio.NewScanner(stdin)
-	lineNum := 1
-	for scanner.Scan() {
-		line := scanner.Text()
-		matches := regex.MatchString(line)
+	// Process function for each input
+	processFunc := func(input io.Reader) error {
+		scanner := bufio.NewScanner(input)
+		lineNum := 1
+		for scanner.Scan() {
+			line := scanner.Text()
+			matches := regex.MatchString(line)
 
-		if matches != invertMatch { // XOR logic
-			if lineNumber {
-				fmt.Fprintf(stdout, "%d:%s\n", lineNum, line)
-			} else {
-				fmt.Fprintln(stdout, line)
+			if matches != invertMatch { // XOR logic
+				if lineNumber {
+					fmt.Fprintf(stdout, "%d:%s\n", lineNum, line)
+				} else {
+					fmt.Fprintln(stdout, line)
+				}
 			}
+			lineNum++
 		}
-		lineNum++
+		return scanner.Err()
 	}
 
-	return scanner.Err()
+	// Use files if specified, otherwise stdin
+	if len(files) == 0 {
+		return processFunc(stdin)
+	}
+
+	for _, filename := range files {
+		file, err := openFileForReading(filename)
+		if err != nil {
+			return fmt.Errorf("cannot open %s: %v", filename, err)
+		}
+		err = processFunc(file)
+		file.Close()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Sed performs basic text substitution (s/pattern/replacement/flags)
@@ -147,67 +226,151 @@ func Sed(args []string, stdin io.Reader, stdout io.Writer) error {
 		return err
 	}
 
-	scanner := bufio.NewScanner(stdin)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if globalReplace {
-			line = regex.ReplaceAllString(line, replacement)
-		} else {
-			line = regex.ReplaceAllString(line, replacement)
+	// Process function for each input
+	processFunc := func(input io.Reader) error {
+		scanner := bufio.NewScanner(input)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if globalReplace {
+				line = regex.ReplaceAllString(line, replacement)
+			} else {
+				line = regex.ReplaceAllString(line, replacement) // Note: Go regexp doesn't have non-global replace, so this is actually global
+			}
+			fmt.Fprintln(stdout, line)
 		}
-		fmt.Fprintln(stdout, line)
+		return scanner.Err()
 	}
 
-	return scanner.Err()
+	// Get file arguments (skip the expression)
+	var files []string
+	for i := 1; i < len(args); i++ {
+		files = append(files, args[i])
+	}
+
+	// Use files if specified, otherwise stdin
+	if len(files) == 0 {
+		return processFunc(stdin)
+	}
+
+	for _, filename := range files {
+		file, err := openFileForReading(filename)
+		if err != nil {
+			return fmt.Errorf("cannot open %s: %v", filename, err)
+		}
+		err = processFunc(file)
+		file.Close()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Head outputs the first n lines (default 10)
 func Head(args []string, stdin io.Reader, stdout io.Writer) error {
 	n := 10
-	if len(args) > 0 && strings.HasPrefix(args[0], "-") {
-		if val, err := strconv.Atoi(args[0][1:]); err == nil {
-			n = val
+	var files []string
+	
+	// Parse arguments
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			if val, err := strconv.Atoi(arg[1:]); err == nil {
+				n = val
+			}
+		} else {
+			files = append(files, arg)
 		}
 	}
 
-	scanner := bufio.NewScanner(stdin)
-	count := 0
-	for scanner.Scan() && count < n {
-		fmt.Fprintln(stdout, scanner.Text())
-		count++
+	// Process function for each input
+	processFunc := func(input io.Reader) error {
+		scanner := bufio.NewScanner(input)
+		count := 0
+		for scanner.Scan() && count < n {
+			fmt.Fprintln(stdout, scanner.Text())
+			count++
+		}
+		return scanner.Err()
 	}
 
-	return scanner.Err()
+	// Use files if specified, otherwise stdin
+	if len(files) == 0 {
+		return processFunc(stdin)
+	}
+
+	for _, filename := range files {
+		file, err := openFileForReading(filename)
+		if err != nil {
+			return fmt.Errorf("cannot open %s: %v", filename, err)
+		}
+		err = processFunc(file)
+		file.Close()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Tail outputs the last n lines (default 10)
 func Tail(args []string, stdin io.Reader, stdout io.Writer) error {
 	n := 10
-	if len(args) > 0 && strings.HasPrefix(args[0], "-") {
-		if val, err := strconv.Atoi(args[0][1:]); err == nil {
-			n = val
+	var files []string
+	
+	// Parse arguments
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			if val, err := strconv.Atoi(arg[1:]); err == nil {
+				n = val
+			}
+		} else {
+			files = append(files, arg)
 		}
 	}
 
-	// Read all lines into memory
-	var lines []string
-	scanner := bufio.NewScanner(stdin)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+	// Process function for each input
+	processFunc := func(input io.Reader) error {
+		// Read all lines into memory
+		var lines []string
+		scanner := bufio.NewScanner(input)
+		for scanner.Scan() {
+			lines = append(lines, scanner.Text())
+		}
+
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+
+		// Output last n lines
+		start := len(lines) - n
+		if start < 0 {
+			start = 0
+		}
+
+		for i := start; i < len(lines); i++ {
+			fmt.Fprintln(stdout, lines[i])
+		}
+
+		return nil
 	}
 
-	if err := scanner.Err(); err != nil {
-		return err
+	// Use files if specified, otherwise stdin
+	if len(files) == 0 {
+		return processFunc(stdin)
 	}
 
-	// Output last n lines
-	start := len(lines) - n
-	if start < 0 {
-		start = 0
-	}
-
-	for i := start; i < len(lines); i++ {
-		fmt.Fprintln(stdout, lines[i])
+	for _, filename := range files {
+		file, err := openFileForReading(filename)
+		if err != nil {
+			return fmt.Errorf("cannot open %s: %v", filename, err)
+		}
+		err = processFunc(file)
+		file.Close()
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -295,74 +458,101 @@ func Sort(args []string, stdin io.Reader, stdout io.Writer) error {
 
 // Wc counts lines, words, and characters
 func Wc(args []string, stdin io.Reader, stdout io.Writer) error {
-	lines := 0
-	words := 0
-	chars := 0
-	bytes := 0
-
 	showLines := true
 	showWords := true
 	showChars := true
 	showBytes := false
+	var files []string
 
-	// Parse flags
+	// Parse flags and files
 	flagCount := 0
 	for _, arg := range args {
-		switch arg {
-		case "-l":
-			if flagCount == 0 {
-				showWords, showChars = false, false
+		if strings.HasPrefix(arg, "-") {
+			switch arg {
+			case "-l":
+				if flagCount == 0 {
+					showWords, showChars = false, false
+				}
+				showLines = true
+				flagCount++
+			case "-w":
+				if flagCount == 0 {
+					showLines, showChars = false, false
+				}
+				showWords = true
+				flagCount++
+			case "-c":
+				if flagCount == 0 {
+					showLines, showWords = false, false
+				}
+				showChars = true
+				flagCount++
+			case "-m":
+				if flagCount == 0 {
+					showLines, showWords = false, false
+				}
+				showBytes = true
+				flagCount++
 			}
-			showLines = true
-			flagCount++
-		case "-w":
-			if flagCount == 0 {
-				showLines, showChars = false, false
-			}
-			showWords = true
-			flagCount++
-		case "-c":
-			if flagCount == 0 {
-				showLines, showWords = false, false
-			}
-			showChars = true
-			flagCount++
-		case "-m":
-			if flagCount == 0 {
-				showLines, showWords = false, false
-			}
-			showBytes = true
-			flagCount++
+		} else {
+			files = append(files, arg)
 		}
 	}
 
-	scanner := bufio.NewScanner(stdin)
-	for scanner.Scan() {
-		line := scanner.Text()
-		lines++
-		chars += len([]rune(line)) + 1 // +1 for newline
-		bytes += len(line) + 1
+	// Count function for each input
+	processFunc := func(input io.Reader) error {
+		lines := 0
+		words := 0
+		chars := 0
+		bytes := 0
 
-		// Count words
-		wordScanner := bufio.NewScanner(strings.NewReader(line))
-		wordScanner.Split(bufio.ScanWords)
-		for wordScanner.Scan() {
-			words++
+		scanner := bufio.NewScanner(input)
+		for scanner.Scan() {
+			line := scanner.Text()
+			lines++
+			chars += len([]rune(line)) + 1 // +1 for newline
+			bytes += len(line) + 1
+
+			// Count words
+			wordScanner := bufio.NewScanner(strings.NewReader(line))
+			wordScanner.Split(bufio.ScanWords)
+			for wordScanner.Scan() {
+				words++
+			}
+		}
+
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+
+		// Output counts
+		var output []string
+		output = appendCount(output, lines, showLines)
+		output = appendCount(output, words, showWords)
+		output = appendCount(output, bytes, showBytes)
+		output = appendCount(output, chars, showChars && !showBytes)
+
+		fmt.Fprintln(stdout, strings.Join(output, " "))
+		return nil
+	}
+
+	// Use files if specified, otherwise stdin
+	if len(files) == 0 {
+		return processFunc(stdin)
+	}
+
+	for _, filename := range files {
+		file, err := openFileForReading(filename)
+		if err != nil {
+			return fmt.Errorf("cannot open %s: %v", filename, err)
+		}
+		err = processFunc(file)
+		file.Close()
+		if err != nil {
+			return err
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-
-	// Output counts
-	var output []string
-	output = appendCount(output, lines, showLines)
-	output = appendCount(output, words, showWords)
-	output = appendCount(output, bytes, showBytes)
-	output = appendCount(output, chars, showChars && !showBytes)
-
-	fmt.Fprintln(stdout, strings.Join(output, " "))
 	return nil
 }
 
