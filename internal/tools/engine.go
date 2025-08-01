@@ -27,6 +27,7 @@ type ShellExecutor interface {
 // VirtualFileSystem interface for managing virtual files
 type VirtualFileSystem interface {
 	OpenFile(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error)
+	OpenFileWithContext(name string, flag int, perm os.FileMode, isInternal bool) (io.ReadWriteCloser, error)
 	CreateTemp(pattern string) (io.ReadWriteCloser, string, error)
 	RemoveFile(name string) error
 	ListFiles() []string
@@ -218,6 +219,12 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 	}
 
 	return engine, nil
+}
+
+// SetVFS sets the virtual file system for the engine and builtin commands
+func (e *Engine) SetVFS(vfs VirtualFileSystem) {
+	e.virtualFS = vfs
+	builtin.SetVFS(vfs)
 }
 
 // addFdDependency adds a new file descriptor dependency relationship
