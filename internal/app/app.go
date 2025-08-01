@@ -771,6 +771,12 @@ func (vfs *SimpleVirtualFS) OpenFile(name string, flag int, perm os.FileMode) (i
 	return wrapper, nil
 }
 
+// OpenFileWithContext opens or creates a virtual file with context support for builtin commands
+func (vfs *SimpleVirtualFS) OpenFileWithContext(name string, flag int, perm os.FileMode, isInternal bool) (io.ReadWriteCloser, error) {
+	// For internal builtin commands, use the same logic as OpenFile
+	return vfs.OpenFile(name, flag, perm)
+}
+
 // CreateTemp creates a temporary virtual file
 func (vfs *SimpleVirtualFS) CreateTemp(pattern string) (io.ReadWriteCloser, string, error) {
 	vfs.mutex.Lock()
