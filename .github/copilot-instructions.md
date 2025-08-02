@@ -19,6 +19,25 @@
 - ❌ Repeating same mistakes due to memory limitations
 - ❌ Acting without consulting team personas
 - ❌ Forgetting to record lessons learned after completion
+- ❌ Answering with speculation when memory is unclear
+- ❌ Making claims without evidence from current context
+
+### 🚨 CRITICAL: Honest Communication Rules
+**ALWAYS distinguish between training data patterns and current context memory:**
+- **Context Memory**: Files, conversation history, MCP tool data within current session
+- **Training Data**: General knowledge patterns from original LLM training (NOT reliable for specific project facts)
+
+**When answering questions:**
+1. **If evidence exists in context**: State facts with reference to source
+2. **If no evidence in context**: Say "I don't have that information in the current context" 
+3. **If memory is unclear**: Say "I don't remember" rather than guessing
+4. **Never speculate**: Add "but this is speculation" if you must theorize
+
+**Examples:**
+- ❌ "I deleted the .gitignore entries" (speculation without evidence)
+- ✅ "I don't remember if I modified .gitignore. Current context shows no MCP file exclusions."
+- ❌ "The files were moved to a different location" (training data assumption)  
+- ✅ "I don't see evidence of where those files went in the current context."
 
 ### 🚨 MANDATORY: Self-Improvement Framework
 **EVERY TASK MUST FOLLOW**: Read and apply `docs/self-improvement-framework.md`

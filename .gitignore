@@ -73,3 +73,9 @@ llmcmd-v*
 llmsh-test
 *-debug
 *-test
+
+# MCP tool data files
+*.db
+*.db-shm
+*.db-wal
+data/memory.db*
