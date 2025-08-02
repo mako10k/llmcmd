@@ -1,5 +1,47 @@
 # llmcmd - LLM Command Line Tool
 
+## QA大原則（品質保証基本方針）
+
+### 四大原則
+1. **Silent Fallback 実装の厳禁**
+   - エラー発生時の無通知処理継続を禁止
+   - Fail-First原則の徹底（errcheck、staticcheckで検出）
+
+2. **同等機能の重複実装の厳禁**
+   - 42コマンド重複問題の根本解決
+   - jscpd、gocriticで検出、共通化・interface化推進
+
+3. **ファイル長大化の厳禁**
+   - 1ファイル1000行未満、1関数50行未満（推奨）
+   - 適切なモジュール分割・責任分界の実施
+
+4. **複雑度の増大の厳禁**
+   - 循環的複雑度10未満（gocycloで測定）
+   - 関数分割・Early Returnパターンで簡素化
+
+### 自動チェック体制
+- **pre-commitフック**: errcheck、jscpd、gocyclo、file-size-check
+- **CIパイプライン**: GitHub Actions連携、PR時必須チェック
+- **静的解析ツール**: gosec、golangci-lint、staticcheck
+
+### 段階的導入
+- Sprint 1: ツール導入・現状把握
+- Sprint 2: 重大違反修正
+- Sprint 3以降: 基準厳格化・監査自動化
+
+## Project Team (MCP LLM Generator Contexts)
+
+### Core Team Context IDs
+- **PersonalityManager**: `context-mdtvqb20-opmlhg` - 人格管理マネージャー（チーム構成・役割設計）
+- **ProductOwner**: `context-mdtvs82o-1ekq4d` - 製品責任者（ビジョン策定・要件優先度決定）
+- **ScrumMaster**: `context-mdtvso8o-bljl6h` - プロセス促進者（障害除去・チーム生産性向上）
+- **TechnicalLead**: `context-mdtvu1aq-e07dnk` - 技術責任者（アーキテクチャ設計・技術意思決定）
+
+### Quality & Process Team Context IDs
+- **QAEngineer**: `context-mdtvvnz6-exfq23` - 品質保証エンジニア（テスト戦略・品質基準・自動化推進）
+- **GitWorkflowSpecialist**: `context-mdtvvzyi-95b60o` - Git管理スペシャリスト（ブランチ戦略・リリース管理）
+- **PragmaticAdvisor**: `context-mdtvwj2v-h5ld7v` - 現実的調整役（率直な意見・実装可能性・リスク評価）
+
 ## Project Overview
 
 `llmcmd` is a command-line tool that enables Large Language Models (LLMs) to execute tasks using the OpenAI ChatCompletion API. The tool provides LLMs with secure, built-in functions for file operations and text processing without external command execution.
