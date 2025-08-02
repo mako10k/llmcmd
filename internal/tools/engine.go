@@ -27,7 +27,6 @@ type ShellExecutor interface {
 // VirtualFileSystem interface for managing virtual files
 type VirtualFileSystem interface {
 	OpenFile(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error)
-	OpenFileWithContext(name string, flag int, perm os.FileMode, isInternal bool) (io.ReadWriteCloser, error)
 	CreateTemp(pattern string) (io.ReadWriteCloser, string, error)
 	RemoveFile(name string) error
 	ListFiles() []string
@@ -219,12 +218,6 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 	}
 
 	return engine, nil
-}
-
-// SetVFS sets the virtual file system for the engine and builtin commands
-func (e *Engine) SetVFS(vfs VirtualFileSystem) {
-	e.virtualFS = vfs
-	builtin.SetVFS(vfs)
 }
 
 // addFdDependency adds a new file descriptor dependency relationship
@@ -909,10 +902,16 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 
 	// Extract optional parameters
 	var inFd *int
+	var outFd *int
 
 	if inFdFloat, hasInFd := args["in_fd"].(float64); hasInFd {
 		inFdInt := int(inFdFloat)
 		inFd = &inFdInt
+	}
+
+	if outFdFloat, hasOutFd := args["out_fd"].(float64); hasOutFd {
+		outFdInt := int(outFdFloat)
+		outFd = &outFdInt
 	}
 
 	// Use shell executor if available
@@ -921,64 +920,39 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("shell executor not available")
 	}
 
-	// Create temporary files in VFS for capturing command output
-	var outputFile io.ReadWriteCloser
-	var err error
-
-	// Create output file in VFS to capture command result
-	if e.virtualFS != nil {
-		outputFileName := fmt.Sprintf("<spawn_output_%d>", e.nextFd)
-		outputFile, _, err = e.virtualFS.CreateTemp(outputFileName)
-		if err != nil {
-			e.stats.ErrorCount++
-			return "", fmt.Errorf("failed to create output file in VFS: %w", err)
-		}
-	}
-
-	// Set up input if specified
-	var stdinReader io.Reader = os.Stdin
-	if inFd != nil {
-		if *inFd >= 0 && *inFd < len(e.fileDescriptors) && e.fileDescriptors[*inFd] != nil {
-			if reader, ok := e.fileDescriptors[*inFd].(io.Reader); ok {
-				stdinReader = reader
-			}
-		}
-	}
-
-	// Execute script with proper IO redirection
-	var outputWriter io.Writer = os.Stdout
-	if outputFile != nil {
-		outputWriter = outputFile
-	}
-
-	err = e.shellExecutor.ExecuteWithIO(script, stdinReader, outputWriter, os.Stderr)
+	// Execute script using shell executor
+	err := e.shellExecutor.Execute(script)
 	if err != nil {
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("failed to execute script '%s': %w", script, err)
 	}
 
-	// Register the output file in Engine's FD system if we created one
+	// Handle input/output file descriptors if specified
 	result := map[string]interface{}{
 		"success": true,
 	}
 
-	if outputFile != nil {
-		// Reset file position for reading
-		if seeker, ok := outputFile.(io.Seeker); ok {
-			seeker.Seek(0, io.SeekStart)
-		}
+	// For now, just return success since shell executor doesn't return output
+	// In the future, we can use ExecuteWithIO for more complex scenarios
 
-		// Register in FD system
-		outFd := e.nextFd
+	// For compatibility, assign new fds if requested
+	if inFd == nil && outFd == nil {
+		// Create pipe-like behavior for background compatibility
+		inNewFd := e.nextFd
 		e.nextFd++
-		
-		// Extend fileDescriptors slice if needed
-		for len(e.fileDescriptors) <= outFd {
-			e.fileDescriptors = append(e.fileDescriptors, nil)
-		}
-		e.fileDescriptors[outFd] = outputFile
+		outNewFd := e.nextFd
+		e.nextFd++
 
-		result["out_fd"] = outFd
+		result["in_fd"] = inNewFd
+		result["out_fd"] = outNewFd
+	} else if inFd != nil && outFd == nil {
+		outNewFd := e.nextFd
+		e.nextFd++
+		result["out_fd"] = outNewFd
+	} else if inFd == nil && outFd != nil {
+		inNewFd := e.nextFd
+		e.nextFd++
+		result["in_fd"] = inNewFd
 	}
 
 	return e.spawnSuccess(result)

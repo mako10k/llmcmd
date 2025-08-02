@@ -30,9 +30,6 @@ type App struct {
 	// Shared quota support
 	sharedQuota *openai.SharedQuotaManager
 	processID   string
-	// VFS and proxy support for 3-layer architecture
-	enhancedVFS   *EnhancedVFS
-	fsProxyManager *FSProxyManager
 }
 
 // New creates a new application instance
@@ -70,6 +67,12 @@ func (a *App) Run() error {
 	// Apply environment variable overrides
 	cli.LoadEnvironmentConfig(a.fileConfig)
 
+	// Initialize audit logging if enabled
+	if a.fileConfig.AuditLogEnabled {
+		log.Printf("Note: Audit logging is configured but implementation moved to WIP branch")
+		log.Printf("See feature/priority5-security-audit for complete implementation")
+	}
+
 	// Validate essential configuration
 	if err := a.validateConfig(); err != nil {
 		return fmt.Errorf("configuration validation failed: %w", err)
@@ -93,9 +96,6 @@ func (a *App) Run() error {
 	if err := a.executeWithError(a.initializeToolEngine, "initialize tool engine"); err != nil {
 		return err
 	}
-
-	// Initialize FS proxy for 3-layer architecture integration
-	a.initializeFSProxy()
 
 	// Execute LLM interaction
 	if err := a.executeWithError(a.executeTask, "execute task"); err != nil {
@@ -148,20 +148,10 @@ func (a *App) initializeOpenAI() error {
 // initializeToolEngine initializes the tool execution engine
 func (a *App) initializeToolEngine() error {
 	shellExecutor := &SimpleShellExecutor{}
-	
-	// Use EnhancedVFS instead of SimpleVirtualFS for advanced features
-	a.enhancedVFS = NewEnhancedVFS()
-	
-	// Allow real files for input/output files if specified
-	for _, inputFile := range a.config.InputFiles {
-		a.enhancedVFS.AllowRealFile(inputFile)
-	}
-	if a.config.OutputFile != "" {
-		a.enhancedVFS.AllowRealFile(a.config.OutputFile)
-	}
+	virtualFS := NewSimpleVirtualFS()
 
 	// Configure shell executor with VFS for redirect support
-	shellExecutor.SetVFS(a.enhancedVFS)
+	shellExecutor.SetVFS(virtualFS)
 
 	config := tools.EngineConfig{
 		InputFiles:    a.config.InputFiles,
@@ -170,7 +160,7 @@ func (a *App) initializeToolEngine() error {
 		BufferSize:    a.fileConfig.ReadBufferSize,
 		NoStdin:       a.config.NoStdin,
 		ShellExecutor: shellExecutor,
-		VirtualFS:     a.enhancedVFS,
+		VirtualFS:     virtualFS,
 	}
 
 	var err error
@@ -185,21 +175,6 @@ func (a *App) initializeToolEngine() error {
 	}
 
 	return nil
-}
-
-// initializeFSProxy initializes the file system proxy for VFS-restricted execution
-func (a *App) initializeFSProxy() {
-	// FSProxyManager will be initialized on-demand when VFS-restricted
-	// child processes are spawned. This provides the foundation for
-	// controlled file system access in sub-processes.
-	
-	// For now, this is a placeholder that establishes the architecture
-	// integration point. Actual pipe creation and proxy lifecycle
-	// management will be handled during spawn operations.
-	
-	if a.config.Verbose {
-		log.Printf("FS Proxy integration prepared for VFS-restricted execution")
-	}
 }
 
 // executeTask executes the main LLM task
@@ -626,12 +601,14 @@ func max(a, b int) int {
 
 // SimpleShellExecutor implements tools.ShellExecutor interface
 type SimpleShellExecutor struct {
-	vfs tools.VirtualFileSystem // Use interface instead of concrete type
+	vfs *SimpleVirtualFS
 }
 
 // SetVFS sets the virtual file system for redirect support
 func (s *SimpleShellExecutor) SetVFS(vfs tools.VirtualFileSystem) {
-	s.vfs = vfs
+	if vfsImpl, ok := vfs.(*SimpleVirtualFS); ok {
+		s.vfs = vfsImpl
+	}
 }
 
 // Execute executes a shell command with VFS redirect support
@@ -798,12 +775,6 @@ func (vfs *SimpleVirtualFS) OpenFile(name string, flag int, perm os.FileMode) (i
 	}
 
 	return wrapper, nil
-}
-
-// OpenFileWithContext opens or creates a virtual file with context support for builtin commands
-func (vfs *SimpleVirtualFS) OpenFileWithContext(name string, flag int, perm os.FileMode, isInternal bool) (io.ReadWriteCloser, error) {
-	// For internal builtin commands, use the same logic as OpenFile
-	return vfs.OpenFile(name, flag, perm)
 }
 
 // CreateTemp creates a temporary virtual file

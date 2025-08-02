@@ -45,11 +45,6 @@ Thumbs.db
 # Configuration files with secrets
 .llmcmdrc
 *.env
-debug_config.yaml
-*_config.json
-no_tools_config.json
-very_low_quota_config.json
-quota_test_config.json
 
 # Log files
 *.log

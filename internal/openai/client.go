@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/mako10k/llmcmd/internal/security"
 )
 
 // Token estimation constants
@@ -161,24 +163,6 @@ type ClientConfig struct {
 
 // NewClient creates a new OpenAI API client
 func NewClient(config ClientConfig) *Client {
-	// Fail-First: Validate critical configuration before creating client
-	if config.APIKey == "" {
-		fmt.Fprintf(os.Stderr, "[FATAL] OpenAI API key is required - set OPENAI_API_KEY environment variable\n")
-		os.Exit(1)
-	}
-	
-	// API key format validation (OpenAI keys start with "sk-")
-	if !strings.HasPrefix(config.APIKey, "sk-") {
-		fmt.Fprintf(os.Stderr, "[FATAL] Invalid API key format - OpenAI API keys must start with 'sk-'\n")
-		os.Exit(1)
-	}
-	
-	// API key length validation (typical OpenAI keys are 51+ characters)
-	if len(config.APIKey) < 20 {
-		fmt.Fprintf(os.Stderr, "[FATAL] API key appears too short - ensure complete key is provided\n")
-		os.Exit(1)
-	}
-	
 	if config.BaseURL == "" {
 		config.BaseURL = "https://api.openai.com/v1"
 	}
@@ -220,55 +204,53 @@ func NewClientWithSharedQuota(config ClientConfig, sharedQuota *SharedQuotaManag
 	return client
 }
 
-// errorf is a helper to add error stats and return a formatted error with comprehensive logging
+// errorf is a helper to add error stats and return a formatted error
 func (c *Client) errorf(format string, args ...interface{}) (*ChatCompletionResponse, error) {
 	c.stats.AddError()
-	
-	// Comprehensive error logging with context
-	errorMsg := fmt.Sprintf(format, args...)
-	timestamp := time.Now().Format("2006-01-02T15:04:05.000Z")
-	
-	// Log to stderr with structured information for debugging
-	fmt.Fprintf(os.Stderr, "[ERROR] %s OpenAI Client: %s\n", timestamp, errorMsg)
-	fmt.Fprintf(os.Stderr, "[CONTEXT] API Calls: %d/%d, Errors: %d, Base URL: %s\n", 
-		c.stats.RequestCount, c.maxCalls, c.stats.ErrorCount, c.baseURL)
-	
-	// Log quota information if available
-	if c.quotaConfig != nil {
-		fmt.Fprintf(os.Stderr, "[QUOTA] %.1f/%.0f weighted tokens used (%.1f%% utilization)\n",
-			c.stats.QuotaUsage.TotalWeighted, float64(c.quotaConfig.MaxTokens),
-			(c.stats.QuotaUsage.TotalWeighted/float64(c.quotaConfig.MaxTokens))*100)
-	}
-	
-	// Use fmt.Errorf to support error wrapping (%w directive)
 	return nil, fmt.Errorf(format, args...)
 }
 
 // ChatCompletion sends a chat completion request to OpenAI API
 func (c *Client) ChatCompletion(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
+	// Log API key usage for audit
+	apiKeyPrefix := ""
+	if len(c.apiKey) > 7 {
+		apiKeyPrefix = c.apiKey[:7] + "..."
+	}
+
 	// Check rate limits
 	if c.stats.RequestCount >= c.maxCalls {
+		security.LogOpenAICall("/chat/completions", req.Model, false,
+			fmt.Sprintf("rate limit exceeded: %d/%d calls", c.stats.RequestCount, c.maxCalls))
 		return c.errorf("maximum API calls exceeded (%d/%d)", c.stats.RequestCount, c.maxCalls)
 	}
 
 	// Check quota limits (only if limits are set)
 	if c.quotaConfig != nil && c.quotaConfig.MaxTokens > 0 && c.stats.QuotaExceeded {
+		security.LogOpenAICall("/chat/completions", req.Model, false,
+			fmt.Sprintf("quota exceeded: %.1f/%.0f weighted tokens",
+				c.stats.QuotaUsage.TotalWeighted, float64(c.quotaConfig.MaxTokens)))
 		return c.errorf("quota limit exceeded: %.1f/%.0f weighted tokens used",
 			c.stats.QuotaUsage.TotalWeighted, float64(c.quotaConfig.MaxTokens))
 	}
+
+	// Log API key usage
+	security.LogAPIKeyUsage(apiKeyPrefix, true, "OpenAI API call initiated")
 
 	// Prepare request
 	reqBody, err := json.Marshal(req)
 	if err != nil {
 		c.stats.AddError()
-		return c.errorf("failed to marshal request: %v", err)
+		security.LogOpenAICall("/chat/completions", req.Model, false,
+			fmt.Sprintf("request marshal failed: %v", err))
+		return c.errorf("failed to marshal request: %w", err)
 	}
 
 	// Create HTTP request
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/chat/completions", bytes.NewBuffer(reqBody))
 	if err != nil {
 		c.stats.AddError()
-		return c.errorf("failed to create request: %v", err)
+		return c.errorf("failed to create request: %w", err)
 	}
 
 	// Set headers
@@ -283,29 +265,35 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatCompletionRequest) 
 
 	if err != nil {
 		c.stats.AddError()
-		return c.errorf("request failed: %v", err)
+		return c.errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Read response body
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return c.errorf("failed to read response: %v", err)
+		return c.errorf("failed to read response: %w", err)
 	}
 
 	// Handle error responses
 	if resp.StatusCode != http.StatusOK {
 		var errorResp ErrorResponse
 		if err := json.Unmarshal(respBody, &errorResp); err != nil {
+			security.LogOpenAICall("/chat/completions", req.Model, false,
+				fmt.Sprintf("HTTP %d: response parse failed", resp.StatusCode))
 			return c.errorf("API request failed with status %d: %s", resp.StatusCode, string(respBody))
 		}
+		security.LogOpenAICall("/chat/completions", req.Model, false,
+			fmt.Sprintf("API error: %s (type: %s)", errorResp.Error.Message, errorResp.Error.Type))
 		return c.errorf("API error: %s (type: %s)", errorResp.Error.Message, errorResp.Error.Type)
 	}
 
 	// Parse successful response
 	var chatResp ChatCompletionResponse
 	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		return c.errorf("failed to unmarshal response: %v", err)
+		security.LogOpenAICall("/chat/completions", req.Model, false,
+			fmt.Sprintf("response unmarshal failed: %v", err))
+		return c.errorf("failed to unmarshal response: %w", err)
 	}
 
 	// Update statistics
@@ -315,6 +303,16 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatCompletionRequest) 
 	if c.quotaConfig != nil {
 		c.stats.UpdateQuotaUsage(&chatResp.Usage, c.quotaConfig)
 	}
+
+	// Log successful API call
+	cachedTokens := 0
+	if chatResp.Usage.PromptTokensDetails != nil {
+		cachedTokens = chatResp.Usage.PromptTokensDetails.CachedTokens
+	}
+	security.LogOpenAICall("/chat/completions", req.Model, true,
+		fmt.Sprintf("tokens: input=%d cached=%d output=%d, duration=%v",
+			chatResp.Usage.PromptTokens, cachedTokens,
+			chatResp.Usage.CompletionTokens, duration))
 
 	return &chatResp, nil
 }
