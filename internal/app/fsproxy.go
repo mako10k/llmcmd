@@ -13,31 +13,6 @@ import (
 	"github.com/mako10k/llmcmd/internal/tools"
 )
 
-// convertModeToFlag converts file mode string to flag and perm
-func convertModeToFlag(mode string) (int, os.FileMode) {
-	flag := 0
-	perm := os.FileMode(0644) // Default permissions
-
-	switch mode {
-	case "r", "read":
-		flag = os.O_RDONLY
-	case "w", "write":
-		flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-	case "a", "append":
-		flag = os.O_WRONLY | os.O_CREATE | os.O_APPEND
-	case "r+", "rw", "readwrite":
-		flag = os.O_RDWR
-	case "w+":
-		flag = os.O_RDWR | os.O_CREATE | os.O_TRUNC
-	case "a+":
-		flag = os.O_RDWR | os.O_CREATE | os.O_APPEND
-	default:
-		flag = os.O_RDONLY // Default to read-only
-	}
-
-	return flag, perm
-}
-
 // FSProxyManager manages file system access for restricted child processes
 type FSProxyManager struct {
 	vfs       tools.VirtualFileSystem
@@ -240,11 +215,9 @@ func (proxy *FSProxyManager) handleOpen(filename, mode, context string) FSRespon
 
 	// Use context-aware VFS method if available
 	if vfsWithContext, ok := proxy.vfs.(interface {
-		OpenFileWithContext(string, int, os.FileMode, bool) (io.ReadWriteCloser, error)
+		OpenFileWithContext(string, string, bool) (interface{}, error)
 	}); ok {
-		// Convert mode string to flag and perm
-		flag, perm := convertModeToFlag(mode)
-		file, err := vfsWithContext.OpenFileWithContext(filename, flag, perm, isInternal)
+		file, err := vfsWithContext.OpenFileWithContext(filename, mode, isInternal)
 		if err != nil {
 			return FSResponse{
 				Status: "ERROR",

@@ -1,77 +1,38 @@
 # llmcmd - LLM Command Line Tool
 
-## QA大原則（品質保証基本方針）
+## 🧠 CRITICAL: Self-Improvement Memory System
 
-### 四大原則
-1. **Silent Fallback 実装の厳禁**
-   - エラー発生時の無通知処理継続を禁止
-   - Fail-First原則の徹底（errcheck、staticcheckで検出）
+### Before Starting ANY Task
+1. **Search associative memory**: Use `mcp_mcp-assoc-mem_memory_search` for past failures, lessons, and design decisions
+2. **Check shared memory**: Use `mcp_mcp-llm-gener_shared-memory-search` for team knowledge
+3. **Consult personas**: Check with relevant team personas before major decisions
+4. **Read project files**: Always check existing implementations and designs
 
-2. **同等機能の重複実装の厳禁**
-   - 42コマンド重複問題の根本解決
-   - jscpd、gocriticで検出、共通化・interface化推進
+### After Completing ANY Task
+1. **Store lessons learned**: Use `mcp_mcp-assoc-mem_memory_store` to save failures, solutions, design decisions
+2. **Update shared memory**: Use `mcp_mcp-llm-gener_shared-memory-create` or `shared-memory-update` for team knowledge
+3. **Record problem patterns**: Document what went wrong and how to avoid it next time
 
-3. **ファイル長大化の厳禁**
-   - 1ファイル1000行未満、1関数50行未満（推奨）
-   - 適切なモジュール分割・責任分界の実施
+### Problem Behavior Patterns (MUST AVOID)
+- ❌ Starting implementation with unresolved design questions
+- ❌ Skipping user agreement before coding 
+- ❌ Repeating same mistakes due to memory limitations
+- ❌ Acting without consulting team personas
+- ❌ Forgetting to record lessons learned after completion
 
-4. **複雑度の増大の厳禁**
-   - 循環的複雑度10未満（gocycloで測定）
-   - 関数分割・Early Returnパターンで簡素化
+### 🚨 MANDATORY: Self-Improvement Framework
+**EVERY TASK MUST FOLLOW**: Read and apply `docs/self-improvement-framework.md`
 
-### 自動チェック体制
-- **pre-commitフック**: errcheck、jscpd、gocyclo、file-size-check
-- **CIパイプライン**: GitHub Actions連携、PR時必須チェック
-- **静的解析ツール**: gosec、golangci-lint、staticcheck
+#### Required Process (NO EXCEPTIONS):
+1. **Task Start**: Search past failures, design decisions, user instructions
+2. **Design Phase**: Document design → User agreement → Implementation (NEVER skip)
+3. **Implementation**: Progress reports, consultation when uncertain
+4. **Completion**: Record lessons learned, update memories
 
-### 段階的導入
-- Sprint 1: ツール導入・現状把握
-- Sprint 2: 重大違反修正
-- Sprint 3以降: 基準厳格化・監査自動化
-
-### 🛡️ Premium Request Protection Protocol
-**プレミアムリクエスト成果物保護原則**
-
-#### 保護対象（価値ベース判定）
-- **デバッグ・現実融和済み実装**: エラー解決、システム統合、実動作確認を経た成果物
-- **時間投入済みコンポーネント**: 30分以上の実装・調整・検証を要した実装
-- **現実知識統合済み**: 純粋生成を超えて実環境での問題解決を含む成果物
-
-#### 保護対象外（再生成可能）
-- **純粋パターン生成**: デバッグ・検証なしの標準的生成物
-- **試作・実験段階**: 未検証・未統合の実装
-- **明らかに再利用不可**: 一時的・特定状況限定の成果物
-
-#### 保護手順
-1. **WIPブランチ保存**: `feature/priority[N]-[feature-name]` 形式でブランチ作成
-2. **詳細コミットメッセージ**: 実装内容、技術判断理由、保存根拠を明記
-3. **リモートプッシュ**: GitHub上での永続保存を確実に実行
-4. **代替検討**: 削除ではなく代替実装・改良アプローチを優先
-
-#### 判断基準
-- **保存基準**: デバッグ・現実融和プロセスを経た貴重な知識
-- **保存判断**: ユーザーとの協議による価値ベース判定
-- **文書化**: 保存理由・現実融和プロセスを必ず記録
-
-#### 例外処理
-- **セキュリティリスク**: 明確なセキュリティ問題がある場合のみ削除検討
-- **法的問題**: ライセンス違反等の法的問題がある場合のみ削除検討
-- **事前相談**: 削除が必要な場合は必ずユーザーと事前相談
-
-**原則**: "Preserve debugged reality-integrated work, not just patterns" - デバッグ・現実融和した成果物は貴重な知識として保護、純粋生成物は再生成可能
-
-## Project Team (MCP LLM Generator Contexts)
-
-### Core Team Context IDs
-- **PersonalityManager**: `context-mdtvqb20-opmlhg` - 人格管理マネージャー（チーム構成・役割設計）
-- **ProductOwner**: `context-mdtvs82o-1ekq4d` - 製品責任者（ビジョン策定・要件優先度決定）
-- **ScrumMaster**: `context-mdtvso8o-bljl6h` - プロセス促進者（障害除去・チーム生産性向上）
-- **TechnicalLead**: `context-mdtvu1aq-e07dnk` - 技術責任者（アーキテクチャ設計・技術意思決定）
-
-### Quality & Process Team Context IDs
-- **QAEngineer**: `context-mdtvvnz6-exfq23` - 品質保証エンジニア（テスト戦略・品質基準・自動化推進）
-- **GitWorkflowSpecialist**: `context-mdtvvzyi-95b60o` - Git管理スペシャリスト（ブランチ戦略・リリース管理）
-- **PragmaticAdvisor**: `context-mdtvwj2v-h5ld7v` - 現実的調整役（率直な意見・実装可能性・リスク評価）
+#### Critical Memory Constraint Recognition:
+- GitHub Copilot memory = 32k tokens only (forgets everything)
+- Apologies are meaningless due to memory degradation
+- MUST use permanent memory systems for continuity
 
 ## Project Overview
 
@@ -191,69 +152,6 @@
 - **ANY Shell Command**: `#mcp-shell-server` only - NO EXCEPTIONS
 
 **Reason**: `run_in_terminal` has output reading bugs that cause incomplete results and development workflow failures.
-
-### 🧠 Associative Memory Usage for Development Workflow
-
-**Purpose**: Use MCP Associative Memory (`#mcp-mcp-assoc-mem`) as external memory augmentation for complex development projects.
-
-**MANDATORY Usage Patterns:**
-1. **Project State Persistence**: 
-   - `memory_store` critical findings, architectural discoveries, implementation gaps
-   - Store immediately after major technical discoveries or design decisions
-   - Include context and rationale, not just raw facts
-
-2. **Context Continuity**: 
-   - `memory_search` before starting new analysis to avoid redundant work
-   - Maintain knowledge across sessions and conversation boundaries
-   - Build on previous discoveries rather than reanalyzing
-
-3. **Discovery Tracking**:
-   - Record important code findings, especially in large codebases
-   - Track implementation status, component relationships
-   - Update assessments when new discoveries change understanding
-
-4. **Sprint & Project Management**:
-   - Store sprint progress, issues, retrospective learnings
-   - Track technical debt, architectural decisions
-   - Preserve strategic direction and priority rationale
-
-**Memory Organization Strategy:**
-```
-work/projects/llmcmd/     # Project-specific knowledge
-  ├── architecture/       # System design insights
-  ├── implementation/     # Code structure findings  
-  ├── sprint-management/  # Agile process tracking
-  └── technical-issues/   # Problems and solutions
-
-workflow/                 # Cross-project methodologies
-  ├── memory-usage/       # Meta-usage patterns
-  ├── development/        # General dev practices
-  └── tools/             # Tool-specific learnings
-```
-
-**Integration Rules:**
-- **Search First**: Always `memory_search` relevant topics before deep analysis
-- **Store Immediately**: Use `memory_store` after significant findings or decisions
-- **Update When Changed**: Correct previous assessments with new discoveries
-- **Use Descriptive Categories**: Enable future searchability with clear tags
-- **Include Context**: Store not just what, but why and how decisions were made
-
-**Benefits:**
-- Prevents redundant analysis of large codebases
-- Maintains project knowledge across development sessions  
-- Enables faster onboarding and context switching
-- Creates searchable project knowledge base
-- Supports complex, multi-session development workflows
-
-**Example Workflow:**
-```
-1. memory_search "VFS implementation llmcmd" 
-2. Analyze findings, build on existing knowledge
-3. memory_store new discoveries with context
-4. Continue development with enhanced understanding
-```
-
-This creates persistent, searchable knowledge that augments GitHub Copilot's capabilities for complex, long-term development projects.
 
 ## Implementation Phases
 

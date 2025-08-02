@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/mako10k/llmcmd/internal/security"
 )
 
 // PromptPreset represents a predefined prompt configuration
@@ -71,6 +73,9 @@ type ConfigFile struct {
 	QuotaUsage         QuotaUsage              `json:"quota_usage"`          // Current usage statistics
 	ModelQuotaWeights  map[string]QuotaWeights `json:"model_quota_weights"`  // Model-specific quota weights
 	ModelSystemPrompts map[string]string       `json:"model_system_prompts"` // Model-specific system prompts
+	// Security audit logging configuration
+	AuditLogEnabled bool   `json:"audit_log_enabled"` // Enable security audit logging
+	AuditLogPath    string `json:"audit_log_path"`    // Path to audit log file (empty = default)
 }
 
 // DefaultConfig returns default configuration values
@@ -107,6 +112,9 @@ func DefaultConfig() *ConfigFile {
 		},
 		ModelQuotaWeights:  getDefaultModelQuotaWeights(),
 		ModelSystemPrompts: getDefaultModelSystemPrompts(),
+		// Security audit logging (disabled by default for MVP)
+		AuditLogEnabled: false, // Can be enabled via config file or environment variable
+		AuditLogPath:    "",    // Empty means use default (~/.llmcmd_audit.log)
 	}
 }
 
@@ -118,14 +126,19 @@ func LoadConfigFile(path string, explicit bool) (*ConfigFile, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if explicit {
 			// File was explicitly specified but doesn't exist - FAIL IMMEDIATELY
+			security.LogConfigAccess(path, security.ActionRead, false, "explicitly specified config file does not exist")
 			return nil, fmt.Errorf("explicitly specified config file does not exist: %s", path)
 		}
 		// File was not explicitly specified (default), return default config
 		return config, nil
 	}
 
+	// Log config file access attempt
+	security.LogConfigAccess(path, security.ActionRead, true, "configuration file access initiated")
+
 	file, err := os.Open(path)
 	if err != nil {
+		security.LogConfigAccess(path, security.ActionRead, false, fmt.Sprintf("failed to open: %v", err))
 		return nil, fmt.Errorf("failed to open config file: %w", err)
 	}
 	defer file.Close()
@@ -163,8 +176,12 @@ func loadJSONConfig(file *os.File, config *ConfigFile) (*ConfigFile, error) {
 
 	// Validate configuration values after JSON loading
 	if err := validateConfigValues(config); err != nil {
+		security.LogConfigAccess("", security.ActionValidate, false, fmt.Sprintf("validation failed: %v", err))
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
+
+	// Log successful config loading
+	security.LogConfigAccess("", security.ActionLoad, true, "JSON configuration loaded and validated successfully")
 
 	return config, nil
 }
@@ -211,8 +228,12 @@ func loadLegacyConfig(file *os.File, config *ConfigFile) (*ConfigFile, error) {
 
 	// Validate configuration values after legacy loading
 	if err := validateConfigValues(config); err != nil {
+		security.LogConfigAccess("", security.ActionValidate, false, fmt.Sprintf("legacy config validation failed: %v", err))
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
+
+	// Log successful legacy config loading
+	security.LogConfigAccess("", security.ActionLoad, true, "legacy configuration loaded and validated successfully")
 
 	return config, nil
 }
@@ -567,6 +588,13 @@ func LoadEnvironmentConfig(config *ConfigFile) {
 		if parsed, err := parseInt(val); err == nil {
 			config.TimeoutSeconds = parsed
 		}
+	}
+	// Security audit logging configuration
+	if val := os.Getenv("LLMCMD_AUDIT_LOG_ENABLED"); val != "" {
+		config.AuditLogEnabled = val == "true" || val == "1"
+	}
+	if val := os.Getenv("LLMCMD_AUDIT_LOG_PATH"); val != "" {
+		config.AuditLogPath = val
 	}
 }
 
