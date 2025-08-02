@@ -119,6 +119,69 @@
 
 **Reason**: `run_in_terminal` has output reading bugs that cause incomplete results and development workflow failures.
 
+### 🧠 Associative Memory Usage for Development Workflow
+
+**Purpose**: Use MCP Associative Memory (`#mcp-mcp-assoc-mem`) as external memory augmentation for complex development projects.
+
+**MANDATORY Usage Patterns:**
+1. **Project State Persistence**: 
+   - `memory_store` critical findings, architectural discoveries, implementation gaps
+   - Store immediately after major technical discoveries or design decisions
+   - Include context and rationale, not just raw facts
+
+2. **Context Continuity**: 
+   - `memory_search` before starting new analysis to avoid redundant work
+   - Maintain knowledge across sessions and conversation boundaries
+   - Build on previous discoveries rather than reanalyzing
+
+3. **Discovery Tracking**:
+   - Record important code findings, especially in large codebases
+   - Track implementation status, component relationships
+   - Update assessments when new discoveries change understanding
+
+4. **Sprint & Project Management**:
+   - Store sprint progress, issues, retrospective learnings
+   - Track technical debt, architectural decisions
+   - Preserve strategic direction and priority rationale
+
+**Memory Organization Strategy:**
+```
+work/projects/llmcmd/     # Project-specific knowledge
+  ├── architecture/       # System design insights
+  ├── implementation/     # Code structure findings  
+  ├── sprint-management/  # Agile process tracking
+  └── technical-issues/   # Problems and solutions
+
+workflow/                 # Cross-project methodologies
+  ├── memory-usage/       # Meta-usage patterns
+  ├── development/        # General dev practices
+  └── tools/             # Tool-specific learnings
+```
+
+**Integration Rules:**
+- **Search First**: Always `memory_search` relevant topics before deep analysis
+- **Store Immediately**: Use `memory_store` after significant findings or decisions
+- **Update When Changed**: Correct previous assessments with new discoveries
+- **Use Descriptive Categories**: Enable future searchability with clear tags
+- **Include Context**: Store not just what, but why and how decisions were made
+
+**Benefits:**
+- Prevents redundant analysis of large codebases
+- Maintains project knowledge across development sessions  
+- Enables faster onboarding and context switching
+- Creates searchable project knowledge base
+- Supports complex, multi-session development workflows
+
+**Example Workflow:**
+```
+1. memory_search "VFS implementation llmcmd" 
+2. Analyze findings, build on existing knowledge
+3. memory_store new discoveries with context
+4. Continue development with enhanced understanding
+```
+
+This creates persistent, searchable knowledge that augments GitHub Copilot's capabilities for complex, long-term development projects.
+
 ## Implementation Phases
 
 ### Phase 1: Foundation (Days 1-3)
