@@ -1,13 +1,15 @@
 package openai
 
 import (
+	"context"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestNewClient(t *testing.T) {
 	config := ClientConfig{
-		APIKey:   "test-key",
+		APIKey:   "sk-test-key-for-testing-123456789", // Valid format for testing
 		BaseURL:  "https://api.openai.com/v1",
 		Timeout:  30 * time.Second,
 		MaxCalls: 10,
@@ -72,5 +74,146 @@ func TestCreateInitialMessages(t *testing.T) {
 
 	if messages[2].Role != "user" {
 		t.Errorf("Third message should be user role, got %s", messages[2].Role)
+	}
+}
+
+// Priority 4: OpenAI Integration Hardening - Test Coverage
+
+func TestNewClient_FailFirst_APIKeyValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		apiKey    string
+		shouldExit bool
+	}{
+		{
+			name:      "Valid API key",
+			apiKey:    "sk-test-key-for-testing-123456789",
+			shouldExit: false,
+		},
+		// Note: Testing exit scenarios would require testing os.Exit which is complex
+		// We'll test the validation logic separately
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !tt.shouldExit {
+				config := ClientConfig{
+					APIKey:   tt.apiKey,
+					BaseURL:  "https://api.openai.com/v1",
+					Timeout:  30 * time.Second,
+					MaxCalls: 10,
+				}
+				client := NewClient(config)
+				if client == nil {
+					t.Fatal("NewClient returned nil for valid API key")
+				}
+			}
+		})
+	}
+}
+
+func TestClient_errorf(t *testing.T) {
+	config := ClientConfig{
+		APIKey:   "sk-test-key-for-testing-123456789",
+		BaseURL:  "https://api.openai.com/v1",
+		Timeout:  30 * time.Second,
+		MaxCalls: 10,
+	}
+	client := NewClient(config)
+
+	// Test errorf functionality
+	resp, err := client.errorf("test error: %s", "validation failed")
+	
+	if resp != nil {
+		t.Error("errorf should return nil response")
+	}
+	
+	if err == nil {
+		t.Fatal("errorf should return an error")
+	}
+	
+	expectedMsg := "test error: validation failed"
+	if err.Error() != expectedMsg {
+		t.Errorf("Expected error message '%s', got '%s'", expectedMsg, err.Error())
+	}
+	
+	// Verify error count increased
+	stats := client.GetStats()
+	if stats.ErrorCount != 1 {
+		t.Errorf("Expected error count 1, got %d", stats.ErrorCount)
+	}
+}
+
+func TestClient_ChatCompletion_RateLimitCheck(t *testing.T) {
+	config := ClientConfig{
+		APIKey:   "sk-test-key-for-testing-123456789",
+		BaseURL:  "https://api.openai.com/v1",
+		Timeout:  30 * time.Second,
+		MaxCalls: 1, // Set to 1, then make request exceed this
+	}
+	client := NewClient(config)
+
+	// Manually set request count to exceed limit
+	client.stats.RequestCount = 2 // Exceed MaxCalls of 1
+
+	req := ChatCompletionRequest{
+		Model: "gpt-3.5-turbo",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "test"},
+		},
+	}
+
+	// Should immediately fail due to rate limit before network call
+	resp, err := client.ChatCompletion(context.Background(), req)
+	
+	if resp != nil {
+		t.Error("Response should be nil when rate limited")
+	}
+	
+	if err == nil {
+		t.Fatal("Should return error when rate limited")
+	}
+	
+	if !strings.Contains(err.Error(), "maximum API calls exceeded") {
+		t.Errorf("Expected rate limit error, got: %s", err.Error())
+	}
+}
+
+func TestClient_ChatCompletion_QuotaCheck(t *testing.T) {
+	// Test quota exceeded scenario
+	config := ClientConfig{
+		APIKey:   "sk-test-key-for-testing-123456789",
+		BaseURL:  "https://api.openai.com/v1",
+		Timeout:  30 * time.Second,
+		MaxCalls: 10,
+		QuotaConfig: &QuotaConfig{
+			MaxTokens: 100,
+		},
+	}
+	client := NewClient(config)
+	
+	// Manually set quota exceeded flag
+	client.stats.QuotaExceeded = true
+	client.stats.QuotaUsage.TotalWeighted = 150 // Exceed the limit
+
+	req := ChatCompletionRequest{
+		Model: "gpt-3.5-turbo",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "test"},
+		},
+	}
+
+	resp, err := client.ChatCompletion(context.Background(), req)
+	
+	if resp != nil {
+		t.Error("Response should be nil when quota exceeded")
+	}
+	
+	if err == nil {
+		t.Fatal("Should return error when quota exceeded")
+	}
+	
+	if !strings.Contains(err.Error(), "quota limit exceeded") {
+		t.Errorf("Expected quota exceeded error, got: %s", err.Error())
 	}
 }
