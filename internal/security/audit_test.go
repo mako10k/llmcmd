@@ -170,7 +170,7 @@ func TestAuditEvent_CriticalFactors(t *testing.T) {
 
 		// Test concurrent logging (basic thread safety)
 		done := make(chan bool, 2)
-		
+
 		go func() {
 			for i := 0; i < 10; i++ {
 				event := AuditEvent{
@@ -244,7 +244,9 @@ func TestAuditManager_MVP(t *testing.T) {
 		},
 		{
 			name: "OpenAI Call",
-			fn:   func() { manager.LogOpenAICall("/v1/chat/completions", "gpt-4o-mini", true, "Chat completion successful") },
+			fn: func() {
+				manager.LogOpenAICall("/v1/chat/completions", "gpt-4o-mini", true, "Chat completion successful")
+			},
 		},
 		{
 			name: "Tool Execution",
@@ -273,12 +275,12 @@ func TestAuditManager_MVP(t *testing.T) {
 // TestDefaultAuditLogPath tests the default log path functionality
 func TestDefaultAuditLogPath(t *testing.T) {
 	path := GetDefaultAuditLogPath()
-	
+
 	// Should contain .llmcmd_audit.log
 	if !strings.Contains(path, ".llmcmd_audit.log") {
 		t.Errorf("Default audit log path should contain '.llmcmd_audit.log', got: %s", path)
 	}
-	
+
 	// Should be absolute path (containing home directory or current directory)
 	if !filepath.IsAbs(path) && !strings.HasPrefix(path, ".") {
 		t.Errorf("Default audit log path should be absolute or relative, got: %s", path)

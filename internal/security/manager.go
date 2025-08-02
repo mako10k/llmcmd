@@ -7,9 +7,9 @@ import (
 
 // AuditManager manages audit logging across the application
 type AuditManager struct {
-	logger AuditLogger
-	userID string
-	mutex  sync.RWMutex
+	logger    AuditLogger
+	sessionID string // Session identifier for this application run
+	mutex     sync.RWMutex
 }
 
 var (
@@ -18,11 +18,11 @@ var (
 )
 
 // InitGlobalAuditManager initializes the global audit manager
-func InitGlobalAuditManager(logger AuditLogger, userID string) {
+func InitGlobalAuditManager(logger AuditLogger, sessionID string) {
 	managerOnce.Do(func() {
 		globalAuditManager = &AuditManager{
-			logger: logger,
-			userID: userID,
+			logger:    logger,
+			sessionID: sessionID,
 		}
 	})
 }

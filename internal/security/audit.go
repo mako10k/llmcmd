@@ -9,15 +9,30 @@ import (
 	"time"
 )
 
-// AuditEvent represents a security audit log event
+// Security Audit Logging for llmcmd CLI Tool
+//
+// Purpose:
+// - Track API key usage for security monitoring
+// - Record configuration file access for compliance
+// - Log file I/O operations for debugging
+// - Monitor OpenAI API calls for cost management
+//
+// Note: llmcmd is a single-user CLI tool, so "audit" focuses on:
+// - Operation history rather than user authentication
+// - Process and session identification rather than user identity
+// - Security-relevant events rather than access control
+
+// AuditEvent represents a security audit log event for llmcmd CLI operations
 type AuditEvent struct {
-	Timestamp time.Time `json:"timestamp"`
-	UserID    string    `json:"user_id"`
-	EventType string    `json:"event_type"`
-	Resource  string    `json:"resource"`
-	Action    string    `json:"action"`
-	Details   string    `json:"details"`
-	Success   bool      `json:"success"`
+	Timestamp  time.Time `json:"timestamp"`   // RFC3339 format
+	SystemUser string    `json:"system_user"` // OS username
+	ProcessID  int       `json:"process_id"`  // Process ID
+	SessionID  string    `json:"session_id"`  // Session identifier (optional)
+	EventType  string    `json:"event_type"`  // Event category
+	Resource   string    `json:"resource"`    // Target resource (file, API endpoint, etc.)
+	Action     string    `json:"action"`      // Action performed
+	Details    string    `json:"details"`     // Additional information
+	Success    bool      `json:"success"`     // Operation success status
 }
 
 // AuditEventType defines standard event types for consistent logging
@@ -32,12 +47,12 @@ const (
 
 // AuditAction defines standard actions for consistent logging
 const (
-	ActionRead   = "read"
-	ActionWrite  = "write"
-	ActionCall   = "call"
-	ActionLoad   = "load"
-	ActionSave   = "save"
-	ActionExecute = "execute"
+	ActionRead     = "read"
+	ActionWrite    = "write"
+	ActionCall     = "call"
+	ActionLoad     = "load"
+	ActionSave     = "save"
+	ActionExecute  = "execute"
 	ActionValidate = "validate"
 )
 
@@ -89,13 +104,15 @@ func (l *FileAuditLogger) LogEvent(event AuditEvent) error {
 
 	// Create structured log entry
 	logEntry := map[string]interface{}{
-		"timestamp":  event.Timestamp.Format(time.RFC3339),
-		"user_id":    event.UserID,
-		"event_type": event.EventType,
-		"resource":   event.Resource,
-		"action":     event.Action,
-		"details":    event.Details,
-		"success":    event.Success,
+		"timestamp":   event.Timestamp.Format(time.RFC3339),
+		"system_user": event.SystemUser,
+		"process_id":  event.ProcessID,
+		"session_id":  event.SessionID,
+		"event_type":  event.EventType,
+		"resource":    event.Resource,
+		"action":      event.Action,
+		"details":     event.Details,
+		"success":     event.Success,
 	}
 
 	// Convert to JSON
@@ -143,4 +160,35 @@ func GetDefaultAuditLogPath() string {
 func CreateDefaultAuditLogger() (AuditLogger, error) {
 	logPath := GetDefaultAuditLogPath()
 	return NewFileAuditLogger(logPath)
+}
+
+// GetCurrentSystemUser returns the current OS username
+func GetCurrentSystemUser() string {
+	if user := os.Getenv("USER"); user != "" {
+		return user
+	}
+	if user := os.Getenv("USERNAME"); user != "" { // Windows
+		return user
+	}
+	return "unknown"
+}
+
+// GetCurrentProcessID returns the current process ID
+func GetCurrentProcessID() int {
+	return os.Getpid()
+}
+
+// CreateAuditEvent creates a new audit event with system information pre-filled
+func CreateAuditEvent(eventType, resource, action, details string, success bool, sessionID string) AuditEvent {
+	return AuditEvent{
+		Timestamp:  time.Now().UTC(),
+		SystemUser: GetCurrentSystemUser(),
+		ProcessID:  GetCurrentProcessID(),
+		SessionID:  sessionID,
+		EventType:  eventType,
+		Resource:   resource,
+		Action:     action,
+		Details:    details,
+		Success:    success,
+	}
 }
