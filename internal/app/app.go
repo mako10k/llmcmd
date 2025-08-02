@@ -30,6 +30,9 @@ type App struct {
 	// Shared quota support
 	sharedQuota *openai.SharedQuotaManager
 	processID   string
+	// VFS and proxy support for 3-layer architecture
+	enhancedVFS   *EnhancedVFS
+	fsProxyManager *FSProxyManager
 }
 
 // New creates a new application instance
@@ -91,6 +94,9 @@ func (a *App) Run() error {
 		return err
 	}
 
+	// Initialize FS proxy for 3-layer architecture integration
+	a.initializeFSProxy()
+
 	// Execute LLM interaction
 	if err := a.executeWithError(a.executeTask, "execute task"); err != nil {
 		return err
@@ -144,18 +150,18 @@ func (a *App) initializeToolEngine() error {
 	shellExecutor := &SimpleShellExecutor{}
 	
 	// Use EnhancedVFS instead of SimpleVirtualFS for advanced features
-	virtualFS := NewEnhancedVFS()
+	a.enhancedVFS = NewEnhancedVFS()
 	
 	// Allow real files for input/output files if specified
 	for _, inputFile := range a.config.InputFiles {
-		virtualFS.AllowRealFile(inputFile)
+		a.enhancedVFS.AllowRealFile(inputFile)
 	}
 	if a.config.OutputFile != "" {
-		virtualFS.AllowRealFile(a.config.OutputFile)
+		a.enhancedVFS.AllowRealFile(a.config.OutputFile)
 	}
 
 	// Configure shell executor with VFS for redirect support
-	shellExecutor.SetVFS(virtualFS)
+	shellExecutor.SetVFS(a.enhancedVFS)
 
 	config := tools.EngineConfig{
 		InputFiles:    a.config.InputFiles,
@@ -164,7 +170,7 @@ func (a *App) initializeToolEngine() error {
 		BufferSize:    a.fileConfig.ReadBufferSize,
 		NoStdin:       a.config.NoStdin,
 		ShellExecutor: shellExecutor,
-		VirtualFS:     virtualFS,
+		VirtualFS:     a.enhancedVFS,
 	}
 
 	var err error
@@ -179,6 +185,21 @@ func (a *App) initializeToolEngine() error {
 	}
 
 	return nil
+}
+
+// initializeFSProxy initializes the file system proxy for VFS-restricted execution
+func (a *App) initializeFSProxy() {
+	// FSProxyManager will be initialized on-demand when VFS-restricted
+	// child processes are spawned. This provides the foundation for
+	// controlled file system access in sub-processes.
+	
+	// For now, this is a placeholder that establishes the architecture
+	// integration point. Actual pipe creation and proxy lifecycle
+	// management will be handled during spawn operations.
+	
+	if a.config.Verbose {
+		log.Printf("FS Proxy integration prepared for VFS-restricted execution")
+	}
 }
 
 // executeTask executes the main LLM task
