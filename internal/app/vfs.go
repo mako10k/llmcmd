@@ -226,6 +226,21 @@ func (vfs *EnhancedVFS) OpenFile(name string, flag int, perm os.FileMode) (io.Re
 	return file, nil
 }
 
+// OpenFileWithContext opens a file with context awareness (required by tools.VirtualFileSystem interface)
+func (vfs *EnhancedVFS) OpenFileWithContext(name string, flag int, perm os.FileMode, isInternal bool) (io.ReadWriteCloser, error) {
+	if isInternal {
+		// Internal access: use virtual files or temp files
+		return vfs.OpenFile(name, flag, perm)
+	} else {
+		// External access: allow real files if configured
+		if vfs.isTopLevel || vfs.IsRealFileAllowed(name) {
+			return vfs.RegisterRealFile(name, flag, perm)
+		}
+		// Fallback to virtual file
+		return vfs.OpenFile(name, flag, perm)
+	}
+}
+
 // RegisterInputOutput registers input/output files based on execution level
 // For top-level: -i, -o are real files (LLM hints + VFS read/write permission)
 // For internal: -i, -o are temp files (internal context)

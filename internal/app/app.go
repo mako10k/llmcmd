@@ -142,7 +142,17 @@ func (a *App) initializeOpenAI() error {
 // initializeToolEngine initializes the tool execution engine
 func (a *App) initializeToolEngine() error {
 	shellExecutor := &SimpleShellExecutor{}
-	virtualFS := NewSimpleVirtualFS()
+	
+	// Use EnhancedVFS instead of SimpleVirtualFS for advanced features
+	virtualFS := NewEnhancedVFS()
+	
+	// Allow real files for input/output files if specified
+	for _, inputFile := range a.config.InputFiles {
+		virtualFS.AllowRealFile(inputFile)
+	}
+	if a.config.OutputFile != "" {
+		virtualFS.AllowRealFile(a.config.OutputFile)
+	}
 
 	// Configure shell executor with VFS for redirect support
 	shellExecutor.SetVFS(virtualFS)
@@ -595,14 +605,12 @@ func max(a, b int) int {
 
 // SimpleShellExecutor implements tools.ShellExecutor interface
 type SimpleShellExecutor struct {
-	vfs *SimpleVirtualFS
+	vfs tools.VirtualFileSystem // Use interface instead of concrete type
 }
 
 // SetVFS sets the virtual file system for redirect support
 func (s *SimpleShellExecutor) SetVFS(vfs tools.VirtualFileSystem) {
-	if vfsImpl, ok := vfs.(*SimpleVirtualFS); ok {
-		s.vfs = vfsImpl
-	}
+	s.vfs = vfs
 }
 
 // Execute executes a shell command with VFS redirect support

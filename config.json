@@ -1,0 +1,39 @@
+{
+  "embedding": {
+    "provider": "openai",
+    "model": "text-embedding-3-small",
+    "batch_size": 100
+  },
+  "vector_store": {
+    "type": "chroma",
+    "persist_directory": "./data/chroma"
+  },
+  "metadata_store": {
+    "type": "sqlite",
+    "path": "./data/metadata.db"
+  },
+  "graph_store": {
+    "type": "networkx",
+    "persist_path": "./data/graph.pkl"
+  },
+  "memory": {
+    "default_importance": 0.5,
+    "similarity_threshold": 0.7,
+    "max_associations_per_memory": 10,
+    "auto_association_threshold": 0.8
+  },
+  "server": {
+    "host": "localhost",
+    "port": 8000,
+    "log_level": "INFO"
+  },
+  "transport": {
+    "mode": "stdio"
+  },
+  "storage": {
+    "data_dir": "./data"
+  },
+  "security": {
+    "auth_enabled": false
+  }
+}
