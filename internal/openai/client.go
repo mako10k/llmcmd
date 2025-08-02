@@ -161,6 +161,24 @@ type ClientConfig struct {
 
 // NewClient creates a new OpenAI API client
 func NewClient(config ClientConfig) *Client {
+	// Fail-First: Validate critical configuration before creating client
+	if config.APIKey == "" {
+		fmt.Fprintf(os.Stderr, "[FATAL] OpenAI API key is required - set OPENAI_API_KEY environment variable\n")
+		os.Exit(1)
+	}
+	
+	// API key format validation (OpenAI keys start with "sk-")
+	if !strings.HasPrefix(config.APIKey, "sk-") {
+		fmt.Fprintf(os.Stderr, "[FATAL] Invalid API key format - OpenAI API keys must start with 'sk-'\n")
+		os.Exit(1)
+	}
+	
+	// API key length validation (typical OpenAI keys are 51+ characters)
+	if len(config.APIKey) < 20 {
+		fmt.Fprintf(os.Stderr, "[FATAL] API key appears too short - ensure complete key is provided\n")
+		os.Exit(1)
+	}
+	
 	if config.BaseURL == "" {
 		config.BaseURL = "https://api.openai.com/v1"
 	}
@@ -202,9 +220,27 @@ func NewClientWithSharedQuota(config ClientConfig, sharedQuota *SharedQuotaManag
 	return client
 }
 
-// errorf is a helper to add error stats and return a formatted error
+// errorf is a helper to add error stats and return a formatted error with comprehensive logging
 func (c *Client) errorf(format string, args ...interface{}) (*ChatCompletionResponse, error) {
 	c.stats.AddError()
+	
+	// Comprehensive error logging with context
+	errorMsg := fmt.Sprintf(format, args...)
+	timestamp := time.Now().Format("2006-01-02T15:04:05.000Z")
+	
+	// Log to stderr with structured information for debugging
+	fmt.Fprintf(os.Stderr, "[ERROR] %s OpenAI Client: %s\n", timestamp, errorMsg)
+	fmt.Fprintf(os.Stderr, "[CONTEXT] API Calls: %d/%d, Errors: %d, Base URL: %s\n", 
+		c.stats.RequestCount, c.maxCalls, c.stats.ErrorCount, c.baseURL)
+	
+	// Log quota information if available
+	if c.quotaConfig != nil {
+		fmt.Fprintf(os.Stderr, "[QUOTA] %.1f/%.0f weighted tokens used (%.1f%% utilization)\n",
+			c.stats.QuotaUsage.TotalWeighted, float64(c.quotaConfig.MaxTokens),
+			(c.stats.QuotaUsage.TotalWeighted/float64(c.quotaConfig.MaxTokens))*100)
+	}
+	
+	// Use fmt.Errorf to support error wrapping (%w directive)
 	return nil, fmt.Errorf(format, args...)
 }
 
@@ -225,14 +261,14 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatCompletionRequest) 
 	reqBody, err := json.Marshal(req)
 	if err != nil {
 		c.stats.AddError()
-		return c.errorf("failed to marshal request: %w", err)
+		return c.errorf("failed to marshal request: %v", err)
 	}
 
 	// Create HTTP request
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/chat/completions", bytes.NewBuffer(reqBody))
 	if err != nil {
 		c.stats.AddError()
-		return c.errorf("failed to create request: %w", err)
+		return c.errorf("failed to create request: %v", err)
 	}
 
 	// Set headers
@@ -247,14 +283,14 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatCompletionRequest) 
 
 	if err != nil {
 		c.stats.AddError()
-		return c.errorf("request failed: %w", err)
+		return c.errorf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	// Read response body
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return c.errorf("failed to read response: %w", err)
+		return c.errorf("failed to read response: %v", err)
 	}
 
 	// Handle error responses
@@ -269,7 +305,7 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatCompletionRequest) 
 	// Parse successful response
 	var chatResp ChatCompletionResponse
 	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		return c.errorf("failed to unmarshal response: %w", err)
+		return c.errorf("failed to unmarshal response: %v", err)
 	}
 
 	// Update statistics
