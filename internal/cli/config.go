@@ -71,6 +71,9 @@ type ConfigFile struct {
 	QuotaUsage         QuotaUsage              `json:"quota_usage"`          // Current usage statistics
 	ModelQuotaWeights  map[string]QuotaWeights `json:"model_quota_weights"`  // Model-specific quota weights
 	ModelSystemPrompts map[string]string       `json:"model_system_prompts"` // Model-specific system prompts
+	// Security audit logging configuration
+	AuditLogEnabled bool   `json:"audit_log_enabled"` // Enable security audit logging
+	AuditLogPath    string `json:"audit_log_path"`    // Path to audit log file (empty = default)
 }
 
 // DefaultConfig returns default configuration values
@@ -107,6 +110,9 @@ func DefaultConfig() *ConfigFile {
 		},
 		ModelQuotaWeights:  getDefaultModelQuotaWeights(),
 		ModelSystemPrompts: getDefaultModelSystemPrompts(),
+		// Security audit logging (disabled by default for MVP)
+		AuditLogEnabled: false, // Can be enabled via config file or environment variable
+		AuditLogPath:    "",    // Empty means use default (~/.llmcmd_audit.log)
 	}
 }
 
@@ -567,6 +573,13 @@ func LoadEnvironmentConfig(config *ConfigFile) {
 		if parsed, err := parseInt(val); err == nil {
 			config.TimeoutSeconds = parsed
 		}
+	}
+	// Security audit logging configuration
+	if val := os.Getenv("LLMCMD_AUDIT_LOG_ENABLED"); val != "" {
+		config.AuditLogEnabled = val == "true" || val == "1"
+	}
+	if val := os.Getenv("LLMCMD_AUDIT_LOG_PATH"); val != "" {
+		config.AuditLogPath = val
 	}
 }
 
