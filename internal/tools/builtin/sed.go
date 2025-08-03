@@ -14,6 +14,28 @@ func Sed(args []string, stdin io.Reader, stdout io.Writer) error {
 		return fmt.Errorf("sed: missing expression")
 	}
 
+	// Check for help option
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			fmt.Fprint(stdout, `sed - Stream editor for basic text substitution
+
+Usage: sed s/pattern/replacement/[flags] [file...]
+
+Flags:
+  g                 Replace all occurrences (global)
+  i                 Case insensitive matching
+
+Options:
+  --help, -h        Show this help message
+
+Examples:
+  sed s/old/new/g           Replace all "old" with "new"
+  sed s/error/ERROR/i       Case-insensitive replacement
+`)
+			return nil
+		}
+	}
+
 	expr := args[0]
 	if !strings.HasPrefix(expr, "s/") {
 		return fmt.Errorf("sed: only s/// substitution supported")

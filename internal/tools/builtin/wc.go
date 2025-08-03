@@ -10,6 +10,28 @@ import (
 
 // Wc counts lines, words, and characters
 func Wc(args []string, stdin io.Reader, stdout io.Writer) error {
+	// Check for help option first
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			fmt.Fprint(stdout, `wc - Count lines, words, and characters
+
+Usage: wc [options] [file...]
+
+Options:
+  -l                Count lines only
+  -w                Count words only
+  -c                Count characters/bytes only
+  --help, -h        Show this help message
+
+Examples:
+  wc file.txt               Show lines, words, and characters
+  wc -l file.txt            Count lines only
+  wc -w file.txt            Count words only
+`)
+			return nil
+		}
+	}
+
 	showLines := false
 	showWords := false
 	showBytes := false

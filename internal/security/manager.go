@@ -2,6 +2,7 @@ package security
 
 import (
 	"fmt"
+	"log"
 	"sync"
 )
 
@@ -47,7 +48,11 @@ func (m *AuditManager) LogAPIKeyUsage(apiKeyPrefix string, success bool, details
 		Success:   success,
 	}
 
-	m.logger.LogEvent(event)
+	if err := m.logger.LogEvent(event); err != nil {
+		// Log error handling - in production, this might go to stderr or system log
+		// For now, we continue execution as audit failure shouldn't stop the main process
+		log.Printf("Failed to log API call audit event: %v", err)
+	}
 }
 
 // LogConfigAccess logs configuration file access events
@@ -65,7 +70,9 @@ func (m *AuditManager) LogConfigAccess(configPath string, action string, success
 		Success:   success,
 	}
 
-	m.logger.LogEvent(event)
+	if err := m.logger.LogEvent(event); err != nil {
+		log.Printf("Failed to log config access audit event: %v", err)
+	}
 }
 
 // LogFileIO logs file input/output operations
@@ -83,7 +90,9 @@ func (m *AuditManager) LogFileIO(filePath string, action string, success bool, d
 		Success:   success,
 	}
 
-	m.logger.LogEvent(event)
+	if err := m.logger.LogEvent(event); err != nil {
+		log.Printf("Failed to log file I/O audit event: %v", err)
+	}
 }
 
 // LogOpenAICall logs OpenAI API calls

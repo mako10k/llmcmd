@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
+	"syscall"
 )
 
 // VFS interface for file operations
@@ -64,23 +67,26 @@ type CommandFunc func(args []string, stdin io.Reader, stdout io.Writer) error
 
 // Commands maps command names to their implementations
 var Commands = map[string]CommandFunc{
-	"cat":   Cat,
-	"grep":  Grep,
-	"sed":   Sed,
-	"head":  Head,
-	"tail":  Tail,
-	"sort":  Sort,
-	"wc":    Wc,
-	"tr":    Tr,
-	"cut":   Cut,
-	"uniq":  Uniq,
-	"nl":    Nl,
-	"tee":   Tee,
-	"rev":   Rev,
-	"diff":  Diff,
-	"patch": Patch,
-	"help":  GetHelp,
-	"echo":  Echo,
+	"cat":    Cat,
+	"grep":   Grep,
+	"sed":    Sed,
+	"head":   Head,
+	"tail":   Tail,
+	"sort":   Sort,
+	"wc":     Wc,
+	"tr":     Tr,
+	"cut":    Cut,
+	"uniq":   Uniq,
+	"nl":     Nl,
+	"tee":    Tee,
+	"rev":    Rev,
+	"diff":   Diff,
+	"patch":  Patch,
+	"help":   GetHelp,
+	"man":    Man,
+	"echo":   Echo,
+	"llmcmd": Llmcmd,
+	"llmsh":  Llmsh,
 }
 
 // compileRegex compiles a regex pattern and returns an error if invalid
@@ -95,10 +101,42 @@ func compileRegex(pattern string, ignoreCase bool) (*regexp.Regexp, error) {
 	return compiled, nil
 }
 
-// appendCount appends formatted count to output slice if condition is true
-func appendCount(output []string, count int, condition bool) []string {
-	if condition {
-		return append(output, fmt.Sprintf("%d", count))
+// executeSubProcess executes a subprocess with error handling
+func executeSubProcess(cmd *exec.Cmd, processName string) error {
+	err := cmd.Run()
+	if err != nil {
+		// Extract exit code if available for better error reporting
+		if exitError, ok := err.(*exec.ExitError); ok {
+			if status, ok := exitError.Sys().(syscall.WaitStatus); ok {
+				exitCode := status.ExitStatus()
+				return fmt.Errorf("%s process exited with code %d", processName, exitCode)
+			}
+		}
+		return fmt.Errorf("%s fork execution failed: %v", processName, err)
 	}
-	return output
+	return nil
+}
+
+// parseLineCountArg parses -n argument for head/tail commands
+func parseLineCountArg(args []string, defaultLines int) (int, []string, error) {
+	lines := defaultLines
+	
+	// Parse number of lines from arguments
+	for i, arg := range args {
+		if arg == "-n" && i+1 < len(args) {
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				return 0, args, fmt.Errorf("invalid number: %s", args[i+1])
+			}
+			if n < 0 {
+				return 0, args, fmt.Errorf("negative line count: %d", n)
+			}
+			lines = n
+			// Remove processed arguments
+			args = append(args[:i], args[i+2:]...)
+			break
+		}
+	}
+	
+	return lines, args, nil
 }

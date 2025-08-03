@@ -9,6 +9,27 @@ import (
 
 // Tr translates or deletes characters
 func Tr(args []string, stdin io.Reader, stdout io.Writer) error {
+	// Check for help option first
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			fmt.Fprint(stdout, `tr - Translate or delete characters
+
+Usage: tr [options] set1 [set2]
+       tr -d set1
+
+Options:
+  -d                Delete characters in set1
+  --help, -h        Show this help message
+
+Examples:
+  tr 'a-z' 'A-Z'            Convert lowercase to uppercase
+  tr -d '0-9'               Delete all digits
+  tr ' ' '_'                Replace spaces with underscores
+`)
+			return nil
+		}
+	}
+
 	if len(args) < 1 {
 		return fmt.Errorf("tr: missing operand")
 	}

@@ -10,6 +10,26 @@ import (
 
 // Cut extracts selected portions of lines from input
 func Cut(args []string, stdin io.Reader, stdout io.Writer) error {
+	// Check for help option first
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			fmt.Fprint(stdout, `cut - Extract selected portions of lines
+
+Usage: cut -f fields [-d delimiter] [file...]
+
+Options:
+  -f fields         Select only these fields (comma-separated)
+  -d delimiter      Use delimiter instead of tab
+  --help, -h        Show this help message
+
+Examples:
+  cut -f 1,3 file.txt       Extract fields 1 and 3
+  cut -f 2 -d ',' data.csv  Extract field 2 using comma delimiter
+`)
+			return nil
+		}
+	}
+
 	var fields []int
 	var delimiter string = "	" // Default delimiter
 

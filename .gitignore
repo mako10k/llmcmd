@@ -82,3 +82,5 @@ data/
 context-memory.db*
 data/memory.db*
 data/chroma_db/
+
+jscpd-report/

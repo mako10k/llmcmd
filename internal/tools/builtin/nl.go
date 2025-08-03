@@ -9,6 +9,25 @@ import (
 
 // Nl numbers lines
 func Nl(args []string, stdin io.Reader, stdout io.Writer) error {
+	// Check for help option first
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			fmt.Fprint(stdout, `nl - Number lines
+
+Usage: nl [options] [file...]
+
+Options:
+  -b                Number non-empty lines only
+  --help, -h        Show this help message
+
+Examples:
+  nl file.txt               Number all lines
+  nl -b file.txt            Number non-empty lines only
+`)
+			return nil
+		}
+	}
+
 	numberNonEmpty := false
 
 	// Parse flags

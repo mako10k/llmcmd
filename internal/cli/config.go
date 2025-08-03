@@ -151,7 +151,9 @@ func LoadConfigFile(path string, explicit bool) (*ConfigFile, error) {
 	}
 
 	// Reset file pointer
-	file.Seek(0, 0)
+	if _, err := file.Seek(0, 0); err != nil {
+		return nil, fmt.Errorf("failed to reset file pointer: %w", err)
+	}
 
 	// Check if it's JSON format
 	firstChar := strings.TrimSpace(string(buffer[:n]))

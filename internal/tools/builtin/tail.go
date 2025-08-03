@@ -9,6 +9,25 @@ import (
 
 // Tail shows the last n lines of input (default: 10)
 func Tail(args []string, stdin io.Reader, stdout io.Writer) error {
+	// Check for help option first
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			fmt.Fprint(stdout, `tail - Display last lines of input
+
+Usage: tail [-n lines] [file...]
+
+Options:
+  -n lines          Number of lines to display (default: 10)
+  --help, -h        Show this help message
+
+Examples:
+  tail file.txt             Show last 10 lines
+  tail -n 5 file.txt        Show last 5 lines
+`)
+			return nil
+		}
+	}
+
 	lines := 10
 
 	// Parse number of lines from arguments

@@ -8,6 +8,27 @@ import (
 
 // Rev reverses each line
 func Rev(args []string, stdin io.Reader, stdout io.Writer) error {
+	// Check for help option first
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			fmt.Fprint(stdout, `rev - Reverse lines character by character
+
+Usage: rev [file...]
+
+Description:
+  Reverse the order of characters in each line
+
+Options:
+  --help, -h        Show this help message
+
+Examples:
+  rev file.txt              Reverse each line in file
+  echo "hello" | rev        Output: "olleh"
+`)
+			return nil
+		}
+	}
+
 	processFunc := func(input io.Reader) error {
 		scanner := bufio.NewScanner(input)
 		for scanner.Scan() {
