@@ -6,7 +6,6 @@ import (
 	"io"
 	"sort"
 	"strconv"
-	"strings"
 )
 
 // Sort sorts lines of text
@@ -27,64 +26,62 @@ func Sort(args []string, stdin io.Reader, stdout io.Writer) error {
 		}
 	}
 
-	// Read all lines
-	var lines []string
-	scanner := bufio.NewScanner(stdin)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
+	processFunc := func(input io.Reader) error {
+		var lines []string
+		scanner := bufio.NewScanner(input)
 
-	if err := scanner.Err(); err != nil {
-		return err
-	}
+		for scanner.Scan() {
+			lines = append(lines, scanner.Text())
+		}
 
-	// Remove duplicates if unique flag is set
-	if unique {
-		seen := make(map[string]bool)
-		var uniqueLines []string
-		for _, line := range lines {
-			if !seen[line] {
-				seen[line] = true
-				uniqueLines = append(uniqueLines, line)
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+
+		// Remove duplicates if -u flag is set
+		if unique {
+			seen := make(map[string]bool)
+			var uniqueLines []string
+			for _, line := range lines {
+				if !seen[line] {
+					seen[line] = true
+					uniqueLines = append(uniqueLines, line)
+				}
+			}
+			lines = uniqueLines
+		}
+
+		// Sort lines
+		if numeric {
+			sort.Slice(lines, func(i, j int) bool {
+				a, errA := strconv.Atoi(lines[i])
+				b, errB := strconv.Atoi(lines[j])
+				if errA != nil || errB != nil {
+					// Fall back to string comparison if not numeric
+					if reverse {
+						return lines[i] > lines[j]
+					}
+					return lines[i] < lines[j]
+				}
+				if reverse {
+					return a > b
+				}
+				return a < b
+			})
+		} else {
+			if reverse {
+				sort.Sort(sort.Reverse(sort.StringSlice(lines)))
+			} else {
+				sort.Strings(lines)
 			}
 		}
-		lines = uniqueLines
+
+		for _, line := range lines {
+			fmt.Fprintln(stdout, line)
+		}
+
+		return nil
 	}
 
-	// Sort lines
-	if numeric {
-		sort.Slice(lines, func(i, j int) bool {
-			a, errA := strconv.ParseFloat(strings.TrimSpace(lines[i]), 64)
-			b, errB := strconv.ParseFloat(strings.TrimSpace(lines[j]), 64)
-
-			if errA != nil && errB != nil {
-				// Both are not numbers, sort lexically
-				result := lines[i] < lines[j]
-				return result != reverse
-			}
-			if errA != nil {
-				// a is not a number, b is
-				return reverse
-			}
-			if errB != nil {
-				// b is not a number, a is
-				return !reverse
-			}
-			// Both are numbers
-			result := a < b
-			return result != reverse
-		})
-	} else {
-		sort.Slice(lines, func(i, j int) bool {
-			result := lines[i] < lines[j]
-			return result != reverse
-		})
-	}
-
-	// Output sorted lines
-	for _, line := range lines {
-		fmt.Fprintln(stdout, line)
-	}
-
-	return nil
+	return processInput(args, stdin, processFunc)
 }

@@ -19,18 +19,21 @@ func Nl(args []string, stdin io.Reader, stdout io.Writer) error {
 		}
 	}
 
-	scanner := bufio.NewScanner(stdin)
-	lineNum := 1
-	for scanner.Scan() {
-		line := scanner.Text()
+	processFunc := func(input io.Reader) error {
+		scanner := bufio.NewScanner(input)
+		lineNum := 1
+		for scanner.Scan() {
+			line := scanner.Text()
 
-		if numberNonEmpty && strings.TrimSpace(line) == "" {
-			fmt.Fprintln(stdout, line)
-		} else {
-			fmt.Fprintf(stdout, "%6d\t%s\n", lineNum, line)
-			lineNum++
+			if numberNonEmpty && strings.TrimSpace(line) == "" {
+				fmt.Fprintln(stdout, line)
+			} else {
+				fmt.Fprintf(stdout, "%6d\t%s\n", lineNum, line)
+				lineNum++
+			}
 		}
+		return scanner.Err()
 	}
 
-	return scanner.Err()
+	return processInput(args, stdin, processFunc)
 }

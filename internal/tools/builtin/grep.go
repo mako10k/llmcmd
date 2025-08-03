@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 )
 
@@ -14,13 +13,13 @@ func Grep(args []string, stdin io.Reader, stdout io.Writer) error {
 		return fmt.Errorf("grep: missing pattern")
 	}
 
-	pattern := args[0]
+	// Parse flags and pattern
 	invertMatch := false
 	ignoreCase := false
 	lineNumber := false
+	var pattern string
+	var files []string
 
-	// Parse flags (simplified)
-	finalPattern := pattern
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "-") {
 			switch arg {
@@ -31,36 +30,59 @@ func Grep(args []string, stdin io.Reader, stdout io.Writer) error {
 			case "-n":
 				lineNumber = true
 			}
+		} else if pattern == "" {
+			pattern = arg
 		} else {
-			finalPattern = arg
-			break
+			files = append(files, arg)
 		}
 	}
 
-	// Compile regex
-	if ignoreCase {
-		finalPattern = "(?i)" + finalPattern
+	if pattern == "" {
+		return fmt.Errorf("grep: missing pattern")
 	}
-	regex, err := regexp.Compile(finalPattern)
+
+	// Compile regex using common function
+	regex, err := compileRegex(pattern, ignoreCase)
 	if err != nil {
-		return fmt.Errorf("invalid regex pattern: %s", err)
+		return err
 	}
 
-	scanner := bufio.NewScanner(stdin)
-	lineNum := 1
-	for scanner.Scan() {
-		line := scanner.Text()
-		matches := regex.MatchString(line)
+	// Process function for each input
+	processFunc := func(input io.Reader) error {
+		scanner := bufio.NewScanner(input)
+		lineNum := 1
+		for scanner.Scan() {
+			line := scanner.Text()
+			matches := regex.MatchString(line)
 
-		if matches != invertMatch { // XOR logic
-			if lineNumber {
-				fmt.Fprintf(stdout, "%d:%s\n", lineNum, line)
-			} else {
-				fmt.Fprintln(stdout, line)
+			if matches != invertMatch { // XOR logic
+				if lineNumber {
+					fmt.Fprintf(stdout, "%d:%s\n", lineNum, line)
+				} else {
+					fmt.Fprintln(stdout, line)
+				}
 			}
+			lineNum++
 		}
-		lineNum++
+		return scanner.Err()
 	}
 
-	return scanner.Err()
+	// Use files if specified, otherwise stdin
+	if len(files) == 0 {
+		return processFunc(stdin)
+	}
+
+	for _, filename := range files {
+		file, err := openFileForReading(filename)
+		if err != nil {
+			return fmt.Errorf("cannot open %s: %v", filename, err)
+		}
+		err = processFunc(file)
+		file.Close()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

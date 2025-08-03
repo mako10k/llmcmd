@@ -30,55 +30,76 @@ func Tr(args []string, stdin io.Reader, stdout io.Writer) error {
 			deleteRunes[r] = true
 		}
 
-		scanner := bufio.NewScanner(stdin)
+		processFunc := func(input io.Reader) error {
+			scanner := bufio.NewScanner(input)
+			for scanner.Scan() {
+				line := scanner.Text()
+				var result strings.Builder
+
+				for _, r := range line {
+					if !deleteRunes[r] {
+						result.WriteRune(r)
+					}
+				}
+
+				fmt.Fprintln(stdout, result.String())
+			}
+			return scanner.Err()
+		}
+
+		// Remove -d and character set from args
+		var remainingArgs []string
+		if len(args) > 1 {
+			remainingArgs = args[1:]
+		}
+		return processInput(remainingArgs, stdin, processFunc)
+	}
+
+	// Translation mode
+	if len(args) < 2 {
+		return fmt.Errorf("tr: missing operands")
+	}
+
+	set1 := args[0]
+	set2 := args[1]
+
+	// Create translation map
+	replaceMap := make(map[rune]rune)
+	runes1 := []rune(set1)
+	runes2 := []rune(set2)
+
+	minLen := len(runes1)
+	if len(runes2) < minLen {
+		minLen = len(runes2)
+	}
+
+	for i := 0; i < minLen; i++ {
+		replaceMap[runes1[i]] = runes2[i]
+	}
+
+	processFunc := func(input io.Reader) error {
+		scanner := bufio.NewScanner(input)
 		for scanner.Scan() {
 			line := scanner.Text()
 			var result strings.Builder
+
 			for _, r := range line {
-				if !deleteRunes[r] {
+				if replacement, exists := replaceMap[r]; exists {
+					result.WriteRune(replacement)
+				} else {
 					result.WriteRune(r)
 				}
 			}
+
 			fmt.Fprintln(stdout, result.String())
 		}
 		return scanner.Err()
 	}
 
-	// Translation mode
-	if len(args) < 2 {
-		return fmt.Errorf("tr: missing replacement set")
+	// Remove first two arguments (set1, set2) from args
+	var remainingArgs []string
+	if len(args) > 2 {
+		remainingArgs = args[2:]
 	}
-
-	fromSet := args[0]
-	toSet := args[1]
-
-	fromRunes := []rune(fromSet)
-	toRunes := []rune(toSet)
-
-	// Create translation map
-	translation := make(map[rune]rune)
-	for i, r := range fromRunes {
-		if i < len(toRunes) {
-			translation[r] = toRunes[i]
-		} else if len(toRunes) > 0 {
-			// Use last character for remaining translations
-			translation[r] = toRunes[len(toRunes)-1]
-		}
-	}
-
-	scanner := bufio.NewScanner(stdin)
-	for scanner.Scan() {
-		line := scanner.Text()
-		var result strings.Builder
-		for _, r := range line {
-			if newR, exists := translation[r]; exists {
-				result.WriteRune(newR)
-			} else {
-				result.WriteRune(r)
-			}
-		}
-		fmt.Fprintln(stdout, result.String())
-	}
-
-	return scanner.Err()
+	return processInput(remainingArgs, stdin, processFunc)
 }

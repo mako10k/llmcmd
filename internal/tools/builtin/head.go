@@ -5,24 +5,36 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 )
 
-// Head outputs the first n lines (default 10)
+// Head shows the first n lines of input (default: 10)
 func Head(args []string, stdin io.Reader, stdout io.Writer) error {
-	n := 10
-	if len(args) > 0 && strings.HasPrefix(args[0], "-") {
-		if val, err := strconv.Atoi(args[0][1:]); err == nil {
-			n = val
+	lines := 10
+
+	// Parse number of lines from arguments
+	for i, arg := range args {
+		if arg == "-n" && i+1 < len(args) {
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				return fmt.Errorf("invalid number: %s", args[i+1])
+			}
+			if n < 0 {
+				return fmt.Errorf("negative line count: %d", n)
+			}
+			lines = n
+			// Remove processed arguments
+			args = append(args[:i], args[i+2:]...)
+			break
 		}
 	}
 
-	scanner := bufio.NewScanner(stdin)
-	count := 0
-	for scanner.Scan() && count < n {
-		fmt.Fprintln(stdout, scanner.Text())
-		count++
+	processFunc := func(input io.Reader) error {
+		scanner := bufio.NewScanner(input)
+		for i := 0; i < lines && scanner.Scan(); i++ {
+			fmt.Fprintln(stdout, scanner.Text())
+		}
+		return scanner.Err()
 	}
 
-	return scanner.Err()
+	return processInput(args, stdin, processFunc)
 }

@@ -6,61 +6,52 @@ import (
 	"io"
 )
 
-// Uniq removes duplicate consecutive lines
+// Uniq removes duplicate adjacent lines from input
 func Uniq(args []string, stdin io.Reader, stdout io.Writer) error {
-	countOnly := false
-	duplicatesOnly := false
-	uniqueOnly := false
+	count := false
 
 	// Parse flags
 	for _, arg := range args {
-		switch arg {
-		case "-c":
-			countOnly = true
-		case "-d":
-			duplicatesOnly = true
-		case "-u":
-			uniqueOnly = true
+		if arg == "-c" {
+			count = true
 		}
 	}
 
-	scanner := bufio.NewScanner(stdin)
-	var prevLine string
-	var count int
-	first := true
+	processFunc := func(input io.Reader) error {
+		scanner := bufio.NewScanner(input)
+		var lastLine string
+		var lineCount int
 
-	outputLine := func(line string, cnt int) {
-		if countOnly {
-			fmt.Fprintf(stdout, "%4d %s\n", cnt, line)
-		} else if duplicatesOnly && cnt > 1 {
-			fmt.Fprintln(stdout, line)
-		} else if uniqueOnly && cnt == 1 {
-			fmt.Fprintln(stdout, line)
-		} else if !duplicatesOnly && !uniqueOnly {
-			fmt.Fprintln(stdout, line)
+		for scanner.Scan() {
+			line := scanner.Text()
+
+			if line != lastLine {
+				// Print previous line if it exists
+				if lastLine != "" {
+					if count {
+						fmt.Fprintf(stdout, "%6d %s\n", lineCount, lastLine)
+					} else {
+						fmt.Fprintln(stdout, lastLine)
+					}
+				}
+				lastLine = line
+				lineCount = 1
+			} else {
+				lineCount++
+			}
 		}
-	}
 
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if first {
-			prevLine = line
-			count = 1
-			first = false
-		} else if line == prevLine {
-			count++
-		} else {
-			outputLine(prevLine, count)
-			prevLine = line
-			count = 1
+		// Print the last line
+		if lastLine != "" {
+			if count {
+				fmt.Fprintf(stdout, "%6d %s\n", lineCount, lastLine)
+			} else {
+				fmt.Fprintln(stdout, lastLine)
+			}
 		}
+
+		return scanner.Err()
 	}
 
-	// Output the last line
-	if !first {
-		outputLine(prevLine, count)
-	}
-
-	return scanner.Err()
+	return processInput(args, stdin, processFunc)
 }

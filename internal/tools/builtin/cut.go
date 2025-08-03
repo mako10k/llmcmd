@@ -8,74 +8,49 @@ import (
 	"strings"
 )
 
-// Cut extracts specific fields or character ranges from lines
+// Cut extracts selected portions of lines from input
 func Cut(args []string, stdin io.Reader, stdout io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("cut: missing field specification")
-	}
-
 	var fields []int
-	var charRange []int
-	delimiter := "\t"
-	useFields := false
-	useChars := false
+	var delimiter string = "	" // Default delimiter
 
 	// Parse arguments
 	for i, arg := range args {
-		switch arg {
-		case "-f":
-			if i+1 < len(args) {
-				useFields = true
-				fieldSpec := args[i+1]
-				for _, spec := range strings.Split(fieldSpec, ",") {
-					if field, err := strconv.Atoi(spec); err == nil {
-						fields = append(fields, field-1) // Convert to 0-based
+		if arg == "-f" && i+1 < len(args) {
+			// Parse field numbers
+			fieldSpec := args[i+1]
+			for _, fieldStr := range strings.Split(fieldSpec, ",") {
+				if field, err := strconv.Atoi(strings.TrimSpace(fieldStr)); err == nil {
+					if field > 0 {
+						fields = append(fields, field-1) // Convert to 0-indexed
 					}
 				}
 			}
-		case "-c":
-			if i+1 < len(args) {
-				useChars = true
-				charSpec := args[i+1]
-				for _, spec := range strings.Split(charSpec, ",") {
-					if char, err := strconv.Atoi(spec); err == nil {
-						charRange = append(charRange, char-1) // Convert to 0-based
-					}
-				}
-			}
-		case "-d":
-			if i+1 < len(args) {
-				delimiter = args[i+1]
-			}
+		} else if arg == "-d" && i+1 < len(args) {
+			delimiter = args[i+1]
 		}
 	}
 
-	scanner := bufio.NewScanner(stdin)
-	for scanner.Scan() {
-		line := scanner.Text()
+	if len(fields) == 0 {
+		return fmt.Errorf("cut: you must specify a list of fields")
+	}
 
-		if useFields {
+	processFunc := func(input io.Reader) error {
+		scanner := bufio.NewScanner(input)
+		for scanner.Scan() {
+			line := scanner.Text()
 			parts := strings.Split(line, delimiter)
+
 			var selected []string
-			for _, fieldIdx := range fields {
-				if fieldIdx >= 0 && fieldIdx < len(parts) {
-					selected = append(selected, parts[fieldIdx])
+			for _, fieldIndex := range fields {
+				if fieldIndex < len(parts) {
+					selected = append(selected, parts[fieldIndex])
 				}
 			}
+
 			fmt.Fprintln(stdout, strings.Join(selected, delimiter))
-		} else if useChars {
-			runes := []rune(line)
-			var selected []rune
-			for _, charIdx := range charRange {
-				if charIdx >= 0 && charIdx < len(runes) {
-					selected = append(selected, runes[charIdx])
-				}
-			}
-			fmt.Fprintln(stdout, string(selected))
-		} else {
-			fmt.Fprintln(stdout, line)
 		}
+		return scanner.Err()
 	}
 
-	return scanner.Err()
+	return processInput(args, stdin, processFunc)
 }
