@@ -10,26 +10,54 @@ import (
 )
 
 func main() {
-	// Parse command line arguments
+	// Parse command line arguments with strict validation
 	var inputFile, outputFile string
 	var script string
 	var interactive bool
+	var scriptFile string
 
 	args := os.Args[1:]
-	for i, arg := range args {
+	i := 0
+	for i < len(args) {
+		arg := args[i]
 		switch arg {
 		case "-i":
-			if i+1 < len(args) {
-				inputFile = args[i+1]
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "Error: option %s requires an argument\n", arg)
+				os.Exit(1)
 			}
+			if inputFile != "" {
+				fmt.Fprintf(os.Stderr, "Error: option -i specified multiple times\n")
+				os.Exit(1)
+			}
+			i++
+			inputFile = args[i]
 		case "-o":
-			if i+1 < len(args) {
-				outputFile = args[i+1]
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "Error: option %s requires an argument\n", arg)
+				os.Exit(1)
 			}
+			if outputFile != "" {
+				fmt.Fprintf(os.Stderr, "Error: option -o specified multiple times\n")
+				os.Exit(1)
+			}
+			i++
+			outputFile = args[i]
 		case "-c":
-			if i+1 < len(args) {
-				script = args[i+1]
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "Error: option %s requires an argument\n", arg)
+				os.Exit(1)
 			}
+			if script != "" {
+				fmt.Fprintf(os.Stderr, "Error: cannot specify both -c option and script file\n")
+				os.Exit(1)
+			}
+			if scriptFile != "" {
+				fmt.Fprintf(os.Stderr, "Error: cannot specify both -c option and script file\n")
+				os.Exit(1)
+			}
+			i++
+			script = args[i]
 		case "--help", "-h":
 			printUsage()
 			return
@@ -37,16 +65,39 @@ func main() {
 			fmt.Printf("%s version %s\n", llmsh.Name, llmsh.Version)
 			return
 		default:
-			if !strings.HasPrefix(arg, "-") && script == "" {
-				// Read script from file
-				content, err := os.ReadFile(arg)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error reading script file %s: %v\n", arg, err)
-					os.Exit(1)
-				}
-				script = string(content)
+			if strings.HasPrefix(arg, "-") {
+				fmt.Fprintf(os.Stderr, "Error: unknown option: %s\n", arg)
+				printUsage()
+				os.Exit(1)
 			}
+			// This should be a script file
+			if script != "" {
+				fmt.Fprintf(os.Stderr, "Error: cannot specify both -c option and script file\n")
+				os.Exit(1)
+			}
+			if scriptFile != "" {
+				fmt.Fprintf(os.Stderr, "Error: multiple script files specified: %s and %s\n", scriptFile, arg)
+				os.Exit(1)
+			}
+			scriptFile = arg
 		}
+		i++
+	}
+
+	// Validate mutual exclusivity
+	if script != "" && scriptFile != "" {
+		fmt.Fprintf(os.Stderr, "Error: cannot specify both -c option and script file\n")
+		os.Exit(1)
+	}
+
+	// Read script from file if specified
+	if scriptFile != "" {
+		content, err := os.ReadFile(scriptFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading script file %s: %v\n", scriptFile, err)
+			os.Exit(1)
+		}
+		script = string(content)
 	}
 
 	// If no script provided, check if we should read from stdin or be interactive
@@ -108,6 +159,12 @@ func printUsage() {
 	fmt.Println("  -c <script>   Execute script string")
 	fmt.Println("  -h, --help    Show this help")
 	fmt.Println("  --version     Show version")
+	fmt.Println("")
+	fmt.Println("Arguments:")
+	fmt.Println("  script        Script file to execute (mutually exclusive with -c)")
+	fmt.Println("")
+	fmt.Println("Note: Options -c and script file are mutually exclusive.")
+	fmt.Println("      If neither is specified, enters interactive mode or reads from stdin.")
 	fmt.Println("")
 	fmt.Println("Examples:")
 	fmt.Printf("  %s -c 'echo hello | grep ello'\n", os.Args[0])
