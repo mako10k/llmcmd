@@ -78,4 +78,7 @@ llmsh-test
 *.db
 *.db-shm
 *.db-wal
+data/
+context-memory.db*
 data/memory.db*
+data/chroma_db/
