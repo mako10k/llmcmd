@@ -107,27 +107,17 @@ func (h *HelpSystem) FormatCommandList() string {
 	result.WriteString("LLMSH - Minimal Shell for LLM Text Processing\n\n")
 	result.WriteString("AVAILABLE COMMANDS\n\n")
 
+	// Get actually implemented commands from builtin.Commands
 	categories := map[string][]string{
 		"Built-in Text Processing": {},
-		"Basic Utilities":          {},
-		"Data Conversion":          {},
-		"Calculation":              {},
-		"Compression":              {},
 		"Special Commands":         {},
 	}
 
-	builtins := []string{"cat", "grep", "sed", "head", "tail", "sort", "wc", "tr", "cut", "uniq", "nl", "tee", "rev", "diff", "patch"}
-	utilities := []string{"echo", "printf", "true", "false", "test", "[", "yes", "basename", "dirname", "seq"}
-	conversion := []string{"od", "hexdump", "base64", "uuencode", "uudecode", "fmt", "fold", "expand", "unexpand", "join", "comm", "csplit", "split"}
-	calculation := []string{"bc", "dc", "expr"}
-	compression := []string{"gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz"}
+	// Actually implemented builtin commands (from internal/tools/builtin/commands.go)
+	builtins := []string{"cat", "grep", "sed", "head", "tail", "sort", "wc", "tr", "cut", "uniq", "nl", "tee", "rev", "diff", "patch", "echo"}
 	special := []string{"llmcmd", "llmsh", "help", "man"}
 
 	categories["Built-in Text Processing"] = builtins
-	categories["Basic Utilities"] = utilities
-	categories["Data Conversion"] = conversion
-	categories["Calculation"] = calculation
-	categories["Compression"] = compression
 	categories["Special Commands"] = special
 
 	for category, commands := range categories {
