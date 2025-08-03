@@ -30,23 +30,28 @@ type App struct {
 	// Shared quota support
 	sharedQuota *openai.SharedQuotaManager
 	processID   string
+	metadata    *ApplicationMetadata
+	isTopLevel  bool // Whether this App instance represents a top-level execution
 }
 
 // New creates a new application instance
 func New(config *cli.Config) *App {
 	return &App{
-		config:    config,
-		startTime: time.Now(),
+		config:     config,
+		startTime:  time.Now(),
+		isTopLevel: true, // External calls are always top-level
 	}
 }
 
 // NewWithSharedQuota creates a new application with shared quota manager
-func NewWithSharedQuota(config *cli.Config, quotaManager *openai.SharedQuotaManager, processID string, metadata ApplicationMetadata) *App {
+func NewWithSharedQuota(config *cli.Config, quotaManager *openai.SharedQuotaManager, processID string, metadata ApplicationMetadata, isTopLevel bool) *App {
 	app := &App{
 		config:      config,
 		startTime:   time.Now(),
 		sharedQuota: quotaManager,
 		processID:   processID,
+		metadata:    &metadata,
+		isTopLevel:  isTopLevel,
 	}
 
 	// Register process with quota manager
@@ -82,7 +87,7 @@ func (a *App) Run() error {
 		log.Printf("Configuration loaded successfully")
 		log.Printf("Config file: %s", a.config.ConfigFile)
 		log.Printf("Input files: %v", a.config.InputFiles)
-		log.Printf("Output file: %s", a.config.OutputFile)
+		log.Printf("Output files: %v", a.config.OutputFiles)
 		log.Printf("Model: %s", a.fileConfig.Model)
 		log.Printf("Max API calls: %d", a.fileConfig.MaxAPICalls)
 	}
@@ -148,14 +153,30 @@ func (a *App) initializeOpenAI() error {
 // initializeToolEngine initializes the tool execution engine
 func (a *App) initializeToolEngine() error {
 	shellExecutor := &SimpleShellExecutor{}
-	virtualFS := NewSimpleVirtualFS()
+	
+	// Use the isTopLevel from the App instance
+	isTopLevel := a.isTopLevel
+	
+	virtualFS := NewEnhancedVFSWithLevel(isTopLevel)
+
+	// Allow input/output files for real file access if top-level
+	if isTopLevel {
+		for _, inputFile := range a.config.InputFiles {
+			virtualFS.AllowRealFile(inputFile)
+		}
+		for _, outputFile := range a.config.OutputFiles {
+			if outputFile != "" {
+				virtualFS.AllowRealFile(outputFile)
+			}
+		}
+	}
 
 	// Configure shell executor with VFS for redirect support
 	shellExecutor.SetVFS(virtualFS)
 
 	config := tools.EngineConfig{
 		InputFiles:    a.config.InputFiles,
-		OutputFile:    a.config.OutputFile,
+		OutputFiles:   a.config.OutputFiles,
 		MaxFileSize:   a.fileConfig.MaxFileSize,
 		BufferSize:    a.fileConfig.ReadBufferSize,
 		NoStdin:       a.config.NoStdin,
@@ -170,8 +191,8 @@ func (a *App) initializeToolEngine() error {
 	}
 
 	if a.config.Verbose {
-		log.Printf("Tool engine initialized (input files: %d, buffer size: %d)",
-			len(a.config.InputFiles), a.fileConfig.ReadBufferSize)
+		log.Printf("Tool engine initialized with EnhancedVFS (isTopLevel: %v, input files: %d, buffer size: %d)",
+			isTopLevel, len(a.config.InputFiles), a.fileConfig.ReadBufferSize)
 	}
 
 	return nil
@@ -312,13 +333,13 @@ func (a *App) executeTask() error {
 			// Output the LLM response directly when tools are disabled
 			if a.fileConfig.DisableTools && choice.Message.Content != "" {
 				var output io.Writer
-				if a.config.OutputFile != "" {
+				if len(a.config.OutputFiles) > 0 && a.config.OutputFiles[0] != "" {
 					// Output file is handled by tool engine, but when tools are disabled,
 					// we need to handle it ourselves
-					if a.config.OutputFile == "-" {
+					if a.config.OutputFiles[0] == "-" {
 						output = os.Stdout
 					} else {
-						file, err := os.Create(a.config.OutputFile)
+						file, err := os.Create(a.config.OutputFiles[0])
 						if err != nil {
 							return fmt.Errorf("failed to create output file: %w", err)
 						}

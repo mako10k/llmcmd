@@ -119,15 +119,19 @@ Server → Client: "ERROR VFS access denied: '/etc/passwd'\n"
 
 ### 2. READ コマンド
 
-指定されたファイル番号から指定バイト数を読み込みます。
+指定されたファイル番号から指定バイト数を読み込みます。IsTopLevelCmdがtrueの場合、VFSサーバが実ファイルを開きます。
 
 #### リクエスト
 ```
-READ fileno size\n
+READ fileno size isTopLevel\n
 ```
 
 **パラメータ**:
 - `fileno`: ファイル番号
+- `size`: 読み込みバイト数
+- `isTopLevel`: トップレベル実行フラグ (`true`|`false`)
+  - `true`: VFSサーバが実ファイルを開く（制限なし）
+  - `false`: VFS制限環境での読み込み
 - `size`: 読み込みバイト数
 
 #### レスポンス
@@ -151,9 +155,10 @@ ERROR message\n
 ```
 
 **エラーパターン**:
-- `ERROR READ requires fileno and size` - パラメータ不足
+- `ERROR READ requires fileno, size, and isTopLevel` - パラメータ不足
 - `ERROR invalid fileno: 99999` - 無効なファイル番号
 - `ERROR invalid size: abc` - 無効なサイズ
+- `ERROR invalid isTopLevel: maybe` - 無効なisTopLevelフラグ
 - `ERROR READ not yet implemented` - 未実装（Phase 1）
 
 ### 3. WRITE コマンド

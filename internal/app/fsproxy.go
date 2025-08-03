@@ -126,8 +126,8 @@ func (proxy *FSProxyManager) readRequest() (FSRequest, error) {
 		}
 
 	case "READ":
-		if len(parts) < 3 {
-			return FSRequest{}, fmt.Errorf("READ requires fileno and size")
+		if len(parts) < 4 {
+			return FSRequest{}, fmt.Errorf("READ requires fileno, size, and isTopLevel")
 		}
 		if fileno, err := strconv.Atoi(parts[1]); err != nil {
 			return FSRequest{}, fmt.Errorf("invalid fileno: %s", parts[1])
@@ -139,6 +139,12 @@ func (proxy *FSProxyManager) readRequest() (FSRequest, error) {
 		} else {
 			request.Size = size
 		}
+		// Parse IsTopLevel parameter
+		isTopLevel := parts[3]
+		if isTopLevel != "true" && isTopLevel != "false" {
+			return FSRequest{}, fmt.Errorf("invalid isTopLevel: %s", isTopLevel)
+		}
+		request.Context = isTopLevel // Store in Context field for now
 
 	case "WRITE":
 		if len(parts) < 3 {
@@ -188,7 +194,9 @@ func (proxy *FSProxyManager) processRequest(request FSRequest) FSResponse {
 	case "OPEN":
 		return proxy.handleOpen(request.Filename, request.Mode, request.Context)
 	case "READ":
-		return proxy.handleRead(request.Fileno, request.Size)
+		// Context field contains isTopLevel string ("true"/"false")
+		isTopLevel := (request.Context == "true")
+		return proxy.handleRead(request.Fileno, request.Size, isTopLevel)
 	case "WRITE":
 		return proxy.handleWrite(request.Fileno, request.Data)
 	case "CLOSE":
@@ -296,8 +304,8 @@ func (proxy *FSProxyManager) handleOpen(filename, mode, context string) FSRespon
 	}
 }
 
-// handleRead handles READ requests
-func (proxy *FSProxyManager) handleRead(fileno int, size int) FSResponse {
+// handleRead handles READ requests with isTopLevel support
+func (proxy *FSProxyManager) handleRead(fileno int, size int, isTopLevel bool) FSResponse {
 	proxy.fdMutex.RLock()
 	file, exists := proxy.openFiles[fileno]
 	proxy.fdMutex.RUnlock()
@@ -307,6 +315,15 @@ func (proxy *FSProxyManager) handleRead(fileno int, size int) FSResponse {
 			Status: "ERROR",
 			Data:   fmt.Sprintf("invalid fileno: %d", fileno),
 		}
+	}
+
+	// If isTopLevel is true, the VFS server should open the real file (no restrictions)
+	// For now, we'll log this behavior - the actual implementation would require
+	// storing the isTopLevel context with each open file descriptor
+	if isTopLevel {
+		log.Printf("FS Proxy: READ with isTopLevel=true for fd %d (VFS server should access real file)", fileno)
+	} else {
+		log.Printf("FS Proxy: READ with isTopLevel=false for fd %d (VFS restricted environment)", fileno)
 	}
 
 	// Read data from file

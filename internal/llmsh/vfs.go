@@ -8,6 +8,16 @@ import (
 	"sync"
 )
 
+// FileAccess represents file access permissions
+type FileAccess int
+
+const (
+	AccessNone FileAccess = iota
+	AccessRead
+	AccessWrite
+	AccessReadWrite
+)
+
 // VirtualFileSystem manages virtual files and pipes for llmsh
 type VirtualFileSystem struct {
 	mu sync.RWMutex
@@ -15,12 +25,11 @@ type VirtualFileSystem struct {
 	// Virtual files (temporary named pipes)
 	files map[string]*VirtualFile
 
-	// Real files (stdin, stdout, stderr, input/output files)
+	// Real files (stdin, stdout, stderr, and dynamically opened files)
 	realFiles map[string]io.ReadWriteCloser
 
-	// Allowed file access
-	inputFile  string
-	outputFile string
+	// File access permissions from -i/-o flags
+	fileAccess map[string]FileAccess
 }
 
 // VirtualFile represents a virtual file in memory
@@ -79,93 +88,151 @@ func (vf *VirtualFile) Close() error {
 }
 
 // NewVirtualFileSystem creates a new VFS
-func NewVirtualFileSystem(inputFile, outputFile string) *VirtualFileSystem {
+func NewVirtualFileSystem(inputFiles, outputFiles []string) *VirtualFileSystem {
 	vfs := &VirtualFileSystem{
 		files:      make(map[string]*VirtualFile),
 		realFiles:  make(map[string]io.ReadWriteCloser),
-		inputFile:  inputFile,
-		outputFile: outputFile,
+		fileAccess: make(map[string]FileAccess),
 	}
 
-	// Set up real files
+	// Set up file access permissions
+	// -i files are read-only
+	for _, file := range inputFiles {
+		if vfs.fileAccess[file] == AccessWrite {
+			vfs.fileAccess[file] = AccessReadWrite // Already write, now both
+		} else {
+			vfs.fileAccess[file] = AccessRead
+		}
+	}
+
+	// -o files are write-only
+	for _, file := range outputFiles {
+		if vfs.fileAccess[file] == AccessRead {
+			vfs.fileAccess[file] = AccessReadWrite // Already read, now both
+		} else {
+			vfs.fileAccess[file] = AccessWrite
+		}
+	}
+
+	// Set up standard streams
 	vfs.realFiles["stdin"] = os.Stdin
 	vfs.realFiles["stdout"] = os.Stdout
 	vfs.realFiles["stderr"] = os.Stderr
+	vfs.fileAccess["stdin"] = AccessRead
+	vfs.fileAccess["stdout"] = AccessWrite
+	vfs.fileAccess["stderr"] = AccessWrite
 
 	return vfs
 }
 
 // OpenForRead opens a file for reading
-func (vfs *VirtualFileSystem) OpenForRead(filename string) (io.ReadCloser, error) {
+func (vfs *VirtualFileSystem) OpenForRead(filename string, isTopLevelCmd bool) (io.ReadCloser, error) {
 	vfs.mu.RLock()
 	defer vfs.mu.RUnlock()
 
-	// Check for real files first
-	if filename == "stdin" || filename == vfs.inputFile {
-		if realFile, exists := vfs.realFiles[filename]; exists {
-			return realFile.(io.ReadCloser), nil
-		}
-
-		// If it's the input file, try to open it
-		if filename == vfs.inputFile && vfs.inputFile != "" {
-			file, err := os.Open(vfs.inputFile)
-			if err != nil {
-				return nil, fmt.Errorf("cannot open input file %s: %v", vfs.inputFile, err)
-			}
-			vfs.realFiles[filename] = file
-			return file, nil
-		}
+	// Check for already opened real files (including stdin)
+	if realFile, exists := vfs.realFiles[filename]; exists {
+		return realFile.(io.ReadCloser), nil
 	}
 
-	// Check for virtual files
+	// Check for virtual files (no access restrictions)
 	if vfile, exists := vfs.files[filename]; exists {
 		return vfile, nil
 	}
 
-	return nil, fmt.Errorf("file not found: %s", filename)
+	// If isTopLevelCmd=true, always try to open real file
+	if isTopLevelCmd {
+		file, err := os.Open(filename)
+		if err != nil {
+			return nil, fmt.Errorf("cannot open file %s: %v", filename, err)
+		}
+		// Cache the opened file
+		vfs.realFiles[filename] = file
+		return file, nil
+	}
+
+	// For isTopLevelCmd=false, check access permissions
+	access, hasAccess := vfs.fileAccess[filename]
+	if hasAccess && (access == AccessRead || access == AccessReadWrite) {
+		// Try to open as real file
+		file, err := os.Open(filename)
+		if err != nil {
+			return nil, fmt.Errorf("cannot open file %s: %v", filename, err)
+		}
+
+		// Cache the opened file
+		vfs.realFiles[filename] = file
+		return file, nil
+	}
+
+	// File not found or not accessible
+	return nil, fmt.Errorf("file not found or not accessible for reading: %s", filename)
 }
 
 // OpenForWrite opens a file for writing
-func (vfs *VirtualFileSystem) OpenForWrite(filename string, append bool) (io.WriteCloser, error) {
+func (vfs *VirtualFileSystem) OpenForWrite(filename string, append bool, isTopLevelCmd bool) (io.WriteCloser, error) {
 	vfs.mu.Lock()
 	defer vfs.mu.Unlock()
 
-	// Check for real files first
-	if filename == "stdout" || filename == "stderr" || filename == vfs.outputFile {
-		if realFile, exists := vfs.realFiles[filename]; exists {
-			return realFile.(io.WriteCloser), nil
-		}
-
-		// If it's the output file, try to create/open it
-		if filename == vfs.outputFile && vfs.outputFile != "" {
-			var file *os.File
-			var err error
-
-			if append {
-				file, err = os.OpenFile(vfs.outputFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-			} else {
-				file, err = os.Create(vfs.outputFile)
-			}
-
-			if err != nil {
-				return nil, fmt.Errorf("cannot create output file %s: %v", vfs.outputFile, err)
-			}
-
-			vfs.realFiles[filename] = file
-			return file, nil
-		}
+	// Check for already opened real files (including stdout, stderr)
+	if realFile, exists := vfs.realFiles[filename]; exists {
+		return realFile.(io.WriteCloser), nil
 	}
 
-	// Create or get virtual file
-	vfile, exists := vfs.files[filename]
-	if !exists {
-		vfile = NewVirtualFile(filename)
-		vfs.files[filename] = vfile
-	} else if !append {
-		// Truncate if not appending
-		vfile.buffer.Reset()
+	// Check for virtual files first (no access restrictions)
+	if vfile, exists := vfs.files[filename]; exists {
+		if !append {
+			// Truncate if not appending
+			vfile.buffer.Reset()
+		}
+		return vfile, nil
 	}
 
+	// If isTopLevelCmd=true, always try to open/create real file
+	if isTopLevelCmd {
+		var file *os.File
+		var err error
+
+		if append {
+			file, err = os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		} else {
+			file, err = os.Create(filename)
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("cannot create file %s: %v", filename, err)
+		}
+
+		// Cache the opened file
+		vfs.realFiles[filename] = file
+		return file, nil
+	}
+
+	// For isTopLevelCmd=false, check access permissions
+	access, hasAccess := vfs.fileAccess[filename]
+	if hasAccess && (access == AccessWrite || access == AccessReadWrite) {
+		// Try to open/create as real file
+		var file *os.File
+		var err error
+
+		if append {
+			file, err = os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		} else {
+			file, err = os.Create(filename)
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("cannot create file %s: %v", filename, err)
+		}
+
+		// Cache the opened file
+		vfs.realFiles[filename] = file
+		return file, nil
+	}
+
+	// If no real file access, create virtual file
+	vfile := NewVirtualFile(filename)
+	vfs.files[filename] = vfile
 	return vfile, nil
 }
 

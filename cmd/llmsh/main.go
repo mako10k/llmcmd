@@ -11,10 +11,11 @@ import (
 
 func main() {
 	// Parse command line arguments with strict validation
-	var inputFile, outputFile string
+	var inputFiles, outputFiles []string
 	var script string
 	var interactive bool
 	var scriptFile string
+	var virtual bool
 
 	args := os.Args[1:]
 	i := 0
@@ -26,23 +27,17 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Error: option %s requires an argument\n", arg)
 				os.Exit(1)
 			}
-			if inputFile != "" {
-				fmt.Fprintf(os.Stderr, "Error: option -i specified multiple times\n")
-				os.Exit(1)
-			}
 			i++
-			inputFile = args[i]
+			inputFiles = append(inputFiles, args[i])
 		case "-o":
 			if i+1 >= len(args) {
 				fmt.Fprintf(os.Stderr, "Error: option %s requires an argument\n", arg)
 				os.Exit(1)
 			}
-			if outputFile != "" {
-				fmt.Fprintf(os.Stderr, "Error: option -o specified multiple times\n")
-				os.Exit(1)
-			}
 			i++
-			outputFile = args[i]
+			outputFiles = append(outputFiles, args[i])
+		case "--virtual":
+			virtual = true
 		case "-c":
 			if i+1 >= len(args) {
 				fmt.Fprintf(os.Stderr, "Error: option %s requires an argument\n", arg)
@@ -119,9 +114,10 @@ func main() {
 
 	// Create shell configuration
 	config := &llmsh.Config{
-		InputFile:  inputFile,
-		OutputFile: outputFile,
-		Debug:      false,
+		InputFiles:   inputFiles,
+		OutputFiles:  outputFiles,
+		VirtualMode:  virtual,
+		Debug:        false,
 	}
 
 	// Create shell instance
@@ -154,8 +150,9 @@ func main() {
 func printUsage() {
 	fmt.Printf("Usage: %s [options] [script]\n\n", os.Args[0])
 	fmt.Println("Options:")
-	fmt.Println("  -i <file>     Input file (accessible as stdin)")
-	fmt.Println("  -o <file>     Output file (accessible as stdout)")
+	fmt.Println("  -i <file>     Input file hint (can be specified multiple times)")
+	fmt.Println("  -o <file>     Output file hint (can be specified multiple times)")
+	fmt.Println("  --virtual     Enable virtual mode (restricted file access)")
 	fmt.Println("  -c <script>   Execute script string")
 	fmt.Println("  -h, --help    Show this help")
 	fmt.Println("  --version     Show version")
@@ -165,9 +162,12 @@ func printUsage() {
 	fmt.Println("")
 	fmt.Println("Note: Options -c and script file are mutually exclusive.")
 	fmt.Println("      If neither is specified, enters interactive mode or reads from stdin.")
+	fmt.Println("      -i/-o options provide file hints to LLM for file selection.")
 	fmt.Println("")
 	fmt.Println("Examples:")
 	fmt.Printf("  %s -c 'echo hello | grep ello'\n", os.Args[0])
+	fmt.Printf("  %s -i data.txt -o result.txt script.llmsh\n", os.Args[0])
+	fmt.Printf("  %s --virtual -c 'cat | sort | uniq'\n", os.Args[0])
 	fmt.Printf("  echo 'cat file.txt | grep error' | %s\n", os.Args[0])
 	fmt.Printf("  %s script.llmsh\n", os.Args[0])
 	fmt.Printf("  %s  # Interactive mode\n", os.Args[0])

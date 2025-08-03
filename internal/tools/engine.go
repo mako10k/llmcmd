@@ -147,7 +147,7 @@ type ExecutionStats struct {
 // EngineConfig holds configuration for the tool engine
 type EngineConfig struct {
 	InputFiles    []string
-	OutputFile    string
+	OutputFiles   []string
 	MaxFileSize   int64
 	BufferSize    int
 	NoStdin       bool // Skip reading from stdin

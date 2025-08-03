@@ -84,7 +84,7 @@ func (core *LLMCmdCore) ExecuteWithArgs(args []string) error {
 	var app *App
 	if core.context.SharedQuota != nil {
 		// Internal call: use shared quota
-		app = NewWithSharedQuota(config, core.context.SharedQuota, core.context.ProcessID, core.metadata)
+		app = NewWithSharedQuota(config, core.context.SharedQuota, core.context.ProcessID, core.metadata, core.context.IsTopLevelCmd)
 	} else {
 		// External call: create new quota
 		app = New(config)

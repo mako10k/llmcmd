@@ -10,6 +10,27 @@ import (
 	"github.com/mako10k/llmcmd/internal/llmsh/parser"
 )
 
+// NewShell creates a new shell instance
+func NewShell(config *Config) (*Shell, error) {
+	if config == nil {
+		config = &Config{}
+	}
+
+	// Initialize components
+	vfs := NewVirtualFileSystem(config.InputFiles, config.OutputFiles)
+	help := NewHelpSystem()
+	parser := parser.NewParser()
+	executor := NewExecutor(vfs, help, config.QuotaManager)
+
+	return &Shell{
+		config:   config,
+		vfs:      vfs,
+		executor: executor,
+		parser:   parser,
+		help:     help,
+	}, nil
+}
+
 // Version information
 var (
 	Version     = "3.1.1"   // Will be overridden by build-time ldflags
@@ -40,8 +61,11 @@ type Shell struct {
 // Config holds shell configuration
 type Config struct {
 	// Allowed input/output files from command line
-	InputFile  string
-	OutputFile string
+	InputFiles  []string
+	OutputFiles []string
+
+	// Virtual mode flag (determines isTopLevelCmd behavior)
+	VirtualMode bool
 
 	// Quota management (inherited from parent llmcmd)
 	QuotaManager interface{}
@@ -57,7 +81,7 @@ func NewShell(config *Config) (*Shell, error) {
 	}
 
 	// Initialize components
-	vfs := NewVirtualFileSystem(config.InputFile, config.OutputFile)
+	vfs := NewVirtualFileSystem(config.InputFiles, config.OutputFiles)
 	help := NewHelpSystem()
 	parser := parser.NewParser()
 	executor := NewExecutor(vfs, help, config.QuotaManager)

@@ -438,8 +438,8 @@ func (c *Commands) executeLLMCmd(args []string, stdin io.ReadWriteCloser, stdout
 	}
 
 	// Execute with internal context
-	// TODO: Implement proper isTopLevel tracking for nested calls
-	isTopLevel := true // For now, assume first llmcmd call is top-level
+	// Nested llmcmd calls from llmsh are not top-level
+	isTopLevel := false // llmsh is always a nested execution context
 	err = app.ExecuteInternal(metadata, llmcmdArgs, c.sharedQuota, processID, parentID, isTopLevel)
 	if err != nil {
 		return fmt.Errorf("llmcmd: execution failed: %w", err)

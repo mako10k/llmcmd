@@ -20,12 +20,12 @@ var (
 // Config holds all configuration for the application
 type Config struct {
 	// Command line options
-	Prompt      string   // -p: LLM prompt/instructions (free text)
-	Preset      string   // -r/--preset: Preset prompt key
-	ListPresets bool     // --list-presets: Show available prompt presets
-	InputFiles  []string // -i: Input file paths (can be specified multiple times)
-	OutputFile  string   // -o: Output file path
-	Verbose     bool     // -v: Verbose logging
+	Prompt       string   // -p: LLM prompt/instructions (free text)
+	Preset       string   // -r/--preset: Preset prompt key
+	ListPresets  bool     // --list-presets: Show available prompt presets
+	InputFiles   []string // -i: Input file paths (can be specified multiple times)
+	OutputFiles  []string // -o: Output file paths (can be specified multiple times)
+	Verbose      bool     // -v: Verbose logging
 	ShowStats   bool     // --stats: Show detailed statistics
 	ConfigFile  string   // -c: Configuration file path
 	NoStdin     bool     // --no-stdin: Skip reading from stdin
@@ -42,6 +42,7 @@ type Config struct {
 func ParseArgs(args []string) (*Config, error) {
 	var config Config
 	var inputFiles arrayFlags
+	var outputFiles arrayFlags
 
 	// Create a custom FlagSet to handle our specific requirements
 	fs := flag.NewFlagSet("llmcmd", flag.ContinueOnError)
@@ -58,8 +59,8 @@ func ParseArgs(args []string) (*Config, error) {
 	fs.Var(&inputFiles, "i", "Input file path (can be specified multiple times)")
 	fs.Var(&inputFiles, "input", "Input file path (can be specified multiple times)")
 
-	fs.StringVar(&config.OutputFile, "o", "", "Output file path")
-	fs.StringVar(&config.OutputFile, "output", "", "Output file path")
+	fs.Var(&outputFiles, "o", "Output file path (can be specified multiple times)")
+	fs.Var(&outputFiles, "output", "Output file path (can be specified multiple times)")
 
 	fs.StringVar(&config.ConfigFile, "c", "", "Configuration file path")
 	fs.StringVar(&config.ConfigFile, "config", "", "Configuration file path")
@@ -102,8 +103,9 @@ func ParseArgs(args []string) (*Config, error) {
 		return nil, ErrInstall
 	}
 
-	// Copy input files from the custom type
+	// Copy input and output files from the custom types
 	config.InputFiles = []string(inputFiles)
+	config.OutputFiles = []string(outputFiles)
 
 	// If no input files specified, default to stdin
 	if len(config.InputFiles) == 0 {
@@ -163,11 +165,13 @@ func validateConfig(config *Config) error {
 	}
 
 	// Validate output file directory exists if specified (skip stdout)
-	if config.OutputFile != "" && config.OutputFile != "-" {
-		dir := filepath.Dir(config.OutputFile)
-		if dir != "." {
-			if _, err := os.Stat(dir); os.IsNotExist(err) {
-				return fmt.Errorf("output directory does not exist: %s", dir)
+	for _, outputFile := range config.OutputFiles {
+		if outputFile != "" && outputFile != "-" {
+			dir := filepath.Dir(outputFile)
+			if dir != "." {
+				if _, err := os.Stat(dir); os.IsNotExist(err) {
+					return fmt.Errorf("output directory does not exist: %s", dir)
+				}
 			}
 		}
 	}
