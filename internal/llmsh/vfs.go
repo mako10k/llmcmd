@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/mako10k/llmcmd/internal/app"
+	"github.com/mako10k/llmcmd/internal/tools"
 )
 
 // FileAccess represents file access permissions
@@ -19,6 +20,116 @@ const (
 	AccessWrite
 	AccessReadWrite
 )
+
+// VirtualFileSystem manages virtual files and pipes for llmsh
+
+// LegacyVFSAdapter adapts llmsh VirtualFileSystem to tools.VirtualFileSystem interface
+type LegacyVFSAdapter struct {
+	vfs *VirtualFileSystem
+}
+
+// NewLegacyVFSAdapter creates an adapter for tools.VirtualFileSystem compatibility
+func NewLegacyVFSAdapter(vfs *VirtualFileSystem) tools.VirtualFileSystem {
+	return &LegacyVFSAdapter{vfs: vfs}
+}
+
+// OpenFile implements tools.VirtualFileSystem interface
+func (adapter *LegacyVFSAdapter) OpenFile(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
+	// Determine read/write mode from flags
+	isRead := (flag&os.O_RDONLY) != 0 || (flag&os.O_RDWR) != 0
+	isWrite := (flag&os.O_WRONLY) != 0 || (flag&os.O_RDWR) != 0
+	isAppend := (flag & os.O_APPEND) != 0
+
+	if isRead && isWrite {
+		// For read-write mode, we need a different approach
+		// For now, open for write and handle read separately
+		writer, err := adapter.vfs.OpenForWrite(name, isAppend, true)
+		if err != nil {
+			return nil, err
+		}
+		// Return as ReadWriteCloser
+		if rwc, ok := writer.(io.ReadWriteCloser); ok {
+			return rwc, nil
+		}
+		return nil, fmt.Errorf("file %s does not support read-write mode", name)
+	} else if isWrite {
+		writer, err := adapter.vfs.OpenForWrite(name, isAppend, true)
+		if err != nil {
+			return nil, err
+		}
+		// Wrap WriteCloser as ReadWriteCloser
+		return &writeOnlyWrapper{writer}, nil
+	} else {
+		// Read-only mode
+		reader, err := adapter.vfs.OpenForRead(name, true)
+		if err != nil {
+			return nil, err
+		}
+		// Wrap ReadCloser as ReadWriteCloser
+		return &readOnlyWrapper{reader}, nil
+	}
+}
+
+// CreateTemp implements tools.VirtualFileSystem interface
+func (adapter *LegacyVFSAdapter) CreateTemp(pattern string) (io.ReadWriteCloser, string, error) {
+	// Generate a temporary file name
+	tempName := fmt.Sprintf("temp_%s_%d", pattern, len(adapter.vfs.files))
+
+	// Create virtual file
+	vfile := NewVirtualFile(tempName)
+	adapter.vfs.mu.Lock()
+	adapter.vfs.files[tempName] = vfile
+	adapter.vfs.mu.Unlock()
+
+	return vfile, tempName, nil
+}
+
+// RemoveFile implements tools.VirtualFileSystem interface
+func (adapter *LegacyVFSAdapter) RemoveFile(name string) error {
+	adapter.vfs.mu.Lock()
+	defer adapter.vfs.mu.Unlock()
+
+	// Remove from virtual files
+	if vfile, exists := adapter.vfs.files[name]; exists {
+		vfile.Close()
+		delete(adapter.vfs.files, name)
+		return nil
+	}
+
+	// Remove from real files
+	if file, exists := adapter.vfs.realFiles[name]; exists {
+		file.Close()
+		delete(adapter.vfs.realFiles, name)
+		// Also try to remove the actual file
+		os.Remove(name)
+		return nil
+	}
+
+	return fmt.Errorf("file not found: %s", name)
+}
+
+// ListFiles implements tools.VirtualFileSystem interface
+func (adapter *LegacyVFSAdapter) ListFiles() []string {
+	return adapter.vfs.ListFiles()
+}
+
+// writeOnlyWrapper wraps WriteCloser to implement ReadWriteCloser
+type writeOnlyWrapper struct {
+	io.WriteCloser
+}
+
+func (w *writeOnlyWrapper) Read(p []byte) (n int, err error) {
+	return 0, fmt.Errorf("read not supported on write-only file")
+}
+
+// readOnlyWrapper wraps ReadCloser to implement ReadWriteCloser
+type readOnlyWrapper struct {
+	io.ReadCloser
+}
+
+func (r *readOnlyWrapper) Write(p []byte) (n int, err error) {
+	return 0, fmt.Errorf("write not supported on read-only file")
+}
 
 // VirtualFileSystem manages virtual files and pipes for llmsh
 type VirtualFileSystem struct {
@@ -38,7 +149,7 @@ type VirtualFileSystem struct {
 	enableFSProxy  bool
 }
 
-// VirtualFile represents a virtual file in memory
+// VirtualFile represents a virtual file in memory with separate read/write positions
 type VirtualFile struct {
 	name   string
 	buffer *bytes.Buffer
@@ -60,7 +171,7 @@ func (vf *VirtualFile) Name() string {
 	return vf.name
 }
 
-// Read reads from the virtual file
+// Read reads from the virtual file - creates a new reader from current buffer content
 func (vf *VirtualFile) Read(p []byte) (n int, err error) {
 	vf.mu.RLock()
 	defer vf.mu.RUnlock()
@@ -69,7 +180,9 @@ func (vf *VirtualFile) Read(p []byte) (n int, err error) {
 		return 0, fmt.Errorf("file %s is closed", vf.name)
 	}
 
-	return vf.buffer.Read(p)
+	// Create a reader from current buffer content
+	reader := bytes.NewReader(vf.buffer.Bytes())
+	return reader.Read(p)
 }
 
 // Write writes to the virtual file
@@ -84,12 +197,21 @@ func (vf *VirtualFile) Write(p []byte) (n int, err error) {
 	return vf.buffer.Write(p)
 }
 
-// Close closes the virtual file
+// GetReader returns a new reader for the entire content
+func (vf *VirtualFile) GetReader() *bytes.Reader {
+	vf.mu.RLock()
+	defer vf.mu.RUnlock()
+	return bytes.NewReader(vf.buffer.Bytes())
+}
+
+// Close closes the virtual file but keeps it available for reading
 func (vf *VirtualFile) Close() error {
 	vf.mu.Lock()
 	defer vf.mu.Unlock()
 
-	vf.closed = true
+	// Don't actually mark as closed for virtual files in VFS
+	// This allows multiple open/close cycles
+	// vf.closed = true
 	return nil
 }
 
@@ -158,6 +280,21 @@ func (vfs *VirtualFileSystem) OpenForRead(filename string, isTopLevelCmd bool) (
 		return vfile, nil
 	}
 
+	// FSProxy Integration: Use FSProxy adapter if enabled and available
+	if vfs.enableFSProxy && vfs.fsProxyAdapter != nil {
+		context := "user"
+		if !isTopLevelCmd {
+			context = "internal"
+		}
+
+		readCloser, err := vfs.fsProxyAdapter.OpenForRead(filename, context)
+		if err != nil {
+			return nil, fmt.Errorf("FSProxy: cannot open file %s for reading: %v", filename, err)
+		}
+		return readCloser, nil
+	}
+
+	// Legacy mode: Direct file system access
 	// If isTopLevelCmd=true, always try to open real file
 	if isTopLevelCmd {
 		file, err := os.Open(filename)
@@ -206,6 +343,21 @@ func (vfs *VirtualFileSystem) OpenForWrite(filename string, append bool, isTopLe
 		return vfile, nil
 	}
 
+	// FSProxy Integration: Use FSProxy adapter if enabled and available
+	if vfs.enableFSProxy && vfs.fsProxyAdapter != nil {
+		context := "user"
+		if !isTopLevelCmd {
+			context = "internal"
+		}
+
+		writeCloser, err := vfs.fsProxyAdapter.OpenForWrite(filename, append, context)
+		if err != nil {
+			return nil, fmt.Errorf("FSProxy: cannot open file %s for writing: %v", filename, err)
+		}
+		return writeCloser, nil
+	}
+
+	// Legacy mode: Direct file system access
 	// If isTopLevelCmd=true, always try to open/create real file
 	if isTopLevelCmd {
 		var file *os.File

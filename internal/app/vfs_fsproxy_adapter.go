@@ -40,6 +40,92 @@ func NewVFSFSProxyAdapter(fsProxy *FSProxyManager, legacyVFS tools.VirtualFileSy
 	return adapter
 }
 
+// OpenForRead opens a file for reading with FSProxy context support
+// Used by llmsh VFS integration
+func (adapter *VFSFSProxyAdapter) OpenForRead(filename string, context string) (io.ReadCloser, error) {
+	adapter.mu.Lock()
+	defer adapter.mu.Unlock()
+
+	// Use FSProxy if enabled and available
+	if adapter.enableProxy && adapter.fsProxy != nil {
+		// Open in read-only mode
+		file, err := adapter.openFileThroughFSProxy(filename, os.O_RDONLY, 0644)
+		if err != nil {
+			return nil, fmt.Errorf("FSProxy OpenForRead failed: %w", err)
+		}
+		return file, nil
+	}
+
+	// Fallback to legacy VFS if available
+	if adapter.legacyVFS != nil {
+		file, err := adapter.legacyVFS.OpenFile(filename, os.O_RDONLY, 0644)
+		if err != nil {
+			return nil, fmt.Errorf("legacy VFS OpenForRead failed: %w", err)
+		}
+		return file, nil
+	}
+
+	// Direct file system access as last resort
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("direct OpenForRead failed: %w", err)
+	}
+	return file, nil
+}
+
+// OpenForWrite opens a file for writing with FSProxy context support
+// Used by llmsh VFS integration
+func (adapter *VFSFSProxyAdapter) OpenForWrite(filename string, append bool, context string) (io.WriteCloser, error) {
+	adapter.mu.Lock()
+	defer adapter.mu.Unlock()
+
+	// Use FSProxy if enabled and available
+	if adapter.enableProxy && adapter.fsProxy != nil {
+		// Determine the appropriate flags
+		var flag int
+		if append {
+			flag = os.O_WRONLY | os.O_CREATE | os.O_APPEND
+		} else {
+			flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+		}
+
+		file, err := adapter.openFileThroughFSProxy(filename, flag, 0644)
+		if err != nil {
+			return nil, fmt.Errorf("FSProxy OpenForWrite failed: %w", err)
+		}
+		return file, nil
+	}
+
+	// Fallback to legacy VFS if available
+	if adapter.legacyVFS != nil {
+		var flag int
+		if append {
+			flag = os.O_WRONLY | os.O_CREATE | os.O_APPEND
+		} else {
+			flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+		}
+
+		file, err := adapter.legacyVFS.OpenFile(filename, flag, 0644)
+		if err != nil {
+			return nil, fmt.Errorf("legacy VFS OpenForWrite failed: %w", err)
+		}
+		return file, nil
+	}
+
+	// Direct file system access as last resort
+	var file *os.File
+	var err error
+	if append {
+		file, err = os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	} else {
+		file, err = os.Create(filename)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("direct OpenForWrite failed: %w", err)
+	}
+	return file, nil
+}
+
 // OpenFile implements tools.VirtualFileSystem interface
 // Opens a file using FSProxy if enabled, otherwise falls back to legacy VFS
 func (adapter *VFSFSProxyAdapter) OpenFile(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {

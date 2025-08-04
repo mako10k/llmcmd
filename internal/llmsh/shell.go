@@ -78,8 +78,11 @@ func NewShell(config *Config) (*Shell, error) {
 		// Create legacy VFS for fallback
 		legacyVFS := NewVirtualFileSystem(config.InputFiles, config.OutputFiles)
 
+		// Create adapter with legacy VFS wrapped as tools.VirtualFileSystem
+		legacyAdapter := NewLegacyVFSAdapter(legacyVFS)
+
 		// Create adapter with FSProxy support
-		adapter := app.NewVFSFSProxyAdapter(fsProxyManager, legacyVFS, true)
+		adapter := app.NewVFSFSProxyAdapter(fsProxyManager, legacyAdapter, true)
 
 		// Create enhanced VFS with FSProxy integration
 		vfs = NewVirtualFileSystemWithFSProxy(config.InputFiles, config.OutputFiles, true, adapter)
