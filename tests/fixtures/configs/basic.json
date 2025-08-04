@@ -1,0 +1,9 @@
+{
+  "model": "gpt-4o-mini",
+  "apiKey": "test-key",
+  "maxTokens": 1000,
+  "quotaManager": {
+    "maxApiCalls": 10,
+    "maxTokens": 5000
+  }
+}
