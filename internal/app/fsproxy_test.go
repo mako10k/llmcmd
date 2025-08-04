@@ -28,14 +28,14 @@ type FSProxyMessage struct {
 
 // MockVFS implements VirtualFileSystem interface for testing
 type MockVFS struct {
-	mu        sync.RWMutex         // Add mutex for thread safety
-	files     map[string]*MockFile
-	nextFD    int
-	openFiles map[int]*MockFile
+	mu         sync.RWMutex // Add mutex for thread safety
+	files      map[string]*MockFile
+	nextFD     int
+	openFiles  map[int]*MockFile
 	isTopLevel bool
-	failOpen  bool
-	failRead  bool
-	failWrite bool
+	failOpen   bool
+	failRead   bool
+	failWrite  bool
 }
 
 type MockFile struct {
@@ -60,48 +60,48 @@ func NewMockVFS(isTopLevel bool) *MockVFS {
 func (m *MockVFS) OpenFile(filename string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if m.failOpen {
 		return nil, os.ErrNotExist
 	}
-	
+
 	file := &MockFile{
-		content:   []byte{},
+		content:   []byte("Hello, World! This is test content for reading."),
 		position:  0,
 		mode:      "rw",
 		readOnly:  flag == os.O_RDONLY,
 		writeOnly: (flag & os.O_WRONLY) != 0,
 	}
-	
+
 	m.files[filename] = file
 	m.nextFD++
 	m.openFiles[m.nextFD] = file
-	
+
 	return file, nil
 }
 
 func (m *MockVFS) CreateTemp(pattern string) (io.ReadWriteCloser, string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	filename := "temp_" + pattern
 	file := &MockFile{
 		content:  []byte{},
 		position: 0,
 		mode:     "rw",
 	}
-	
+
 	m.files[filename] = file
 	m.nextFD++
 	m.openFiles[m.nextFD] = file
-	
+
 	return file, filename, nil
 }
 
 func (m *MockVFS) RemoveFile(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	delete(m.files, name)
 	return nil
 }
@@ -109,7 +109,7 @@ func (m *MockVFS) RemoveFile(name string) error {
 func (m *MockVFS) ListFiles() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	var files []string
 	for name := range m.files {
 		files = append(files, name)
@@ -124,19 +124,19 @@ func (m *MockVFS) IsTopLevel() bool {
 func (m *MockFile) Read(p []byte) (n int, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if m.closed {
 		return 0, os.ErrClosed
 	}
 	if m.writeOnly {
 		return 0, os.ErrPermission
 	}
-	
+
 	available := len(m.content) - m.position
 	if available == 0 {
 		return 0, io.EOF
 	}
-	
+
 	n = copy(p, m.content[m.position:])
 	m.position += n
 	return n, nil
@@ -145,14 +145,14 @@ func (m *MockFile) Read(p []byte) (n int, err error) {
 func (m *MockFile) Write(p []byte) (n int, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if m.closed {
 		return 0, os.ErrClosed
 	}
 	if m.readOnly {
 		return 0, os.ErrPermission
 	}
-	
+
 	m.content = append(m.content, p...)
 	return len(p), nil
 }
@@ -160,7 +160,7 @@ func (m *MockFile) Write(p []byte) (n int, err error) {
 func (m *MockFile) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	m.closed = true
 	return nil
 }
@@ -178,7 +178,7 @@ func createTestPipe(t *testing.T) (*os.File, *os.File) {
 func setupTestFSProxy(t *testing.T, isTopLevel bool) (*FSProxyManager, *os.File, *os.File) {
 	mockVFS := NewMockVFS(isTopLevel)
 	r, w := createTestPipe(t)
-	
+
 	proxy := NewFSProxyManager(mockVFS, r, true)
 	return proxy, r, w
 }
@@ -290,15 +290,15 @@ func TestFSProxyMessageParser_CriticalFactors(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				parsed, err := parseFSProxyMessage(tt.input)
-				
+
 				if tt.expectError && err == nil {
 					t.Errorf("Expected error for input '%s', but got none", tt.input)
 				}
-				
+
 				if !tt.expectError && err != nil {
 					t.Errorf("Unexpected error for input '%s': %v", tt.input, err)
 				}
-				
+
 				if !tt.expectError {
 					if parsed.Command != tt.expected.Command {
 						t.Errorf("Command mismatch: got %s, want %s", parsed.Command, tt.expected.Command)
@@ -451,9 +451,9 @@ func TestFSProxyMessageParser_CriticalFactors(t *testing.T) {
 	t.Run("Factor4_PerformanceAndSecurity", func(t *testing.T) {
 		t.Run("filename_security", func(t *testing.T) {
 			securityTests := []struct {
-				filename string
+				filename          string
 				allowedInTopLevel bool
-				allowedInChild bool
+				allowedInChild    bool
 			}{
 				{"test.txt", true, true},
 				{"/tmp/temp.txt", true, false},
@@ -466,7 +466,7 @@ func TestFSProxyMessageParser_CriticalFactors(t *testing.T) {
 				// Test with top-level context
 				input := "OPEN " + tt.filename + " r true"
 				_, err := parseFSProxyMessage(input)
-				
+
 				// Parser should accept the input (security is enforced at VFS level)
 				if err != nil {
 					t.Errorf("Parser should accept filename '%s' in top-level: %v", tt.filename, err)
@@ -475,7 +475,7 @@ func TestFSProxyMessageParser_CriticalFactors(t *testing.T) {
 				// Test with child process context
 				input = "OPEN " + tt.filename + " r false"
 				_, err = parseFSProxyMessage(input)
-				
+
 				// Parser should accept the input (security is enforced at VFS level)
 				if err != nil {
 					t.Errorf("Parser should accept filename '%s' in child: %v", tt.filename, err)
@@ -487,7 +487,7 @@ func TestFSProxyMessageParser_CriticalFactors(t *testing.T) {
 			// Test with large filename
 			largeFilename := strings.Repeat("a", 1000)
 			input := "OPEN " + largeFilename + " w true"
-			
+
 			parsed, err := parseFSProxyMessage(input)
 			if err != nil {
 				t.Errorf("Should handle large filename: %v", err)
@@ -499,10 +499,10 @@ func TestFSProxyMessageParser_CriticalFactors(t *testing.T) {
 
 		t.Run("malformed_input_resistance", func(t *testing.T) {
 			malformedInputs := []string{
-				"OPEN\t\t\ttest.txt\tw\ttrue",  // Tabs
-				"OPEN  test.txt  w  true",        // Multiple spaces
-				" OPEN test.txt w true ",         // Leading/trailing spaces
-				"open test.txt w true",           // Lowercase command
+				"OPEN\t\t\ttest.txt\tw\ttrue", // Tabs
+				"OPEN  test.txt  w  true",     // Multiple spaces
+				" OPEN test.txt w true ",      // Leading/trailing spaces
+				"open test.txt w true",        // Lowercase command
 			}
 
 			for _, input := range malformedInputs {
@@ -519,20 +519,20 @@ func TestFSProxyMessageParser_CriticalFactors(t *testing.T) {
 func parseFSProxyMessage(input string) (FSProxyMessage, error) {
 	// This is a placeholder implementation
 	// The actual implementation will be created based on test requirements
-	
+
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return FSProxyMessage{}, &FSProxyError{Message: "empty request"}
 	}
-	
+
 	parts := strings.Fields(input)
 	if len(parts) == 0 {
 		return FSProxyMessage{}, &FSProxyError{Message: "empty request"}
 	}
-	
+
 	command := parts[0]
 	msg := FSProxyMessage{Command: command}
-	
+
 	switch command {
 	case "OPEN":
 		if len(parts) < 4 {
@@ -541,81 +541,81 @@ func parseFSProxyMessage(input string) (FSProxyMessage, error) {
 		msg.Path = parts[1]
 		msg.Mode = parts[2]
 		msg.IsTopLevel = parts[3]
-		
+
 		// Validate mode
 		validModes := map[string]bool{"r": true, "w": true, "a": true, "r+": true, "w+": true, "a+": true}
 		if !validModes[msg.Mode] {
 			return FSProxyMessage{}, &FSProxyError{Message: "invalid mode: " + msg.Mode}
 		}
-		
+
 		// Validate is_top_level
 		if msg.IsTopLevel != "true" && msg.IsTopLevel != "false" {
 			return FSProxyMessage{}, &FSProxyError{Message: "invalid is_top_level: " + msg.IsTopLevel}
 		}
-		
+
 	case "READ":
 		if len(parts) < 3 {
 			return FSProxyMessage{}, &FSProxyError{Message: "READ requires fileno and size"}
 		}
 		msg.FileNo = parts[1]
 		msg.Size = parts[2]
-		
+
 		// Validate fileno (basic numeric check)
 		if !isNumeric(msg.FileNo) {
 			return FSProxyMessage{}, &FSProxyError{Message: "invalid fileno: " + msg.FileNo}
 		}
-		
+
 		// Validate size
 		if !isNumeric(msg.Size) {
 			return FSProxyMessage{}, &FSProxyError{Message: "invalid size: " + msg.Size}
 		}
-		
+
 	case "WRITE":
 		if len(parts) < 3 {
 			return FSProxyMessage{}, &FSProxyError{Message: "WRITE requires fileno and size"}
 		}
 		msg.FileNo = parts[1]
 		msg.Size = parts[2]
-		
+
 		// Validate fileno
 		if !isNumeric(msg.FileNo) {
 			return FSProxyMessage{}, &FSProxyError{Message: "invalid fileno: " + msg.FileNo}
 		}
-		
+
 		// Validate size
 		if !isNumeric(msg.Size) {
 			return FSProxyMessage{}, &FSProxyError{Message: "invalid size: " + msg.Size}
 		}
-		
+
 	case "CLOSE":
 		if len(parts) < 2 {
 			return FSProxyMessage{}, &FSProxyError{Message: "CLOSE requires fileno"}
 		}
 		msg.FileNo = parts[1]
-		
+
 		// Validate fileno
 		if !isNumeric(msg.FileNo) {
 			return FSProxyMessage{}, &FSProxyError{Message: "invalid fileno: " + msg.FileNo}
 		}
-		
+
 	case "LLM_CHAT":
 		if len(parts) < 6 {
 			return FSProxyMessage{}, &FSProxyError{Message: "LLM_CHAT requires is_top_level, input_files_count, output_files_count, prompt_length, and preset_length"}
 		}
 		msg.IsTopLevel = parts[1]
-		
+
 		// Validate is_top_level
 		if msg.IsTopLevel != "true" && msg.IsTopLevel != "false" {
 			return FSProxyMessage{}, &FSProxyError{Message: "invalid is_top_level: " + msg.IsTopLevel}
 		}
-		
+
 	case "LLM_QUOTA", "LLM_CONFIG":
 		// These commands require no parameters
-		
+
 	default:
 		return FSProxyMessage{}, &FSProxyError{Message: "unknown command: " + command}
 	}
-	
+
 	return msg, nil
 }
 

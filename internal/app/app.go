@@ -153,10 +153,10 @@ func (a *App) initializeOpenAI() error {
 // initializeToolEngine initializes the tool execution engine
 func (a *App) initializeToolEngine() error {
 	shellExecutor := &SimpleShellExecutor{}
-	
+
 	// Use the isTopLevel from the App instance
 	isTopLevel := a.isTopLevel
-	
+
 	virtualFS := NewEnhancedVFSWithLevel(isTopLevel)
 
 	// Allow input/output files for real file access if top-level

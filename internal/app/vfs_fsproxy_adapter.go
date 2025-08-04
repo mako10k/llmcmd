@@ -13,12 +13,12 @@ import (
 // This adapter allows llmsh to use FSProxy protocol transparently while maintaining
 // compatibility with existing VirtualFileSystem interface.
 type VFSFSProxyAdapter struct {
-	mu           sync.RWMutex
-	fsProxy      *FSProxyManager
-	legacyVFS    tools.VirtualFileSystem // Fallback to legacy VFS if needed
-	fdTable      *FileDescriptorTable
-	clientID     string
-	enableProxy  bool // Flag to enable/disable FSProxy usage
+	mu          sync.RWMutex
+	fsProxy     *FSProxyManager
+	legacyVFS   tools.VirtualFileSystem // Fallback to legacy VFS if needed
+	fdTable     *FileDescriptorTable
+	clientID    string
+	enableProxy bool // Flag to enable/disable FSProxy usage
 }
 
 // NewVFSFSProxyAdapter creates a new VFS-FSProxy adapter
@@ -29,14 +29,14 @@ func NewVFSFSProxyAdapter(fsProxy *FSProxyManager, legacyVFS tools.VirtualFileSy
 		enableProxy: enableProxy,
 		clientID:    fmt.Sprintf("adapter-client-%d", generateUniqueID()),
 	}
-	
+
 	// Use FSProxy's fd table if available, otherwise create our own
 	if fsProxy != nil && fsProxy.fdTable != nil {
 		adapter.fdTable = fsProxy.fdTable
 	} else {
 		adapter.fdTable = NewFileDescriptorTable()
 	}
-	
+
 	return adapter
 }
 
@@ -45,17 +45,17 @@ func NewVFSFSProxyAdapter(fsProxy *FSProxyManager, legacyVFS tools.VirtualFileSy
 func (adapter *VFSFSProxyAdapter) OpenFile(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
 	adapter.mu.Lock()
 	defer adapter.mu.Unlock()
-	
+
 	// If FSProxy is enabled and available, use it
 	if adapter.enableProxy && adapter.fsProxy != nil {
 		return adapter.openFileThroughFSProxy(name, flag, perm)
 	}
-	
+
 	// Fallback to legacy VFS
 	if adapter.legacyVFS != nil {
 		return adapter.legacyVFS.OpenFile(name, flag, perm)
 	}
-	
+
 	// If no fallback available, return error
 	return nil, fmt.Errorf("no file system available for opening file: %s", name)
 }
@@ -65,17 +65,17 @@ func (adapter *VFSFSProxyAdapter) OpenFile(name string, flag int, perm os.FileMo
 func (adapter *VFSFSProxyAdapter) CreateTemp(pattern string) (io.ReadWriteCloser, string, error) {
 	adapter.mu.Lock()
 	defer adapter.mu.Unlock()
-	
+
 	// If FSProxy is enabled and available, use it
 	if adapter.enableProxy && adapter.fsProxy != nil {
 		return adapter.createTempThroughFSProxy(pattern)
 	}
-	
+
 	// Fallback to legacy VFS
 	if adapter.legacyVFS != nil {
 		return adapter.legacyVFS.CreateTemp(pattern)
 	}
-	
+
 	// If no fallback available, return error
 	return nil, "", fmt.Errorf("no file system available for creating temp file with pattern: %s", pattern)
 }
@@ -85,17 +85,17 @@ func (adapter *VFSFSProxyAdapter) CreateTemp(pattern string) (io.ReadWriteCloser
 func (adapter *VFSFSProxyAdapter) RemoveFile(name string) error {
 	adapter.mu.Lock()
 	defer adapter.mu.Unlock()
-	
+
 	// If FSProxy is enabled and available, use it
 	if adapter.enableProxy && adapter.fsProxy != nil {
 		return adapter.removeFileThroughFSProxy(name)
 	}
-	
+
 	// Fallback to legacy VFS
 	if adapter.legacyVFS != nil {
 		return adapter.legacyVFS.RemoveFile(name)
 	}
-	
+
 	// If no fallback available, return error
 	return fmt.Errorf("no file system available for removing file: %s", name)
 }
@@ -105,17 +105,17 @@ func (adapter *VFSFSProxyAdapter) RemoveFile(name string) error {
 func (adapter *VFSFSProxyAdapter) ListFiles() []string {
 	adapter.mu.RLock()
 	defer adapter.mu.RUnlock()
-	
+
 	// If FSProxy is enabled and available, use it
 	if adapter.enableProxy && adapter.fsProxy != nil {
 		return adapter.listFilesThroughFSProxy()
 	}
-	
+
 	// Fallback to legacy VFS
 	if adapter.legacyVFS != nil {
 		return adapter.legacyVFS.ListFiles()
 	}
-	
+
 	// If no fallback available, return empty list
 	return []string{}
 }
@@ -126,26 +126,26 @@ func (adapter *VFSFSProxyAdapter) ListFiles() []string {
 func (adapter *VFSFSProxyAdapter) openFileThroughFSProxy(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
 	// Convert os.O_* flags to FSProxy mode string
 	mode := adapter.convertFlagToMode(flag)
-	
+
 	// Determine if this is a top-level operation (for now, assume true for adapter usage)
 	isTopLevel := true
-	
+
 	// Use FSProxy's VFS to open the file
 	if adapter.fsProxy.vfs == nil {
 		return nil, fmt.Errorf("FSProxy VFS not available")
 	}
-	
+
 	// Open file through FSProxy's VFS
 	file, err := adapter.fsProxy.vfs.OpenFile(name, flag, perm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file through FSProxy: %w", err)
 	}
-	
+
 	// Store in fd table with adapter's client ID
 	// Generate a unique fd for this file
 	fd := adapter.generateFileDescriptor()
 	adapter.fdTable.AddFile(fd, name, mode, adapter.clientID, isTopLevel, file)
-	
+
 	// Return a wrapped file handle that cleans up fd table on close
 	return &FSProxyFileHandle{
 		file:     file,
@@ -161,17 +161,17 @@ func (adapter *VFSFSProxyAdapter) createTempThroughFSProxy(pattern string) (io.R
 	if adapter.fsProxy.vfs == nil {
 		return nil, "", fmt.Errorf("FSProxy VFS not available")
 	}
-	
+
 	// CreateTemp through FSProxy's VFS (assuming it has CreateTemp method)
 	file, filename, err := adapter.fsProxy.vfs.CreateTemp(pattern)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create temp file through FSProxy: %w", err)
 	}
-	
+
 	// Store in fd table
 	fd := adapter.generateFileDescriptor()
 	adapter.fdTable.AddFile(fd, filename, "w+", adapter.clientID, true, file)
-	
+
 	// Return wrapped file handle
 	return &FSProxyFileHandle{
 		file:     file,
@@ -187,16 +187,16 @@ func (adapter *VFSFSProxyAdapter) removeFileThroughFSProxy(name string) error {
 	if adapter.fsProxy.vfs == nil {
 		return fmt.Errorf("FSProxy VFS not available")
 	}
-	
+
 	// Remove file through FSProxy's VFS
 	err := adapter.fsProxy.vfs.RemoveFile(name)
 	if err != nil {
 		return fmt.Errorf("failed to remove file through FSProxy: %w", err)
 	}
-	
+
 	// Clean up any fd table entries for this file
 	adapter.cleanupFileFromFDTable(name)
-	
+
 	return nil
 }
 
@@ -206,7 +206,7 @@ func (adapter *VFSFSProxyAdapter) listFilesThroughFSProxy() []string {
 	if adapter.fsProxy.vfs == nil {
 		return []string{}
 	}
-	
+
 	// List files through FSProxy's VFS
 	return adapter.fsProxy.vfs.ListFiles()
 }
@@ -294,19 +294,19 @@ func (fh *FSProxyFileHandle) Write(p []byte) (n int, err error) {
 func (fh *FSProxyFileHandle) Close() error {
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
-	
+
 	if fh.closed {
 		return nil // Already closed
 	}
-	
+
 	// Close the underlying file
 	err := fh.file.Close()
-	
+
 	// Remove from fd table
 	fh.fdTable.RemoveFile(fh.fd)
-	
+
 	// Mark as closed
 	fh.closed = true
-	
+
 	return err
 }

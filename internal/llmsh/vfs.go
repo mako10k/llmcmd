@@ -32,7 +32,7 @@ type VirtualFileSystem struct {
 
 	// File access permissions from -i/-o flags
 	fileAccess map[string]FileAccess
-	
+
 	// FSProxy integration (Phase 3.1)
 	fsProxyAdapter *app.VFSFSProxyAdapter
 	enableFSProxy  bool
@@ -135,11 +135,11 @@ func NewVirtualFileSystem(inputFiles, outputFiles []string) *VirtualFileSystem {
 // NewVirtualFileSystemWithFSProxy creates a new VFS with optional FSProxy integration
 func NewVirtualFileSystemWithFSProxy(inputFiles, outputFiles []string, enableFSProxy bool, fsProxyAdapter *app.VFSFSProxyAdapter) *VirtualFileSystem {
 	vfs := NewVirtualFileSystem(inputFiles, outputFiles)
-	
+
 	// Configure FSProxy integration
 	vfs.enableFSProxy = enableFSProxy
 	vfs.fsProxyAdapter = fsProxyAdapter
-	
+
 	return vfs
 }
 
@@ -310,7 +310,7 @@ func (vfs *VirtualFileSystem) OpenFile(name string, flag int, perm os.FileMode) 
 	if vfs.enableFSProxy && vfs.fsProxyAdapter != nil {
 		return vfs.fsProxyAdapter.OpenFile(name, flag, perm)
 	}
-	
+
 	// Legacy implementation
 	return vfs.openFileLegacy(name, flag, perm)
 }
@@ -321,7 +321,7 @@ func (vfs *VirtualFileSystem) CreateTemp(pattern string) (io.ReadWriteCloser, st
 	if vfs.enableFSProxy && vfs.fsProxyAdapter != nil {
 		return vfs.fsProxyAdapter.CreateTemp(pattern)
 	}
-	
+
 	// Legacy implementation
 	return vfs.createTempLegacy(pattern)
 }
@@ -332,7 +332,7 @@ func (vfs *VirtualFileSystem) RemoveFile(name string) error {
 	if vfs.enableFSProxy && vfs.fsProxyAdapter != nil {
 		return vfs.fsProxyAdapter.RemoveFile(name)
 	}
-	
+
 	// Legacy implementation
 	return vfs.removeFileLegacy(name)
 }
@@ -343,17 +343,17 @@ func (vfs *VirtualFileSystem) RemoveFile(name string) error {
 func (vfs *VirtualFileSystem) openFileLegacy(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
 	vfs.mu.Lock()
 	defer vfs.mu.Unlock()
-	
+
 	// Check for already opened real files
 	if realFile, exists := vfs.realFiles[name]; exists {
 		return realFile, nil
 	}
-	
+
 	// Check for virtual files
 	if vfile, exists := vfs.files[name]; exists {
 		return vfile, nil
 	}
-	
+
 	// Try to open real file
 	if flag&os.O_CREATE != 0 {
 		// Create new file
@@ -382,11 +382,11 @@ func (vfs *VirtualFileSystem) createTempLegacy(pattern string) (io.ReadWriteClos
 	// Create a virtual temporary file
 	tempName := fmt.Sprintf("%s_%d", pattern, len(vfs.files))
 	vfile := NewVirtualFile(tempName)
-	
+
 	vfs.mu.Lock()
 	vfs.files[tempName] = vfile
 	vfs.mu.Unlock()
-	
+
 	return vfile, tempName, nil
 }
 
@@ -394,14 +394,14 @@ func (vfs *VirtualFileSystem) createTempLegacy(pattern string) (io.ReadWriteClos
 func (vfs *VirtualFileSystem) removeFileLegacy(name string) error {
 	vfs.mu.Lock()
 	defer vfs.mu.Unlock()
-	
+
 	// Remove from virtual files
 	if vfile, exists := vfs.files[name]; exists {
 		vfile.Close()
 		delete(vfs.files, name)
 		return nil
 	}
-	
+
 	// Remove from real files
 	if realFile, exists := vfs.realFiles[name]; exists {
 		realFile.Close()
@@ -409,6 +409,6 @@ func (vfs *VirtualFileSystem) removeFileLegacy(name string) error {
 		// Also try to remove the actual file
 		return os.Remove(name)
 	}
-	
+
 	return fmt.Errorf("file not found: %s", name)
 }

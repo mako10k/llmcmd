@@ -20,12 +20,12 @@ var (
 // Config holds all configuration for the application
 type Config struct {
 	// Command line options
-	Prompt       string   // -p: LLM prompt/instructions (free text)
-	Preset       string   // -r/--preset: Preset prompt key
-	ListPresets  bool     // --list-presets: Show available prompt presets
-	InputFiles   []string // -i: Input file paths (can be specified multiple times)
-	OutputFiles  []string // -o: Output file paths (can be specified multiple times)
-	Verbose      bool     // -v: Verbose logging
+	Prompt      string   // -p: LLM prompt/instructions (free text)
+	Preset      string   // -r/--preset: Preset prompt key
+	ListPresets bool     // --list-presets: Show available prompt presets
+	InputFiles  []string // -i: Input file paths (can be specified multiple times)
+	OutputFiles []string // -o: Output file paths (can be specified multiple times)
+	Verbose     bool     // -v: Verbose logging
 	ShowStats   bool     // --stats: Show detailed statistics
 	ConfigFile  string   // -c: Configuration file path
 	NoStdin     bool     // --no-stdin: Skip reading from stdin

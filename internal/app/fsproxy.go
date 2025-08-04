@@ -16,13 +16,13 @@ import (
 
 // OpenFile represents an open file descriptor with metadata
 type OpenFile struct {
-	FileNo     int                   `json:"fileno"`
-	Filename   string                `json:"filename"`
-	Mode       string                `json:"mode"`
-	ClientID   string                `json:"client_id"`
-	OpenedAt   time.Time             `json:"opened_at"`
-	IsTopLevel bool                  `json:"is_top_level"`
-	Handle     io.ReadWriteCloser    `json:"-"` // File handle (not serialized)
+	FileNo     int                `json:"fileno"`
+	Filename   string             `json:"filename"`
+	Mode       string             `json:"mode"`
+	ClientID   string             `json:"client_id"`
+	OpenedAt   time.Time          `json:"opened_at"`
+	IsTopLevel bool               `json:"is_top_level"`
+	Handle     io.ReadWriteCloser `json:"-"` // File handle (not serialized)
 }
 
 // FileDescriptorTable manages file descriptors with metadata
@@ -42,7 +42,7 @@ func NewFileDescriptorTable() *FileDescriptorTable {
 func (fdt *FileDescriptorTable) AddFile(fileno int, filename, mode, clientID string, isTopLevel bool, handle io.ReadWriteCloser) {
 	fdt.mu.Lock()
 	defer fdt.mu.Unlock()
-	
+
 	fdt.files[fileno] = &OpenFile{
 		FileNo:     fileno,
 		Filename:   filename,
@@ -58,7 +58,7 @@ func (fdt *FileDescriptorTable) AddFile(fileno int, filename, mode, clientID str
 func (fdt *FileDescriptorTable) GetFile(fileno int) (*OpenFile, bool) {
 	fdt.mu.RLock()
 	defer fdt.mu.RUnlock()
-	
+
 	file, exists := fdt.files[fileno]
 	return file, exists
 }
@@ -67,7 +67,7 @@ func (fdt *FileDescriptorTable) GetFile(fileno int) (*OpenFile, bool) {
 func (fdt *FileDescriptorTable) RemoveFile(fileno int) bool {
 	fdt.mu.Lock()
 	defer fdt.mu.Unlock()
-	
+
 	if _, exists := fdt.files[fileno]; exists {
 		delete(fdt.files, fileno)
 		return true
@@ -79,7 +79,7 @@ func (fdt *FileDescriptorTable) RemoveFile(fileno int) bool {
 func (fdt *FileDescriptorTable) GetFilesByClient(clientID string) []int {
 	fdt.mu.RLock()
 	defer fdt.mu.RUnlock()
-	
+
 	var filenos []int
 	for fileno, file := range fdt.files {
 		if file.ClientID == clientID {
@@ -93,7 +93,7 @@ func (fdt *FileDescriptorTable) GetFilesByClient(clientID string) []int {
 func (fdt *FileDescriptorTable) GetAllFiles() map[int]*OpenFile {
 	fdt.mu.RLock()
 	defer fdt.mu.RUnlock()
-	
+
 	result := make(map[int]*OpenFile)
 	for fileno, file := range fdt.files {
 		result[fileno] = file
@@ -114,10 +114,10 @@ type FSProxyManager struct {
 	nextFD    int                        // Next available file descriptor
 	openFiles map[int]io.ReadWriteCloser // Map of fd to file handles (legacy)
 	fdMutex   sync.RWMutex               // Protect fd operations
-	
+
 	// Enhanced fd management
-	fdTable   *FileDescriptorTable       // New fd management table
-	clientID  string                     // Client identifier for this manager
+	fdTable  *FileDescriptorTable // New fd management table
+	clientID string               // Client identifier for this manager
 }
 
 // NewFSProxyManager creates a new FS proxy manager
@@ -206,7 +206,7 @@ func (proxy *FSProxyManager) readRequest() (FSRequest, error) {
 		}
 		request.Filename = parts[1]
 		request.Mode = parts[2]
-		
+
 		// Parse is_top_level parameter
 		isTopLevelStr := parts[3]
 		if isTopLevelStr != "true" && isTopLevelStr != "false" {
@@ -304,6 +304,14 @@ func (proxy *FSProxyManager) handleOpen(filename, mode, isTopLevelStr string) FS
 		return FSResponse{
 			Status: "ERROR",
 			Data:   "VFS not available",
+		}
+	}
+
+	// Validate filename
+	if filename == "" {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   "failed to open file: filename cannot be empty",
 		}
 	}
 
@@ -474,7 +482,7 @@ func (proxy *FSProxyManager) handleClose(fileno int) FSResponse {
 	proxy.fdMutex.Lock()
 	delete(proxy.openFiles, fileno) // Legacy table
 	proxy.fdMutex.Unlock()
-	
+
 	proxy.fdTable.RemoveFile(fileno) // New table
 
 	log.Printf("FS Proxy: Closed file with fd %d", fileno)
@@ -504,7 +512,7 @@ func (proxy *FSProxyManager) sendResponse(response FSResponse) error {
 func (proxy *FSProxyManager) cleanup() {
 	// Get all open files from new fd table
 	allFiles := proxy.fdTable.GetAllFiles()
-	
+
 	log.Printf("FS Proxy: Cleaning up %d open files for client %s", len(allFiles), proxy.clientID)
 
 	// Close all files and remove from tables
@@ -516,7 +524,7 @@ func (proxy *FSProxyManager) cleanup() {
 				log.Printf("FS Proxy: Closed fd %d (%s)", fd, openFile.Filename)
 			}
 		}
-		
+
 		// Remove from new fd table
 		proxy.fdTable.RemoveFile(fd)
 	}

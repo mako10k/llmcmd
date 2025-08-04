@@ -120,7 +120,7 @@ func executeSubProcess(cmd *exec.Cmd, processName string) error {
 // parseLineCountArg parses -n argument for head/tail commands
 func parseLineCountArg(args []string, defaultLines int) (int, []string, error) {
 	lines := defaultLines
-	
+
 	// Parse number of lines from arguments
 	for i, arg := range args {
 		if arg == "-n" && i+1 < len(args) {
@@ -137,6 +137,6 @@ func parseLineCountArg(args []string, defaultLines int) (int, []string, error) {
 			break
 		}
 	}
-	
+
 	return lines, args, nil
 }

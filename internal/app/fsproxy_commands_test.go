@@ -14,7 +14,7 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 		t.Run("OPEN_command", func(t *testing.T) {
 			proxy, _, w := setupTestFSProxy(t, true)
 			defer w.Close()
-			
+
 			tests := []struct {
 				name           string
 				filename       string
@@ -48,15 +48,15 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 					expectFD:       true,
 				},
 			}
-			
+
 			for _, tt := range tests {
 				t.Run(tt.name, func(t *testing.T) {
 					response := proxy.handleOpen(tt.filename, tt.mode, tt.isTopLevel)
-					
+
 					if response.Status != tt.expectedStatus {
 						t.Errorf("Expected status %s, got %s", tt.expectedStatus, response.Status)
 					}
-					
+
 					if tt.expectFD && response.Status == "OK" {
 						// Verify that a file descriptor was assigned
 						fd, err := strconv.Atoi(response.Data)
@@ -70,19 +70,19 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 				})
 			}
 		})
-		
+
 		t.Run("READ_command", func(t *testing.T) {
 			proxy, _, w := setupTestFSProxy(t, true)
 			defer w.Close()
-			
-			// First open a file
-			openResponse := proxy.handleOpen("test.txt", "w", "true")
+
+			// First open a file for reading
+			openResponse := proxy.handleOpen("test.txt", "r+", "true")
 			if openResponse.Status != "OK" {
 				t.Fatalf("Failed to open file: %s", openResponse.Data)
 			}
-			
+
 			fd := openResponse.Data
-			
+
 			// Test read operations
 			tests := []struct {
 				name           string
@@ -94,42 +94,42 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 					name:           "read_valid_size",
 					fd:             fd,
 					size:           "256",
-					expectedStatus: "ERROR", // READ not fully implemented yet
+					expectedStatus: "OK", // READ should work normally
 				},
 				{
 					name:           "read_zero_size",
 					fd:             fd,
 					size:           "0",
-					expectedStatus: "ERROR", // READ not fully implemented yet
+					expectedStatus: "OK", // Zero size read should return empty data successfully
 				},
 			}
-			
+
 			for _, tt := range tests {
 				t.Run(tt.name, func(t *testing.T) {
 					fd, _ := strconv.Atoi(tt.fd)
 					size, _ := strconv.Atoi(tt.size)
 					response := proxy.handleRead(fd, size, false)
-					
+
 					if response.Status != tt.expectedStatus {
 						t.Errorf("Expected status %s, got %s", tt.expectedStatus, response.Status)
 					}
 				})
 			}
 		})
-		
+
 		t.Run("WRITE_command", func(t *testing.T) {
 			proxy, _, w := setupTestFSProxy(t, true)
 			defer w.Close()
-			
+
 			// First open a file
 			openResponse := proxy.handleOpen("test.txt", "w", "true")
 			if openResponse.Status != "OK" {
 				t.Fatalf("Failed to open file: %s", openResponse.Data)
 			}
-			
+
 			fd := openResponse.Data
 			testData := []byte("Hello, World!")
-			
+
 			tests := []struct {
 				name           string
 				fd             string
@@ -142,41 +142,41 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 					fd:             fd,
 					size:           strconv.Itoa(len(testData)),
 					data:           testData,
-					expectedStatus: "ERROR", // WRITE not fully implemented yet
+					expectedStatus: "OK", // WRITE should work normally
 				},
 				{
 					name:           "write_empty_data",
 					fd:             fd,
 					size:           "0",
 					data:           []byte{},
-					expectedStatus: "ERROR", // WRITE not fully implemented yet
+					expectedStatus: "OK", // Empty write should work
 				},
 			}
-			
+
 			for _, tt := range tests {
 				t.Run(tt.name, func(t *testing.T) {
 					fd, _ := strconv.Atoi(tt.fd)
 					response := proxy.handleWrite(fd, tt.data)
-					
+
 					if response.Status != tt.expectedStatus {
 						t.Errorf("Expected status %s, got %s", tt.expectedStatus, response.Status)
 					}
 				})
 			}
 		})
-		
+
 		t.Run("CLOSE_command", func(t *testing.T) {
 			proxy, _, w := setupTestFSProxy(t, true)
 			defer w.Close()
-			
+
 			// First open a file
 			openResponse := proxy.handleOpen("test.txt", "w", "true")
 			if openResponse.Status != "OK" {
 				t.Fatalf("Failed to open file: %s", openResponse.Data)
 			}
-			
+
 			fd := openResponse.Data
-			
+
 			tests := []struct {
 				name           string
 				fd             string
@@ -185,20 +185,20 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 				{
 					name:           "close_valid_fd",
 					fd:             fd,
-					expectedStatus: "ERROR", // CLOSE not fully implemented yet
+					expectedStatus: "OK", // CLOSE should work normally
 				},
 				{
 					name:           "close_invalid_fd",
 					fd:             "99999",
-					expectedStatus: "ERROR",
+					expectedStatus: "ERROR", // Invalid fd should return error
 				},
 			}
-			
+
 			for _, tt := range tests {
 				t.Run(tt.name, func(t *testing.T) {
 					fd, _ := strconv.Atoi(tt.fd)
 					response := proxy.handleClose(fd)
-					
+
 					if response.Status != tt.expectedStatus {
 						t.Errorf("Expected status %s, got %s", tt.expectedStatus, response.Status)
 					}
@@ -212,13 +212,13 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 		t.Run("OPEN_error_scenarios", func(t *testing.T) {
 			proxy, _, w := setupTestFSProxy(t, true)
 			defer w.Close()
-			
+
 			errorTests := []struct {
-				name           string
-				filename       string
-				mode           string
-				isTopLevel     string
-				expectedError  string
+				name          string
+				filename      string
+				mode          string
+				isTopLevel    string
+				expectedError string
 			}{
 				{
 					name:          "invalid_mode",
@@ -242,69 +242,56 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 					expectedError: "failed to open file",
 				},
 			}
-			
+
 			for _, tt := range errorTests {
 				t.Run(tt.name, func(t *testing.T) {
 					response := proxy.handleOpen(tt.filename, tt.mode, tt.isTopLevel)
-					
+
 					if response.Status != "ERROR" {
 						t.Errorf("Expected ERROR status, got %s", response.Status)
 					}
-					
+
 					if tt.expectedError != "" && !containsSubstring(response.Data, tt.expectedError) {
 						t.Errorf("Expected error containing '%s', got '%s'", tt.expectedError, response.Data)
 					}
 				})
 			}
 		})
-		
+
 		t.Run("READ_error_scenarios", func(t *testing.T) {
 			proxy, _, w := setupTestFSProxy(t, true)
 			defer w.Close()
-			
-			errorTests := []struct {
+
+			// Modified test to focus on actual runtime errors rather than parsing
+			runtimeErrorTests := []struct {
 				name          string
-				fd            string
-				size          string
+				fd            int
+				size          int
 				expectedError string
 			}{
 				{
-					name:          "invalid_fd",
-					fd:            "invalid",
-					size:          "256",
-					expectedError: "invalid fileno",
-				},
-				{
-					name:          "invalid_size",
-					fd:            "1000",
-					size:          "invalid",
-					expectedError: "invalid size",
-				},
-				{
 					name:          "non_existent_fd",
-					fd:            "99999",
-					size:          "256",
+					fd:            99999,
+					size:          256,
 					expectedError: "invalid fileno",
 				},
 			}
-			
-			for _, tt := range errorTests {
+
+			for _, tt := range runtimeErrorTests {
 				t.Run(tt.name, func(t *testing.T) {
-					fd, _ := strconv.Atoi(tt.fd)
-					size, _ := strconv.Atoi(tt.size)
-					response := proxy.handleRead(fd, size, false)
-					
+					response := proxy.handleRead(tt.fd, tt.size, false)
+
 					if response.Status != "ERROR" {
 						t.Errorf("Expected ERROR status, got %s", response.Status)
 					}
-					
+
 					if tt.expectedError != "" && !containsSubstring(response.Data, tt.expectedError) {
 						t.Errorf("Expected error containing '%s', got '%s'", tt.expectedError, response.Data)
 					}
 				})
 			}
 		})
-		
+
 		t.Run("VFS_unavailable_scenario", func(t *testing.T) {
 			// Test with nil VFS
 			proxy := &FSProxyManager{
@@ -313,13 +300,13 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 				nextFD:    1000,
 				openFiles: make(map[int]io.ReadWriteCloser),
 			}
-			
+
 			response := proxy.handleOpen("test.txt", "w", "true")
-			
+
 			if response.Status != "ERROR" {
 				t.Errorf("Expected ERROR status when VFS is nil, got %s", response.Status)
 			}
-			
+
 			if !containsSubstring(response.Data, "VFS not available") {
 				t.Errorf("Expected 'VFS not available' error, got '%s'", response.Data)
 			}
@@ -331,11 +318,11 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 		t.Run("file_descriptor_allocation", func(t *testing.T) {
 			proxy, _, w := setupTestFSProxy(t, true)
 			defer w.Close()
-			
+
 			// Open multiple files and verify FD allocation
 			var fds []string
 			filenames := []string{"file1.txt", "file2.txt", "file3.txt"}
-			
+
 			for _, filename := range filenames {
 				response := proxy.handleOpen(filename, "w", "true")
 				if response.Status != "OK" {
@@ -343,34 +330,34 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 				}
 				fds = append(fds, response.Data)
 			}
-			
+
 			// Verify FDs are unique and sequential
 			fdMap := make(map[string]bool)
 			var lastFD int
-			
+
 			for i, fdStr := range fds {
 				if fdMap[fdStr] {
 					t.Errorf("Duplicate FD assigned: %s", fdStr)
 				}
 				fdMap[fdStr] = true
-				
+
 				fd, err := strconv.Atoi(fdStr)
 				if err != nil {
 					t.Errorf("Invalid FD format: %s", fdStr)
 					continue
 				}
-				
+
 				if i > 0 && fd <= lastFD {
 					t.Errorf("FD not sequential: previous=%d, current=%d", lastFD, fd)
 				}
 				lastFD = fd
 			}
 		})
-		
+
 		t.Run("mode_validation_completeness", func(t *testing.T) {
 			proxy, _, w := setupTestFSProxy(t, true)
 			defer w.Close()
-			
+
 			validModes := []string{"r", "w", "a", "r+", "w+", "a+"}
 			for _, mode := range validModes {
 				response := proxy.handleOpen("test_"+mode+".txt", mode, "true")
@@ -378,7 +365,7 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 					t.Errorf("Valid mode '%s' should succeed, got %s: %s", mode, response.Status, response.Data)
 				}
 			}
-			
+
 			invalidModes := []string{"x", "rb", "wb", "rw", "invalid"}
 			for _, mode := range invalidModes {
 				response := proxy.handleOpen("test_"+mode+".txt", mode, "true")
@@ -387,11 +374,11 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 				}
 			}
 		})
-		
+
 		t.Run("top_level_flag_consistency", func(t *testing.T) {
 			proxy, _, w := setupTestFSProxy(t, true)
 			defer w.Close()
-			
+
 			// Test both valid values
 			validFlags := []string{"true", "false"}
 			for _, flag := range validFlags {
@@ -400,7 +387,7 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 					t.Errorf("Valid is_top_level '%s' should succeed, got %s: %s", flag, response.Status, response.Data)
 				}
 			}
-			
+
 			// Test invalid values
 			invalidFlags := []string{"TRUE", "FALSE", "1", "0", "yes", "no", "maybe"}
 			for _, flag := range invalidFlags {
@@ -417,11 +404,11 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 		t.Run("file_descriptor_limits", func(t *testing.T) {
 			proxy, _, w := setupTestFSProxy(t, true)
 			defer w.Close()
-			
+
 			// Open many files to test resource management
 			const maxFiles = 100
 			var successCount int
-			
+
 			for i := 0; i < maxFiles; i++ {
 				filename := "stress_test_" + strconv.Itoa(i) + ".txt"
 				response := proxy.handleOpen(filename, "w", "true")
@@ -429,28 +416,28 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 					successCount++
 				}
 			}
-			
+
 			if successCount == 0 {
 				t.Error("Should be able to open at least some files")
 			}
-			
+
 			t.Logf("Successfully opened %d out of %d files", successCount, maxFiles)
 		})
-		
+
 		t.Run("filename_security_validation", func(t *testing.T) {
 			proxy, _, w := setupTestFSProxy(t, true)
 			defer w.Close()
-			
+
 			// Test potentially problematic filenames
 			problematicNames := []string{
 				"../../../etc/passwd",
 				"/dev/null",
-				"con.txt",     // Windows reserved
-				"aux.txt",     // Windows reserved
-				"file\x00.txt", // Null byte
+				"con.txt",                 // Windows reserved
+				"aux.txt",                 // Windows reserved
+				"file\x00.txt",            // Null byte
 				strings.Repeat("a", 1000), // Very long name
 			}
-			
+
 			for _, filename := range problematicNames {
 				response := proxy.handleOpen(filename, "w", "true")
 				// The response depends on VFS implementation
@@ -458,14 +445,14 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 				t.Logf("Filename '%s' result: %s - %s", filename, response.Status, response.Data)
 			}
 		})
-		
+
 		t.Run("concurrent_access_simulation", func(t *testing.T) {
 			proxy, _, w := setupTestFSProxy(t, true)
 			defer w.Close()
-			
+
 			// Simulate concurrent access (basic test)
 			done := make(chan bool, 2)
-			
+
 			go func() {
 				for i := 0; i < 10; i++ {
 					filename := "concurrent1_" + strconv.Itoa(i) + ".txt"
@@ -473,7 +460,7 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 				}
 				done <- true
 			}()
-			
+
 			go func() {
 				for i := 0; i < 10; i++ {
 					filename := "concurrent2_" + strconv.Itoa(i) + ".txt"
@@ -481,11 +468,11 @@ func TestFSProxyCommands_CriticalFactors(t *testing.T) {
 				}
 				done <- true
 			}()
-			
+
 			// Wait for both goroutines
 			<-done
 			<-done
-			
+
 			// If we get here without panicking, basic thread safety is working
 		})
 	})

@@ -53,11 +53,11 @@ type Config struct {
 
 	// Debug mode
 	Debug bool
-	
+
 	// FSProxy integration settings (Phase 3.1)
-	EnableFSProxy     bool
-	FSProxyManager    interface{} // Should be *app.FSProxyManager, but avoiding circular import
-	FSProxyVFSMode    bool        // Whether to restrict file access to VFS only
+	EnableFSProxy  bool
+	FSProxyManager interface{} // Should be *app.FSProxyManager, but avoiding circular import
+	FSProxyVFSMode bool        // Whether to restrict file access to VFS only
 }
 
 // NewShell creates a new shell instance
@@ -74,13 +74,13 @@ func NewShell(config *Config) (*Shell, error) {
 		if !ok {
 			return nil, fmt.Errorf("invalid FSProxyManager type")
 		}
-		
+
 		// Create legacy VFS for fallback
 		legacyVFS := NewVirtualFileSystem(config.InputFiles, config.OutputFiles)
-		
+
 		// Create adapter with FSProxy support
 		adapter := app.NewVFSFSProxyAdapter(fsProxyManager, legacyVFS, true)
-		
+
 		// Create enhanced VFS with FSProxy integration
 		vfs = NewVirtualFileSystemWithFSProxy(config.InputFiles, config.OutputFiles, true, adapter)
 	} else {
