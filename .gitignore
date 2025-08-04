@@ -65,7 +65,12 @@ test_*.go
 test_*.patch
 test_*.bin
 dist/
-llmsh
+/llmsh
+/llmcmd
+bin/llmsh
+bin/llmcmd
+cmd/llmsh/llmsh
+cmd/llmcmd/llmcmd
 
 # Debug and test binaries
 llmcmd-debug
