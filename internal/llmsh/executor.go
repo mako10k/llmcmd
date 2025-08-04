@@ -124,35 +124,35 @@ func (e *Executor) executeComplexCommand(complex *parser.ComplexCommandNode) err
 func (e *Executor) setupRedirection(redir *parser.RedirectionNode, redirections map[string]io.ReadWriteCloser) error {
 	switch redir.Type {
 	case parser.RedirOut:
-		writer, err := e.vfs.OpenForWrite(redir.Target, false)
+		writer, err := e.vfs.OpenForWrite(redir.Target, false, true)
 		if err != nil {
 			return err
 		}
 		redirections["stdout"] = writer.(io.ReadWriteCloser)
 
 	case parser.RedirAppend:
-		writer, err := e.vfs.OpenForWrite(redir.Target, true)
+		writer, err := e.vfs.OpenForWrite(redir.Target, true, true)
 		if err != nil {
 			return err
 		}
 		redirections["stdout"] = writer.(io.ReadWriteCloser)
 
 	case parser.RedirIn:
-		reader, err := e.vfs.OpenForRead(redir.Target)
+		reader, err := e.vfs.OpenForRead(redir.Target, true)
 		if err != nil {
 			return err
 		}
 		redirections["stdin"] = reader.(io.ReadWriteCloser)
 
 	case parser.RedirErr:
-		writer, err := e.vfs.OpenForWrite(redir.Target, false)
+		writer, err := e.vfs.OpenForWrite(redir.Target, false, true)
 		if err != nil {
 			return err
 		}
 		redirections["stderr"] = writer.(io.ReadWriteCloser)
 
 	case parser.RedirAll:
-		writer, err := e.vfs.OpenForWrite(redir.Target, false)
+		writer, err := e.vfs.OpenForWrite(redir.Target, false, true)
 		if err != nil {
 			return err
 		}
@@ -281,7 +281,7 @@ func (e *Executor) executePipeline(pipeline *parser.PipelineNode, redirections m
 func (e *Executor) executeCommand(cmd *parser.CommandNode, stdin, stdout, stderr io.ReadWriteCloser) error {
 	// Use default streams if not provided
 	if stdin == nil {
-		reader, err := e.vfs.OpenForRead("stdin")
+		reader, err := e.vfs.OpenForRead("stdin", true)
 		if err != nil {
 			return err
 		}
@@ -293,7 +293,7 @@ func (e *Executor) executeCommand(cmd *parser.CommandNode, stdin, stdout, stderr
 		}
 	}
 	if stdout == nil {
-		writer, err := e.vfs.OpenForWrite("stdout", false)
+		writer, err := e.vfs.OpenForWrite("stdout", false, true)
 		if err != nil {
 			return err
 		}
@@ -305,7 +305,7 @@ func (e *Executor) executeCommand(cmd *parser.CommandNode, stdin, stdout, stderr
 		}
 	}
 	if stderr == nil {
-		writer, err := e.vfs.OpenForWrite("stderr", false)
+		writer, err := e.vfs.OpenForWrite("stderr", false, true)
 		if err != nil {
 			return err
 		}

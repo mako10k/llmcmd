@@ -85,6 +85,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Validate -i/-o options require --virtual
+	if !virtual && (len(inputFiles) > 0 || len(outputFiles) > 0) {
+		fmt.Fprintf(os.Stderr, "Error: -i and -o options require --virtual flag\n")
+		fmt.Fprintf(os.Stderr, "Use --virtual to enable restricted file access mode\n")
+		os.Exit(1)
+	}
+
 	// Read script from file if specified
 	if scriptFile != "" {
 		content, err := os.ReadFile(scriptFile)
@@ -114,10 +121,10 @@ func main() {
 
 	// Create shell configuration
 	config := &llmsh.Config{
-		InputFiles:   inputFiles,
-		OutputFiles:  outputFiles,
-		VirtualMode:  virtual,
-		Debug:        false,
+		InputFiles:  inputFiles,
+		OutputFiles: outputFiles,
+		VirtualMode: virtual,
+		Debug:       false,
 	}
 
 	// Create shell instance
@@ -150,8 +157,8 @@ func main() {
 func printUsage() {
 	fmt.Printf("Usage: %s [options] [script]\n\n", os.Args[0])
 	fmt.Println("Options:")
-	fmt.Println("  -i <file>     Input file hint (can be specified multiple times)")
-	fmt.Println("  -o <file>     Output file hint (can be specified multiple times)")
+	fmt.Println("  -i <file>     Input file (requires --virtual)")
+	fmt.Println("  -o <file>     Output file (requires --virtual)")
 	fmt.Println("  --virtual     Enable virtual mode (restricted file access)")
 	fmt.Println("  -c <script>   Execute script string")
 	fmt.Println("  -h, --help    Show this help")
@@ -162,12 +169,11 @@ func printUsage() {
 	fmt.Println("")
 	fmt.Println("Note: Options -c and script file are mutually exclusive.")
 	fmt.Println("      If neither is specified, enters interactive mode or reads from stdin.")
-	fmt.Println("      -i/-o options provide file hints to LLM for file selection.")
+	fmt.Println("      -i/-o options require --virtual flag for restricted file access.")
 	fmt.Println("")
 	fmt.Println("Examples:")
 	fmt.Printf("  %s -c 'echo hello | grep ello'\n", os.Args[0])
-	fmt.Printf("  %s -i data.txt -o result.txt script.llmsh\n", os.Args[0])
-	fmt.Printf("  %s --virtual -c 'cat | sort | uniq'\n", os.Args[0])
+	fmt.Printf("  %s --virtual -i input.txt -o output.txt -c 'cat input.txt > output.txt'\n", os.Args[0])
 	fmt.Printf("  echo 'cat file.txt | grep error' | %s\n", os.Args[0])
 	fmt.Printf("  %s script.llmsh\n", os.Args[0])
 	fmt.Printf("  %s  # Interactive mode\n", os.Args[0])

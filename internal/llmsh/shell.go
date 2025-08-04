@@ -10,27 +10,7 @@ import (
 	"github.com/mako10k/llmcmd/internal/llmsh/parser"
 )
 
-// NewShell creates a new shell instance
-func NewShell(config *Config) (*Shell, error) {
-	if config == nil {
-		config = &Config{}
-	}
-
-	// Initialize components
-	vfs := NewVirtualFileSystem(config.InputFiles, config.OutputFiles)
-	help := NewHelpSystem()
-	parser := parser.NewParser()
-	executor := NewExecutor(vfs, help, config.QuotaManager)
-
-	return &Shell{
-		config:   config,
-		vfs:      vfs,
-		executor: executor,
-		parser:   parser,
-		help:     help,
-	}, nil
-}
-
+// Constants for the shell
 // Version information
 var (
 	Version     = "3.1.1"   // Will be overridden by build-time ldflags
@@ -82,16 +62,15 @@ func NewShell(config *Config) (*Shell, error) {
 
 	// Initialize components
 	vfs := NewVirtualFileSystem(config.InputFiles, config.OutputFiles)
-	help := NewHelpSystem()
-	parser := parser.NewParser()
-	executor := NewExecutor(vfs, help, config.QuotaManager)
+	parserInstance := parser.NewParser()
+	executor := NewExecutor(vfs, nil, config.QuotaManager)
 
 	return &Shell{
 		config:   config,
 		vfs:      vfs,
 		executor: executor,
-		parser:   parser,
-		help:     help,
+		parser:   parserInstance,
+		help:     nil,
 	}, nil
 }
 
@@ -107,11 +86,56 @@ func (s *Shell) Execute(input string) error {
 	return s.executor.Execute(ast)
 }
 
-// Interactive starts an interactive shell session
-// This is only called when we know we're in a TTY environment
+// Interactive starts the interactive shell mode
 func (s *Shell) Interactive() error {
-	return s.interactiveWithReadline()
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:            "llmsh> ",
+		HistoryFile:       "",
+		HistoryLimit:      1000,
+		HistorySearchFold: true,
+		InterruptPrompt:   "^C",
+		EOFPrompt:         "exit",
+	})
+	if err != nil {
+		return err
+	}
+	defer rl.Close()
+
+	for {
+		line, err := rl.Readline()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		if line == "exit" || line == "quit" {
+			break
+		}
+
+		if line == "help" {
+			fmt.Println("Available commands: exit, quit, help")
+			fmt.Println("Or enter any shell command or pipeline")
+			continue
+		}
+
+		// Execute the command
+		err = s.Execute(line)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		}
+	}
+
+	return nil
 }
+
+// Config represents shell configuration
 
 // interactiveWithReadline handles TTY interactive mode with readline support
 func (s *Shell) interactiveWithReadline() error {

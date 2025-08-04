@@ -203,19 +203,7 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 		}
 	}
 
-	// Open output file if specified
-	if config.OutputFile != "" {
-		if config.OutputFile == "-" {
-			// Use stdout for "-"
-			engine.outputFile = os.Stdout
-		} else {
-			file, err := os.Create(config.OutputFile)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create output file %s: %w", config.OutputFile, err)
-			}
-			engine.outputFile = file
-		}
-	}
+	// Output files are now handled through VirtualFS, not directly in engine
 
 	return engine, nil
 }
