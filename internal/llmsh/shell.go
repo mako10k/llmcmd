@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/chzyer/readline"
+	"github.com/mako10k/llmcmd/internal/app"
 	"github.com/mako10k/llmcmd/internal/llmsh/parser"
 )
 
@@ -52,6 +53,11 @@ type Config struct {
 
 	// Debug mode
 	Debug bool
+	
+	// FSProxy integration settings (Phase 3.1)
+	EnableFSProxy     bool
+	FSProxyManager    interface{} // Should be *app.FSProxyManager, but avoiding circular import
+	FSProxyVFSMode    bool        // Whether to restrict file access to VFS only
 }
 
 // NewShell creates a new shell instance
@@ -60,8 +66,29 @@ func NewShell(config *Config) (*Shell, error) {
 		config = &Config{}
 	}
 
-	// Initialize components
-	vfs := NewVirtualFileSystem(config.InputFiles, config.OutputFiles)
+	// Initialize VFS with optional FSProxy integration
+	var vfs *VirtualFileSystem
+	if config.EnableFSProxy && config.FSProxyManager != nil {
+		// Create FSProxy adapter
+		fsProxyManager, ok := config.FSProxyManager.(*app.FSProxyManager)
+		if !ok {
+			return nil, fmt.Errorf("invalid FSProxyManager type")
+		}
+		
+		// Create legacy VFS for fallback
+		legacyVFS := NewVirtualFileSystem(config.InputFiles, config.OutputFiles)
+		
+		// Create adapter with FSProxy support
+		adapter := app.NewVFSFSProxyAdapter(fsProxyManager, legacyVFS, true)
+		
+		// Create enhanced VFS with FSProxy integration
+		vfs = NewVirtualFileSystemWithFSProxy(config.InputFiles, config.OutputFiles, true, adapter)
+	} else {
+		// Use legacy VFS
+		vfs = NewVirtualFileSystem(config.InputFiles, config.OutputFiles)
+	}
+
+	// Initialize other components
 	parserInstance := parser.NewParser()
 	executor := NewExecutor(vfs, nil, config.QuotaManager)
 
