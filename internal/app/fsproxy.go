@@ -9,9 +9,97 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mako10k/llmcmd/internal/tools"
 )
+
+// OpenFile represents an open file descriptor with metadata
+type OpenFile struct {
+	FileNo     int                   `json:"fileno"`
+	Filename   string                `json:"filename"`
+	Mode       string                `json:"mode"`
+	ClientID   string                `json:"client_id"`
+	OpenedAt   time.Time             `json:"opened_at"`
+	IsTopLevel bool                  `json:"is_top_level"`
+	Handle     io.ReadWriteCloser    `json:"-"` // File handle (not serialized)
+}
+
+// FileDescriptorTable manages file descriptors with metadata
+type FileDescriptorTable struct {
+	mu    sync.RWMutex
+	files map[int]*OpenFile // fileno -> OpenFile
+}
+
+// NewFileDescriptorTable creates a new file descriptor table
+func NewFileDescriptorTable() *FileDescriptorTable {
+	return &FileDescriptorTable{
+		files: make(map[int]*OpenFile),
+	}
+}
+
+// AddFile adds a new file to the table
+func (fdt *FileDescriptorTable) AddFile(fileno int, filename, mode, clientID string, isTopLevel bool, handle io.ReadWriteCloser) {
+	fdt.mu.Lock()
+	defer fdt.mu.Unlock()
+	
+	fdt.files[fileno] = &OpenFile{
+		FileNo:     fileno,
+		Filename:   filename,
+		Mode:       mode,
+		ClientID:   clientID,
+		OpenedAt:   time.Now(),
+		IsTopLevel: isTopLevel,
+		Handle:     handle,
+	}
+}
+
+// GetFile retrieves a file by file descriptor
+func (fdt *FileDescriptorTable) GetFile(fileno int) (*OpenFile, bool) {
+	fdt.mu.RLock()
+	defer fdt.mu.RUnlock()
+	
+	file, exists := fdt.files[fileno]
+	return file, exists
+}
+
+// RemoveFile removes a file from the table
+func (fdt *FileDescriptorTable) RemoveFile(fileno int) bool {
+	fdt.mu.Lock()
+	defer fdt.mu.Unlock()
+	
+	if _, exists := fdt.files[fileno]; exists {
+		delete(fdt.files, fileno)
+		return true
+	}
+	return false
+}
+
+// GetFilesByClient returns all files opened by a specific client
+func (fdt *FileDescriptorTable) GetFilesByClient(clientID string) []int {
+	fdt.mu.RLock()
+	defer fdt.mu.RUnlock()
+	
+	var filenos []int
+	for fileno, file := range fdt.files {
+		if file.ClientID == clientID {
+			filenos = append(filenos, fileno)
+		}
+	}
+	return filenos
+}
+
+// GetAllFiles returns all open files
+func (fdt *FileDescriptorTable) GetAllFiles() map[int]*OpenFile {
+	fdt.mu.RLock()
+	defer fdt.mu.RUnlock()
+	
+	result := make(map[int]*OpenFile)
+	for fileno, file := range fdt.files {
+		result[fileno] = file
+	}
+	return result
+}
 
 // FSProxyManager manages file system access for restricted child processes
 type FSProxyManager struct {
@@ -24,8 +112,12 @@ type FSProxyManager struct {
 
 	// File descriptor management
 	nextFD    int                        // Next available file descriptor
-	openFiles map[int]io.ReadWriteCloser // Map of fd to file handles
+	openFiles map[int]io.ReadWriteCloser // Map of fd to file handles (legacy)
 	fdMutex   sync.RWMutex               // Protect fd operations
+	
+	// Enhanced fd management
+	fdTable   *FileDescriptorTable       // New fd management table
+	clientID  string                     // Client identifier for this manager
 }
 
 // NewFSProxyManager creates a new FS proxy manager
@@ -38,6 +130,8 @@ func NewFSProxyManager(vfs tools.VirtualFileSystem, pipe *os.File, isVFSMode boo
 		writer:    bufio.NewWriter(pipe),
 		nextFD:    1000, // Start from 1000 to avoid conflicts
 		openFiles: make(map[int]io.ReadWriteCloser),
+		fdTable:   NewFileDescriptorTable(),
+		clientID:  fmt.Sprintf("client-%d", time.Now().UnixNano()), // Generate unique client ID
 	}
 }
 
@@ -107,23 +201,18 @@ func (proxy *FSProxyManager) readRequest() (FSRequest, error) {
 
 	switch request.Command {
 	case "OPEN":
-		if len(parts) < 3 {
-			return FSRequest{}, fmt.Errorf("OPEN requires filename and mode")
+		if len(parts) < 4 {
+			return FSRequest{}, fmt.Errorf("OPEN requires filename, mode, and is_top_level")
 		}
 		request.Filename = parts[1]
 		request.Mode = parts[2]
-
-		// Optional context parameter (internal/user)
-		if len(parts) >= 4 {
-			context := parts[3]
-			if context != "internal" && context != "user" {
-				return FSRequest{}, fmt.Errorf("invalid context: %s", context)
-			}
-			request.Context = context
-		} else {
-			// Default to user context for compatibility
-			request.Context = "user"
+		
+		// Parse is_top_level parameter
+		isTopLevelStr := parts[3]
+		if isTopLevelStr != "true" && isTopLevelStr != "false" {
+			return FSRequest{}, fmt.Errorf("invalid is_top_level: %s", isTopLevelStr)
 		}
+		request.Context = isTopLevelStr // Store is_top_level flag in Context field
 
 	case "READ":
 		if len(parts) < 4 {
@@ -209,8 +298,8 @@ func (proxy *FSProxyManager) processRequest(request FSRequest) FSResponse {
 	}
 }
 
-// handleOpen handles OPEN requests with context information
-func (proxy *FSProxyManager) handleOpen(filename, mode, context string) FSResponse {
+// handleOpen handles OPEN requests according to FSProxy protocol
+func (proxy *FSProxyManager) handleOpen(filename, mode, isTopLevelStr string) FSResponse {
 	if proxy.vfs == nil {
 		return FSResponse{
 			Status: "ERROR",
@@ -218,47 +307,7 @@ func (proxy *FSProxyManager) handleOpen(filename, mode, context string) FSRespon
 		}
 	}
 
-	// Determine if this is internal access (LLM) or user access
-	isInternal := (context == "internal")
-
-	// Use context-aware VFS method if available
-	if vfsWithContext, ok := proxy.vfs.(interface {
-		OpenFileWithContext(string, string, bool) (interface{}, error)
-	}); ok {
-		file, err := vfsWithContext.OpenFileWithContext(filename, mode, isInternal)
-		if err != nil {
-			return FSResponse{
-				Status: "ERROR",
-				Data:   fmt.Sprintf("failed to open file '%s': %v", filename, err),
-			}
-		}
-
-		// Convert to ReadWriteCloser
-		var rwc io.ReadWriteCloser
-		if f, ok := file.(io.ReadWriteCloser); ok {
-			rwc = f
-		} else {
-			return FSResponse{
-				Status: "ERROR",
-				Data:   fmt.Sprintf("file does not implement ReadWriteCloser"),
-			}
-		}
-
-		// Assign file descriptor and store
-		proxy.fdMutex.Lock()
-		fd := proxy.nextFD
-		proxy.nextFD++
-		proxy.openFiles[fd] = rwc
-		proxy.fdMutex.Unlock()
-
-		return FSResponse{
-			Status: "OK",
-			Data:   fmt.Sprintf("%d", fd),
-		}
-	}
-
-	// Fall back to legacy VFS interface
-	// Convert mode string to os flags
+	// Validate mode
 	var flag int
 	switch mode {
 	case "r":
@@ -280,6 +329,20 @@ func (proxy *FSProxyManager) handleOpen(filename, mode, context string) FSRespon
 		}
 	}
 
+	// Parse is_top_level flag
+	var isTopLevel bool
+	switch isTopLevelStr {
+	case "true":
+		isTopLevel = true
+	case "false":
+		isTopLevel = false
+	default:
+		return FSResponse{
+			Status: "ERROR",
+			Data:   fmt.Sprintf("invalid is_top_level: %s", isTopLevelStr),
+		}
+	}
+
 	// Open file through VFS
 	file, err := proxy.vfs.OpenFile(filename, flag, 0644)
 	if err != nil {
@@ -289,27 +352,31 @@ func (proxy *FSProxyManager) handleOpen(filename, mode, context string) FSRespon
 		}
 	}
 
-	// Allocate new file descriptor and register the file
+	// VFS should return io.ReadWriteCloser compatible interface
+	rwc := file
+
+	// Assign file descriptor and store in both legacy and new table
 	proxy.fdMutex.Lock()
 	fd := proxy.nextFD
 	proxy.nextFD++
-	proxy.openFiles[fd] = file
+	proxy.openFiles[fd] = rwc // Legacy table
 	proxy.fdMutex.Unlock()
+
+	// Store in new fd management table
+	proxy.fdTable.AddFile(fd, filename, mode, proxy.clientID, isTopLevel, rwc)
 
 	log.Printf("FS Proxy: Opened file '%s' with fd %d", filename, fd)
 
 	return FSResponse{
 		Status: "OK",
-		Data:   strconv.Itoa(fd),
+		Data:   fmt.Sprintf("%d", fd),
 	}
 }
 
 // handleRead handles READ requests with isTopLevel support
 func (proxy *FSProxyManager) handleRead(fileno int, size int, isTopLevel bool) FSResponse {
-	proxy.fdMutex.RLock()
-	file, exists := proxy.openFiles[fileno]
-	proxy.fdMutex.RUnlock()
-
+	// Get file from new fd management table
+	openFile, exists := proxy.fdTable.GetFile(fileno)
 	if !exists {
 		return FSResponse{
 			Status: "ERROR",
@@ -317,18 +384,32 @@ func (proxy *FSProxyManager) handleRead(fileno int, size int, isTopLevel bool) F
 		}
 	}
 
-	// If isTopLevel is true, the VFS server should open the real file (no restrictions)
-	// For now, we'll log this behavior - the actual implementation would require
-	// storing the isTopLevel context with each open file descriptor
+	// Log access type for debugging
 	if isTopLevel {
 		log.Printf("FS Proxy: READ with isTopLevel=true for fd %d (VFS server should access real file)", fileno)
 	} else {
 		log.Printf("FS Proxy: READ with isTopLevel=false for fd %d (VFS restricted environment)", fileno)
 	}
 
+	// Validate size parameter
+	if size < 0 {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   "invalid size: negative value not allowed",
+		}
+	}
+
+	// Handle zero size request
+	if size == 0 {
+		return FSResponse{
+			Status: "OK",
+			Data:   "0",
+		}
+	}
+
 	// Read data from file
 	buffer := make([]byte, size)
-	n, err := file.Read(buffer)
+	n, err := openFile.Handle.Read(buffer)
 	if err != nil && err != io.EOF {
 		return FSResponse{
 			Status: "ERROR",
@@ -346,21 +427,61 @@ func (proxy *FSProxyManager) handleRead(fileno int, size int, isTopLevel bool) F
 
 // handleWrite handles WRITE requests
 func (proxy *FSProxyManager) handleWrite(fileno int, data []byte) FSResponse {
-	// TODO: Implement proper fd to file mapping
-	// For now, return placeholder
+	// Get file from new fd management table
+	openFile, exists := proxy.fdTable.GetFile(fileno)
+	if !exists {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   fmt.Sprintf("invalid fileno: %d", fileno),
+		}
+	}
+
+	// Write data to file
+	n, err := openFile.Handle.Write(data)
+	if err != nil {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   fmt.Sprintf("write error: %v", err),
+		}
+	}
+
 	return FSResponse{
-		Status: "ERROR",
-		Data:   "WRITE not yet implemented",
+		Status: "OK",
+		Data:   fmt.Sprintf("%d", n), // Return number of bytes written
 	}
 }
 
 // handleClose handles CLOSE requests
 func (proxy *FSProxyManager) handleClose(fileno int) FSResponse {
-	// TODO: Implement proper fd to file mapping
-	// For now, return placeholder
+	// Get file from new fd management table
+	openFile, exists := proxy.fdTable.GetFile(fileno)
+	if !exists {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   fmt.Sprintf("invalid fileno: %d", fileno),
+		}
+	}
+
+	// Close the file
+	if err := openFile.Handle.Close(); err != nil {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   fmt.Sprintf("close error: %v", err),
+		}
+	}
+
+	// Remove from both management tables
+	proxy.fdMutex.Lock()
+	delete(proxy.openFiles, fileno) // Legacy table
+	proxy.fdMutex.Unlock()
+	
+	proxy.fdTable.RemoveFile(fileno) // New table
+
+	log.Printf("FS Proxy: Closed file with fd %d", fileno)
+
 	return FSResponse{
-		Status: "ERROR",
-		Data:   "CLOSE not yet implemented",
+		Status: "OK",
+		Data:   "",
 	}
 }
 
@@ -381,20 +502,36 @@ func (proxy *FSProxyManager) sendResponse(response FSResponse) error {
 
 // cleanup closes all open files when the proxy manager shuts down
 func (proxy *FSProxyManager) cleanup() {
+	// Get all open files from new fd table
+	allFiles := proxy.fdTable.GetAllFiles()
+	
+	log.Printf("FS Proxy: Cleaning up %d open files for client %s", len(allFiles), proxy.clientID)
+
+	// Close all files and remove from tables
+	for fd, openFile := range allFiles {
+		if openFile.Handle != nil {
+			if err := openFile.Handle.Close(); err != nil {
+				log.Printf("FS Proxy: Error closing fd %d (%s): %v", fd, openFile.Filename, err)
+			} else {
+				log.Printf("FS Proxy: Closed fd %d (%s)", fd, openFile.Filename)
+			}
+		}
+		
+		// Remove from new fd table
+		proxy.fdTable.RemoveFile(fd)
+	}
+
+	// Clean up legacy table as well
 	proxy.fdMutex.Lock()
-	defer proxy.fdMutex.Unlock()
-
-	log.Printf("FS Proxy: Cleaning up %d open files", len(proxy.openFiles))
-
 	for fd, file := range proxy.openFiles {
 		if file != nil {
 			if err := file.Close(); err != nil {
-				log.Printf("FS Proxy: Error closing fd %d: %v", fd, err)
+				log.Printf("FS Proxy: Error closing legacy fd %d: %v", fd, err)
 			}
 		}
 	}
-
-	// Clear the map
 	proxy.openFiles = make(map[int]io.ReadWriteCloser)
-	log.Printf("FS Proxy: Resource cleanup completed")
+	proxy.fdMutex.Unlock()
+
+	log.Printf("FS Proxy: Resource cleanup completed for client %s", proxy.clientID)
 }
