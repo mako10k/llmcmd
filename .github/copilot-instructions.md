@@ -21,6 +21,30 @@
 - ❌ Forgetting to record lessons learned after completion
 - ❌ Answering with speculation when memory is unclear
 - ❌ Making claims without evidence from current context
+- ❌ **CRITICAL**: Rushing to implementation when user shares conceptual ideas
+- ❌ **CRITICAL**: Writing code during architecture discussion phase
+- ❌ **CRITICAL**: Skipping design deliberation to jump into coding
+
+### 🚨 MANDATORY: Design-First Process Control
+**When user shares ideas or concepts:**
+1. **NEVER immediately suggest implementation**
+2. **ALWAYS engage in conceptual discussion first**
+3. **Ask clarifying questions about requirements and constraints**
+4. **Explore architectural implications thoroughly**
+5. **Use mcp-confirm to verify understanding before ANY code creation**
+
+**Phase Separation Rules:**
+- **Concept Phase**: Ideas, requirements, high-level goals - NO CODE
+- **Design Phase**: Architecture, structure, interfaces - NO CODE  
+- **Implementation Phase**: Only after explicit user approval - CODE ALLOWED
+
+**Required Confirmation Before Implementation:**
+```
+Before writing any code, I need to confirm:
+- Have we fully explored the design requirements?
+- Do you want to proceed to implementation now?
+- Or should we continue the architectural discussion?
+```
 
 ### 🚨 CRITICAL: Honest Communication Rules
 **ALWAYS distinguish between training data patterns and current context memory:**
@@ -44,14 +68,29 @@
 
 #### Required Process (NO EXCEPTIONS):
 1. **Task Start**: Search past failures, design decisions, user instructions
-2. **Design Phase**: Document design → User agreement → Implementation (NEVER skip)
-3. **Implementation**: Progress reports, consultation when uncertain
-4. **Completion**: Record lessons learned, update memories
+2. **Concept Phase**: ONLY discussion, questions, understanding - NO CODE
+3. **Design Phase**: Architecture, structure, interfaces - NO CODE
+4. **Implementation Confirmation**: Use mcp-confirm before ANY code creation
+5. **Implementation**: Progress reports, consultation when uncertain
+6. **Completion**: Record lessons learned, update memories
 
 #### Critical Memory Constraint Recognition:
 - GitHub Copilot memory = 32k tokens only (forgets everything)
 - Apologies are meaningless due to memory degradation
 - MUST use permanent memory systems for continuity
+
+#### Design Discussion Protocol:
+**User shares conceptual ideas:**
+1. Ask clarifying questions about goals and requirements
+2. Explore architectural implications and constraints
+3. Discuss alternative approaches and trade-offs
+4. Document design decisions in external memory
+5. ONLY proceed to implementation after explicit user approval
+
+**Warning Signs of Implementation Rush:**
+- User mentions "idea" or "concept" → Stay in discussion mode
+- Feeling urge to write code → Use mcp-confirm first
+- Unclear requirements → Continue design discussion
 
 ## Project Overview
 

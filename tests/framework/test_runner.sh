@@ -103,6 +103,7 @@ run_test_file() {
 run_test_category() {
     local tool="$1"
     local category="$2"
+    local test_filter="$3"
     local category_dir="$TEST_DIR/integration/$tool/$category"
     
     if [[ ! -d "$category_dir" ]]; then
@@ -115,7 +116,13 @@ run_test_category() {
     # Run all test files in the category
     for test_file in "$category_dir"/*.sh; do
         [[ -f "$test_file" ]] || continue
-        run_test_file "$test_file"
+        local test_name
+        test_name=$(basename "$test_file" .sh)
+        
+        # Apply test filter if specified
+        if [[ -z "$test_filter" || "$test_name" == *"$test_filter"* ]]; then
+            run_test_file "$test_file"
+        fi
     done
 }
 
@@ -132,7 +139,22 @@ run_tool_tests() {
             category=$(basename "$category_dir")
             
             if [[ -z "$test_filter" || "$category" == *"$test_filter"* ]]; then
-                run_test_category "$tool_filter" "$category"
+                run_test_category "$tool_filter" "$category" "$test_filter"
+            else
+                # Check if any test file in category matches the filter
+                local found_match=false
+                for test_file in "$category_dir"/*.sh; do
+                    [[ -f "$test_file" ]] || continue
+                    local test_name
+                    test_name=$(basename "$test_file" .sh)
+                    if [[ "$test_name" == *"$test_filter"* ]]; then
+                        found_match=true
+                        break
+                    fi
+                done
+                if [[ "$found_match" == "true" ]]; then
+                    run_test_category "$tool_filter" "$category" "$test_filter"
+                fi
             fi
         done
     else
@@ -149,7 +171,22 @@ run_tool_tests() {
                 category=$(basename "$category_dir")
                 
                 if [[ -z "$test_filter" || "$category" == *"$test_filter"* ]]; then
-                    run_test_category "$tool" "$category"
+                    run_test_category "$tool" "$category" "$test_filter"
+                else
+                    # Check if any test file in category matches the filter
+                    local found_match=false
+                    for test_file in "$TEST_DIR/integration/$tool/$category"/*.sh; do
+                        [[ -f "$test_file" ]] || continue
+                        local test_name
+                        test_name=$(basename "$test_file" .sh)
+                        if [[ "$test_name" == *"$test_filter"* ]]; then
+                            found_match=true
+                            break
+                        fi
+                    done
+                    if [[ "$found_match" == "true" ]]; then
+                        run_test_category "$tool" "$category" "$test_filter"
+                    fi
                 fi
             done
         done
