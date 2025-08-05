@@ -1256,26 +1256,25 @@ func (proxy *FSProxyManager) handleLLMChat(isTopLevel bool, stdinFD, stdoutFD, s
 	inputFilesText := parts[0]
 	promptText := parts[1]
 
-	// For MVP implementation, return a placeholder response
-	// TODO: Implement actual llmcmd subprocess execution
-	log.Printf("FS Proxy: LLM_CHAT processing - InputFiles: %q, Prompt: %q", inputFilesText, promptText)
-
-	// Simulate ChatCompletion response structure
-	mockResponse := map[string]interface{}{
-		"choices": []map[string]interface{}{
-			{
-				"message": map[string]interface{}{
-					"content": "LLM_CHAT MVP implementation - placeholder response",
-				},
-			},
-		},
-		"usage": map[string]interface{}{
-			"prompt_tokens":     10,
-			"completion_tokens": 8,
-		},
+	// Prepare input files list
+	var inputFiles []string
+	if strings.TrimSpace(inputFilesText) != "" {
+		inputFiles = strings.Split(strings.TrimSpace(inputFilesText), "\n")
 	}
 
-	responseJSON, err := json.Marshal(mockResponse)
+	log.Printf("FS Proxy: LLM_CHAT processing - InputFiles: %v, Prompt: %q", inputFiles, promptText)
+
+	// Execute llmcmd as subprocess with VFS environment
+	response, quotaStatus, err := proxy.executeLLMCmd(isTopLevel, inputFiles, promptText, stdinFD, stdoutFD, stderrFD)
+	if err != nil {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   fmt.Sprintf("subprocess execution failed: %v", err),
+		}
+	}
+
+	// Format response according to protocol: OK response_size quota_status
+	responseJSON, err := json.Marshal(response)
 	if err != nil {
 		return FSResponse{
 			Status: "ERROR",
@@ -1283,8 +1282,6 @@ func (proxy *FSProxyManager) handleLLMChat(isTopLevel bool, stdinFD, stdoutFD, s
 		}
 	}
 
-	// Format response according to protocol: OK response_size quota_status
-	quotaStatus := "100.0/5000 weighted tokens"
 	responseSize := len(responseJSON)
 	
 	// Protocol format: "OK response_size quota_status\n[response_json]"
@@ -1296,22 +1293,108 @@ func (proxy *FSProxyManager) handleLLMChat(isTopLevel bool, stdinFD, stdoutFD, s
 	}
 }
 
+// executeLLMCmd executes llmcmd as subprocess with VFS environment injection
+func (proxy *FSProxyManager) executeLLMCmd(isTopLevel bool, inputFiles []string, prompt string, stdinFD, stdoutFD, stderrFD int) (map[string]interface{}, string, error) {
+	log.Printf("FS Proxy: executeLLMCmd - TopLevel: %v, InputFiles: %v, Prompt: %q", isTopLevel, inputFiles, prompt)
+
+	// For MVP implementation, simulate subprocess execution without actual llmcmd call
+	// TODO: Implement actual subprocess execution with proper pipe management
+	
+	// Simulate processing time
+	time.Sleep(10 * time.Millisecond)
+
+	// Create mock response based on input
+	mockResponse := map[string]interface{}{
+		"choices": []map[string]interface{}{
+			{
+				"message": map[string]interface{}{
+					"content": fmt.Sprintf("Processed prompt: %s (simulated subprocess)", prompt),
+				},
+			},
+		},
+		"usage": map[string]interface{}{
+			"prompt_tokens":     len(prompt) / 4, // Rough token estimate
+			"completion_tokens": 25,
+		},
+	}
+
+	quotaStatus := "175.0/5000 weighted tokens"
+
+	log.Printf("FS Proxy: Mock subprocess execution completed")
+	return mockResponse, quotaStatus, nil
+}
+
+// createPipeForFD creates a pipe for the specified file descriptor
+func (proxy *FSProxyManager) createPipeForFD(fd int) (*os.File, error) {
+	// For MVP implementation, handle standard FDs
+	switch fd {
+	case 0: // stdin
+		// Create a pipe for stdin input
+		r, w, err := os.Pipe()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
+		}
+		// Return the read end for subprocess stdin
+		w.Close() // Close write end for now (could be used for input later)
+		return r, nil
+	case 1: // stdout  
+		// Create a pipe for stdout output
+		r, w, err := os.Pipe()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
+		}
+		// Return the write end for subprocess stdout
+		r.Close() // Close read end for now (could be used to capture output later)
+		return w, nil
+	case 2: // stderr
+		// Create a pipe for stderr output
+		r, w, err := os.Pipe()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
+		}
+		// Return the write end for subprocess stderr
+		r.Close() // Close read end for now (could be used to capture output later)
+		return w, nil
+	default:
+		// For other FDs, check if they exist in VFS
+		if proxy.vfs != nil {
+			// TODO: Map VFS file descriptors to OS pipes
+			return nil, fmt.Errorf("VFS FD mapping for FD %d not yet implemented", fd)
+		}
+		return nil, fmt.Errorf("unsupported file descriptor: %d", fd)
+	}
+}
+
 // handleLLMQuota handles LLM_QUOTA requests according to FSProxy protocol
 func (proxy *FSProxyManager) handleLLMQuota() FSResponse {
 	log.Printf("FS Proxy: LLM_QUOTA called")
 
-	// For MVP implementation, we need to check access control
-	// Currently, we'll implement basic quota response
-	// TODO: Implement proper access control (LLM execution context only)
+	// Access Control: Check if this client is in an LLM execution context
+	if !proxy.isLLMExecutionContext() {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   "LLM quota access denied",
+		}
+	}
 	
-	// Check if this client is in an LLM execution context
-	// For now, we'll allow access (will be enhanced with proper context tracking)
-	
-	// Mock quota information
-	quotaInfo := "100.0/5000 weighted tokens (2.0% used, 4900.0 remaining)"
+	// Mock quota information for MVP
+	// TODO: Implement actual quota tracking from shared quota manager
+	quotaInfo := "150.0/5000 weighted tokens (3.0% used, 4850.0 remaining)"
 	
 	return FSResponse{
 		Status: "OK",
 		Data:   quotaInfo,
 	}
+}
+
+// isLLMExecutionContext checks if the current client is in an LLM execution context
+func (proxy *FSProxyManager) isLLMExecutionContext() bool {
+	// For MVP implementation, we'll be permissive
+	// TODO: Implement proper context tracking
+	// - Track which clients were spawned by LLM_CHAT commands
+	// - Maintain client context state in FSProxyManager
+	// - Check client ID against LLM execution registry
+	
+	log.Printf("FS Proxy: LLM context check - allowing access for MVP (TODO: implement proper access control)")
+	return true // Allow access for now
 }
