@@ -514,6 +514,82 @@ func (proxy *FSProxyManager) parseLegacyRequest(line string) (FSRequest, error) 
 			request.Data = data
 		}
 
+	case "LLM_CHAT":
+		// LLM_CHAT is_top_level stdin_fd stdout_fd stderr_fd input_files_count prompt_length
+		if len(parts) < 7 {
+			return FSRequest{}, fmt.Errorf("LLM_CHAT requires is_top_level, stdin_fd, stdout_fd, stderr_fd, input_files_count, and prompt_length")
+		}
+
+		// Parse is_top_level
+		isTopLevelStr := parts[1]
+		if isTopLevelStr != "true" && isTopLevelStr != "false" {
+			return FSRequest{}, fmt.Errorf("invalid is_top_level: %s", isTopLevelStr)
+		}
+		request.Context = isTopLevelStr
+
+		// Parse file descriptors
+		stdinFD, err := strconv.Atoi(parts[2])
+		if err != nil || stdinFD < 0 {
+			return FSRequest{}, fmt.Errorf("invalid stdin_fd: %s", parts[2])
+		}
+		stdoutFD, err := strconv.Atoi(parts[3])
+		if err != nil || stdoutFD < 0 {
+			return FSRequest{}, fmt.Errorf("invalid stdout_fd: %s", parts[3])
+		}
+		stderrFD, err := strconv.Atoi(parts[4])
+		if err != nil || stderrFD < 0 {
+			return FSRequest{}, fmt.Errorf("invalid stderr_fd: %s", parts[4])
+		}
+
+		// Parse data sizes
+		inputFilesCount, err := strconv.Atoi(parts[5])
+		if err != nil || inputFilesCount < 0 {
+			return FSRequest{}, fmt.Errorf("invalid input_files_count: %s", parts[5])
+		}
+		promptLength, err := strconv.Atoi(parts[6])
+		if err != nil || promptLength < 0 {
+			return FSRequest{}, fmt.Errorf("invalid prompt_length: %s", parts[6])
+		}
+
+		// Store parameters in request fields
+		request.ProcessID = stdinFD  // Reuse ProcessID for stdin_fd
+		request.Fileno = stdoutFD    // Reuse Fileno for stdout_fd
+		request.Size = stderrFD      // Reuse Size for stderr_fd
+
+		// Read input files text
+		var inputFilesText []byte
+		if inputFilesCount > 0 {
+			inputFilesText = make([]byte, inputFilesCount)
+			_, err := io.ReadFull(proxy.reader, inputFilesText)
+			if err != nil {
+				return FSRequest{}, fmt.Errorf("failed to read input files data")
+			}
+		}
+
+		// Read prompt text
+		var promptText []byte
+		if promptLength > 0 {
+			promptText = make([]byte, promptLength)
+			_, err := io.ReadFull(proxy.reader, promptText)
+			if err != nil {
+				return FSRequest{}, fmt.Errorf("failed to read prompt data")
+			}
+		}
+
+		// Combine data: input_files_text + newline + prompt_text
+		totalData := make([]byte, 0, inputFilesCount + 1 + promptLength)
+		totalData = append(totalData, inputFilesText...)
+		totalData = append(totalData, '\n')
+		totalData = append(totalData, promptText...)
+		request.Data = totalData
+
+	case "LLM_QUOTA":
+		// LLM_QUOTA has no parameters
+		if len(parts) > 1 {
+			return FSRequest{}, fmt.Errorf("LLM_QUOTA takes no parameters")
+		}
+		// Context will be used to check access control in handler
+
 	default:
 		return FSRequest{}, fmt.Errorf("unknown command: %s", request.Command)
 	}
@@ -572,6 +648,16 @@ func (proxy *FSProxyManager) processRequest(request FSRequest) FSResponse {
 	case "STREAM_WRITE":
 		// Phase 3: Delegate to stream write handler (actual implementation)
 		return proxy.handleStreamWrite(request.ProcessID, request.StreamType, request.Data)
+	case "LLM_CHAT":
+		// Handle LLM Chat request
+		isTopLevel := (request.Context == "true")
+		stdinFD := request.ProcessID  // Retrieved from ProcessID field
+		stdoutFD := request.Fileno    // Retrieved from Fileno field
+		stderrFD := request.Size      // Retrieved from Size field
+		return proxy.handleLLMChat(isTopLevel, stdinFD, stdoutFD, stderrFD, request.Data)
+	case "LLM_QUOTA":
+		// Handle LLM Quota request
+		return proxy.handleLLMQuota()
 	default:
 		return FSResponse{
 			Status: "ERROR",
@@ -1142,5 +1228,90 @@ func (proxy *FSProxyManager) handleStreamWrite(processID int, streamType string,
 	return FSResponse{
 		Status: "OK",
 		Data:   fmt.Sprintf("%d", n), // Return number of bytes written
+	}
+}
+
+// handleLLMChat handles LLM_CHAT requests according to FSProxy protocol
+func (proxy *FSProxyManager) handleLLMChat(isTopLevel bool, stdinFD, stdoutFD, stderrFD int, data []byte) FSResponse {
+	log.Printf("FS Proxy: LLM_CHAT called - TopLevel: %v, FDs: %d,%d,%d, DataSize: %d", 
+		isTopLevel, stdinFD, stdoutFD, stderrFD, len(data))
+
+	// Fail-First: Validate file descriptors
+	if stdinFD < 0 || stdoutFD < 0 || stderrFD < 0 {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   "invalid file descriptors: must be non-negative",
+		}
+	}
+
+	// Parse data to extract input files and prompt
+	parts := strings.SplitN(string(data), "\n", 2)
+	if len(parts) != 2 {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   "invalid data format: expected input_files_text\\nprompt_text",
+		}
+	}
+	
+	inputFilesText := parts[0]
+	promptText := parts[1]
+
+	// For MVP implementation, return a placeholder response
+	// TODO: Implement actual llmcmd subprocess execution
+	log.Printf("FS Proxy: LLM_CHAT processing - InputFiles: %q, Prompt: %q", inputFilesText, promptText)
+
+	// Simulate ChatCompletion response structure
+	mockResponse := map[string]interface{}{
+		"choices": []map[string]interface{}{
+			{
+				"message": map[string]interface{}{
+					"content": "LLM_CHAT MVP implementation - placeholder response",
+				},
+			},
+		},
+		"usage": map[string]interface{}{
+			"prompt_tokens":     10,
+			"completion_tokens": 8,
+		},
+	}
+
+	responseJSON, err := json.Marshal(mockResponse)
+	if err != nil {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   fmt.Sprintf("failed to marshal response: %v", err),
+		}
+	}
+
+	// Format response according to protocol: OK response_size quota_status
+	quotaStatus := "100.0/5000 weighted tokens"
+	responseSize := len(responseJSON)
+	
+	// Protocol format: "OK response_size quota_status\n[response_json]"
+	statusLine := fmt.Sprintf("%d %s", responseSize, quotaStatus)
+	
+	return FSResponse{
+		Status: "OK",
+		Data:   statusLine + "\n" + string(responseJSON),
+	}
+}
+
+// handleLLMQuota handles LLM_QUOTA requests according to FSProxy protocol
+func (proxy *FSProxyManager) handleLLMQuota() FSResponse {
+	log.Printf("FS Proxy: LLM_QUOTA called")
+
+	// For MVP implementation, we need to check access control
+	// Currently, we'll implement basic quota response
+	// TODO: Implement proper access control (LLM execution context only)
+	
+	// Check if this client is in an LLM execution context
+	// For now, we'll allow access (will be enhanced with proper context tracking)
+	
+	// Mock quota information
+	quotaInfo := "100.0/5000 weighted tokens (2.0% used, 4900.0 remaining)"
+	
+	return FSResponse{
+		Status: "OK",
+		Data:   quotaInfo,
 	}
 }
