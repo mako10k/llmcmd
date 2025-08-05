@@ -2,6 +2,7 @@ package app
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mako10k/llmcmd/internal/openai"
 	"github.com/mako10k/llmcmd/internal/tools"
 )
 
@@ -222,6 +224,10 @@ type FSProxyManager struct {
 
 	// Background process management
 	processTable *ProcessTable // Process management table
+
+	// LLM integration
+	llmClient    *openai.Client              // OpenAI client for LLM_CHAT
+	quotaManager *openai.SharedQuotaManager // Quota manager for LLM operations
 }
 
 // NewFSProxyManager creates a new FS proxy manager
@@ -237,7 +243,19 @@ func NewFSProxyManager(vfs tools.VirtualFileSystem, pipe *os.File, isVFSMode boo
 		fdTable:      NewFileDescriptorTable(),
 		clientID:     fmt.Sprintf("client-%d", time.Now().UnixNano()), // Generate unique client ID
 		processTable: NewProcessTable(),                               // Initialize process table
+		llmClient:    nil,                                             // Will be set via SetLLMClient
+		quotaManager: nil,                                             // Will be set via SetQuotaManager
 	}
+}
+
+// SetLLMClient sets the OpenAI client for LLM operations
+func (proxy *FSProxyManager) SetLLMClient(client *openai.Client) {
+	proxy.llmClient = client
+}
+
+// SetQuotaManager sets the quota manager for LLM operations
+func (proxy *FSProxyManager) SetQuotaManager(manager *openai.SharedQuotaManager) {
+	proxy.quotaManager = manager
 }
 
 // FSRequest represents a file system operation request
@@ -1433,10 +1451,41 @@ func (proxy *FSProxyManager) createPipeForFD(fd int) (*os.File, error) {
 		r.Close() // Close read end for now (could be used to capture output later)
 		return w, nil
 	default:
-		// For other FDs, check if they exist in VFS
+		// For other FDs, check if they exist in VFS fd table
+		if proxy.fdTable != nil {
+			openFile, exists := proxy.fdTable.GetFile(fd)
+			if exists {
+				// Create a pipe to bridge VFS file to OS file descriptor
+				r, w, err := os.Pipe()
+				if err != nil {
+					return nil, fmt.Errorf("failed to create pipe for VFS FD %d: %w", fd, err)
+				}
+
+				// Start goroutine to copy data from VFS file to pipe
+				go func() {
+					defer w.Close()
+					buffer := make([]byte, 4096)
+					for {
+						n, err := openFile.Handle.Read(buffer)
+						if n > 0 {
+							w.Write(buffer[:n])
+						}
+						if err != nil {
+							if err != io.EOF {
+								log.Printf("FS Proxy: Error reading from VFS FD %d: %v", fd, err)
+							}
+							break
+						}
+					}
+				}()
+
+				log.Printf("FS Proxy: Mapped VFS FD %d (%s) to OS pipe", fd, openFile.Filename)
+				return r, nil
+			}
+		}
+
 		if proxy.vfs != nil {
-			// TODO: Map VFS file descriptors to OS pipes
-			return nil, fmt.Errorf("VFS FD mapping for FD %d not yet implemented", fd)
+			return nil, fmt.Errorf("VFS FD %d not found in fd table", fd)
 		}
 		return nil, fmt.Errorf("unsupported file descriptor: %d", fd)
 	}
@@ -1459,33 +1508,102 @@ func (proxy *FSProxyManager) buildLLMCmdArgs(isTopLevel bool, inputFiles []strin
 	return args
 }
 
-// executeInternalWithPipes executes app.ExecuteInternal with pipe redirection
+// executeInternalWithPipes executes LLM request using OpenAI API
 func (proxy *FSProxyManager) executeInternalWithPipes(args []string, stdin *os.File, stdout, stderr *os.File, isTopLevel bool) executionResult {
-	// For MVP, simulate ExecuteInternal without actual API calls
-	// TODO: Replace with actual ExecuteInternal call once testing is stable
+	log.Printf("FS Proxy: Executing LLM request via OpenAI API with args: %v", args)
 
-	log.Printf("FS Proxy: Simulating ExecuteInternal with args: %v", args)
+	// Check if LLM client is available
+	if proxy.llmClient == nil {
+		log.Printf("FS Proxy: Error - LLM client not configured")
+		return executionResult{
+			err:         fmt.Errorf("LLM client not available"),
+			quotaStatus: "0/5000 weighted tokens (client not configured)",
+		}
+	}
 
-	// Write a mock response to stdout
-	mockOutput := map[string]interface{}{
+	// Extract prompt from args (last argument is typically the prompt)
+	prompt := ""
+	if len(args) > 0 {
+		prompt = args[len(args)-1]
+	}
+
+	// Read from stdin if available
+	var stdinContent []byte
+	if stdin != nil {
+		var err error
+		stdinContent, err = io.ReadAll(stdin)
+		if err != nil {
+			log.Printf("FS Proxy: Warning - failed to read stdin: %v", err)
+			stdinContent = []byte{}
+		}
+	}
+
+	// Prepare OpenAI API request
+	messages := []openai.ChatMessage{
+		{
+			Role:    "system",
+			Content: "You are llmcmd, a text processing assistant with secure tool access. Process the user's request and provide a clear, helpful response.",
+		},
+		{
+			Role:    "user",
+			Content: fmt.Sprintf("Request: %s\n\nInput files: %v\n\nStdin content: %s", prompt, args[:len(args)-1], string(stdinContent)),
+		},
+	}
+
+	request := openai.ChatCompletionRequest{
+		Model:       "gpt-4o-mini", // Use efficient model for VFS calls
+		Messages:    messages,
+		MaxTokens:   2000,
+		Temperature: 0.7,
+	}
+
+	// Execute LLM API call
+	ctx := context.Background()
+	response, err := proxy.llmClient.ChatCompletion(ctx, request)
+	if err != nil {
+		log.Printf("FS Proxy: LLM API call failed: %v", err)
+		return executionResult{
+			err:         fmt.Errorf("LLM API error: %v", err),
+			quotaStatus: "unknown/5000 weighted tokens (API call failed)",
+		}
+	}
+
+	// Get response content
+	llmResponse := ""
+	if len(response.Choices) > 0 {
+		llmResponse = response.Choices[0].Message.Content
+	}
+
+	// Create response object
+	responseObj := map[string]interface{}{
 		"choices": []map[string]interface{}{
 			{
 				"message": map[string]interface{}{
-					"content": fmt.Sprintf("Mock ExecuteInternal response for: %v", args),
+					"content": llmResponse,
 				},
 			},
 		},
 		"usage": map[string]interface{}{
-			"prompt_tokens":     10,
-			"completion_tokens": 15,
+			"prompt_tokens":     response.Usage.PromptTokens,
+			"completion_tokens": response.Usage.CompletionTokens,
+			"total_tokens":      response.Usage.TotalTokens,
 		},
 	}
 
-	if outputJSON, err := json.Marshal(mockOutput); err == nil {
+	// Write response to stdout
+	if outputJSON, err := json.Marshal(responseObj); err == nil {
 		stdout.Write(outputJSON)
+	} else {
+		log.Printf("FS Proxy: Error marshaling response: %v", err)
+		stdout.Write([]byte(llmResponse)) // Fallback to plain text
 	}
 
-	quotaStatus := "225.0/5000 weighted tokens"
+	// Update quota status using response stats
+	quotaStatus := fmt.Sprintf("%.1f/5000 weighted tokens (%d input, %d output)",
+		float64(response.Usage.PromptTokens)+float64(response.Usage.CompletionTokens)*4.0,
+		response.Usage.PromptTokens, response.Usage.CompletionTokens)
+
+	log.Printf("FS Proxy: LLM API call completed successfully - tokens used: %d", response.Usage.TotalTokens)
 
 	return executionResult{
 		err:         nil,
@@ -1505,9 +1623,34 @@ func (proxy *FSProxyManager) handleLLMQuota() FSResponse {
 		}
 	}
 
-	// Mock quota information for MVP
-	// TODO: Implement actual quota tracking from shared quota manager
-	quotaInfo := "150.0/5000 weighted tokens (3.0% used, 4850.0 remaining)"
+	// Get quota information from shared quota manager or LLM client
+	var quotaInfo string
+	if proxy.quotaManager != nil {
+		// Use shared quota manager if available
+		globalUsage := proxy.quotaManager.GetGlobalUsage()
+		quotaInfo = fmt.Sprintf("%.1f/%.0f weighted tokens (%.1f%% used, %.1f remaining)",
+			globalUsage.TotalWeighted,
+			globalUsage.RemainingQuota+globalUsage.TotalWeighted,
+			(globalUsage.TotalWeighted/(globalUsage.RemainingQuota+globalUsage.TotalWeighted))*100,
+			globalUsage.RemainingQuota)
+	} else if proxy.llmClient != nil {
+		// Use LLM client stats if available
+		stats := proxy.llmClient.GetStats()
+		if stats.QuotaUsage.TotalWeighted > 0 {
+			quotaInfo = fmt.Sprintf("%.1f weighted tokens used (%.1f input, %.1f cached, %.1f output)",
+				stats.QuotaUsage.TotalWeighted,
+				stats.QuotaUsage.WeightedInputs,
+				stats.QuotaUsage.WeightedCached,
+				stats.QuotaUsage.WeightedOutputs)
+		} else {
+			quotaInfo = "No quota usage recorded yet"
+		}
+	} else {
+		// Fallback when neither quota manager nor LLM client is available
+		quotaInfo = "Quota information not available (no quota manager configured)"
+	}
+
+	log.Printf("FS Proxy: LLM_QUOTA returning: %s", quotaInfo)
 
 	return FSResponse{
 		Status: "OK",
@@ -1517,12 +1660,12 @@ func (proxy *FSProxyManager) handleLLMQuota() FSResponse {
 
 // isLLMExecutionContext checks if the current client is in an LLM execution context
 func (proxy *FSProxyManager) isLLMExecutionContext() bool {
-	// For MVP implementation, we'll be permissive
-	// TODO: Implement proper context tracking
+	// Simple implementation: Allow access for MVP
+	// TODO: Implement proper context tracking in future versions
 	// - Track which clients were spawned by LLM_CHAT commands
 	// - Maintain client context state in FSProxyManager
 	// - Check client ID against LLM execution registry
 
-	log.Printf("FS Proxy: LLM context check - allowing access for MVP (TODO: implement proper access control)")
+	log.Printf("FS Proxy: LLM context check - allowing access for MVP (simple implementation)")
 	return true // Allow access for now
 }
