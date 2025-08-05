@@ -10,9 +10,9 @@ import (
 // TestSpawnCommandMVP tests the minimum viable product spawn command implementation
 func TestSpawnCommandMVP(t *testing.T) {
 	fsProxy := &FSProxyManager{
-		vfs:           NewMockVFS(false),
-		fdTable:       NewFileDescriptorTable(),
-		processTable:  NewProcessTable(),
+		vfs:          NewMockVFS(false),
+		fdTable:      NewFileDescriptorTable(),
+		processTable: NewProcessTable(),
 	}
 
 	t.Run("SuccessfulSpawn", func(t *testing.T) {
@@ -190,7 +190,7 @@ func TestProcessTableMVP(t *testing.T) {
 	t.Run("ConcurrentAccess", func(t *testing.T) {
 		// Test concurrent access to process table
 		var wg sync.WaitGroup
-		
+
 		// Concurrent additions
 		for i := 0; i < 100; i++ {
 			wg.Add(1)

@@ -105,15 +105,15 @@ func (fdt *FileDescriptorTable) GetAllFiles() map[int]*OpenFile {
 // BackgroundProcess represents a background process managed by FSProxy
 type BackgroundProcess struct {
 	mu        sync.RWMutex // Protects mutable fields
-	PID       int         `json:"pid"`
-	Command   string      `json:"command"`
-	Args      []string    `json:"args"`
-	Status    string      `json:"status"` // "running", "exited", "failed"
-	StartTime time.Time   `json:"start_time"`
-	EndTime   time.Time   `json:"end_time,omitempty"`
-	Error     error       `json:"-"` // Error details (not serialized)
-	Handle    *exec.Cmd   `json:"-"` // Process handle (not serialized)
-	
+	PID       int          `json:"pid"`
+	Command   string       `json:"command"`
+	Args      []string     `json:"args"`
+	Status    string       `json:"status"` // "running", "exited", "failed"
+	StartTime time.Time    `json:"start_time"`
+	EndTime   time.Time    `json:"end_time,omitempty"`
+	Error     error        `json:"-"` // Error details (not serialized)
+	Handle    *exec.Cmd    `json:"-"` // Process handle (not serialized)
+
 	// I/O Stream management (Phase 1: Structure only)
 	Stdin  io.WriteCloser `json:"-"` // Process stdin pipe (if created)
 	Stdout io.ReadCloser  `json:"-"` // Process stdout pipe (if created)
@@ -153,7 +153,7 @@ func NewProcessTable() *ProcessTable {
 func (pt *ProcessTable) AddProcess(process *BackgroundProcess) {
 	pt.mu.Lock()
 	defer pt.mu.Unlock()
-	
+
 	pt.processes[process.PID] = process
 }
 
@@ -161,7 +161,7 @@ func (pt *ProcessTable) AddProcess(process *BackgroundProcess) {
 func (pt *ProcessTable) GetProcess(pid int) *BackgroundProcess {
 	pt.mu.RLock()
 	defer pt.mu.RUnlock()
-	
+
 	return pt.processes[pid]
 }
 
@@ -169,7 +169,7 @@ func (pt *ProcessTable) GetProcess(pid int) *BackgroundProcess {
 func (pt *ProcessTable) RemoveProcess(pid int) {
 	pt.mu.Lock()
 	defer pt.mu.Unlock()
-	
+
 	delete(pt.processes, pid)
 }
 
@@ -177,7 +177,7 @@ func (pt *ProcessTable) RemoveProcess(pid int) {
 func (pt *ProcessTable) ListProcesses() []*BackgroundProcess {
 	pt.mu.RLock()
 	defer pt.mu.RUnlock()
-	
+
 	processes := make([]*BackgroundProcess, 0, len(pt.processes))
 	for _, process := range pt.processes {
 		processes = append(processes, process)
@@ -189,7 +189,7 @@ func (pt *ProcessTable) ListProcesses() []*BackgroundProcess {
 func (pt *ProcessTable) GeneratePID() int {
 	pt.mu.Lock()
 	defer pt.mu.Unlock()
-	
+
 	pid := pt.nextPID
 	pt.nextPID++
 	return pid
@@ -229,19 +229,23 @@ func NewFSProxyManager(vfs tools.VirtualFileSystem, pipe *os.File, isVFSMode boo
 		openFiles:    make(map[int]io.ReadWriteCloser),
 		fdTable:      NewFileDescriptorTable(),
 		clientID:     fmt.Sprintf("client-%d", time.Now().UnixNano()), // Generate unique client ID
-		processTable: NewProcessTable(), // Initialize process table
+		processTable: NewProcessTable(),                               // Initialize process table
 	}
 }
 
 // FSRequest represents a file system operation request
 type FSRequest struct {
-	Command  string // "OPEN", "READ", "WRITE", "CLOSE"
+	Command  string // "OPEN", "READ", "WRITE", "CLOSE", "STREAM_READ", "STREAM_WRITE"
 	Filename string
 	Mode     string
 	Context  string // "internal", "user" - access context
 	Fileno   int
 	Size     int
 	Data     []byte
+	
+	// Stream management fields (Phase 2: Interface only)
+	ProcessID int    // For stream operations
+	StreamType string // "stdin", "stdout", "stderr"
 }
 
 // FSResponse represents a file system operation response
@@ -368,6 +372,54 @@ func (proxy *FSProxyManager) readRequest() (FSRequest, error) {
 			request.Fileno = fileno
 		}
 
+	case "STREAM_READ":
+		// Phase 2: Basic command parsing for stream read
+		if len(parts) < 3 {
+			return FSRequest{}, fmt.Errorf("STREAM_READ requires process_id and stream_type")
+		}
+		if processID, err := strconv.Atoi(parts[1]); err != nil {
+			return FSRequest{}, fmt.Errorf("invalid process_id: %s", parts[1])
+		} else {
+			request.ProcessID = processID
+		}
+		streamType := parts[2]
+		if streamType != "stdout" && streamType != "stderr" {
+			return FSRequest{}, fmt.Errorf("invalid stream_type: %s (must be stdout or stderr)", streamType)
+		}
+		request.StreamType = streamType
+
+	case "STREAM_WRITE":
+		// Phase 2: Basic command parsing for stream write
+		if len(parts) < 4 {
+			return FSRequest{}, fmt.Errorf("STREAM_WRITE requires process_id, stream_type, and size")
+		}
+		if processID, err := strconv.Atoi(parts[1]); err != nil {
+			return FSRequest{}, fmt.Errorf("invalid process_id: %s", parts[1])
+		} else {
+			request.ProcessID = processID
+		}
+		streamType := parts[2]
+		if streamType != "stdin" {
+			return FSRequest{}, fmt.Errorf("invalid stream_type: %s (must be stdin)", streamType)
+		}
+		request.StreamType = streamType
+		
+		if size, err := strconv.Atoi(parts[3]); err != nil {
+			return FSRequest{}, fmt.Errorf("invalid size: %s", parts[3])
+		} else {
+			request.Size = size
+		}
+
+		// Read data of specified size for stream write
+		if request.Size > 0 {
+			data := make([]byte, request.Size)
+			_, err := io.ReadFull(proxy.reader, data)
+			if err != nil {
+				return FSRequest{}, fmt.Errorf("failed to read stream data: %w", err)
+			}
+			request.Data = data
+		}
+
 	default:
 		return FSRequest{}, fmt.Errorf("unknown command: %s", request.Command)
 	}
@@ -388,6 +440,12 @@ func (proxy *FSProxyManager) processRequest(request FSRequest) FSResponse {
 		return proxy.handleWrite(request.Fileno, request.Data)
 	case "CLOSE":
 		return proxy.handleClose(request.Fileno)
+	case "STREAM_READ":
+		// Phase 2: Delegate to stream read handler (dummy implementation)
+		return proxy.handleStreamRead(request.ProcessID, request.StreamType, request.Size)
+	case "STREAM_WRITE":
+		// Phase 2: Delegate to stream write handler (dummy implementation)
+		return proxy.handleStreamWrite(request.ProcessID, request.StreamType, request.Data)
 	default:
 		return FSResponse{
 			Status: "ERROR",
@@ -678,7 +736,7 @@ func (fm *FSProxyManager) handleSpawn(params map[string]interface{}) map[string]
 
 	// Create command
 	cmd := exec.Command(command, args...)
-	
+
 	// Phase 1: Create I/O pipes for stream management (minimal implementation)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -709,7 +767,7 @@ func (fm *FSProxyManager) handleSpawn(params map[string]interface{}) map[string]
 			"error":  fmt.Sprintf("failed to create stderr pipe: %v", err),
 		}
 	}
-	
+
 	// Start the process
 	err = cmd.Start()
 	if err != nil {
@@ -752,7 +810,7 @@ func (fm *FSProxyManager) handleSpawn(params map[string]interface{}) map[string]
 func (fm *FSProxyManager) monitorProcess(process *BackgroundProcess) {
 	// Wait for process completion
 	err := process.Handle.Wait()
-	
+
 	// Clean up I/O streams (Phase 1: Basic cleanup)
 	// Note: cmd.Wait() may already close pipes, so handle errors gracefully
 	if process.Stdin != nil {
@@ -779,7 +837,7 @@ func (fm *FSProxyManager) monitorProcess(process *BackgroundProcess) {
 			}
 		}
 	}
-	
+
 	// Update process status in a thread-safe manner
 	process.EndTime = time.Now()
 	if err != nil {
@@ -789,6 +847,87 @@ func (fm *FSProxyManager) monitorProcess(process *BackgroundProcess) {
 		process.SetStatus("exited")
 	}
 
-	log.Printf("Process %d (%s) completed with status: %s", 
+	log.Printf("Process %d (%s) completed with status: %s",
 		process.PID, process.Command, process.GetStatus())
+}
+
+// handleStreamRead handles STREAM_READ requests (Phase 2: Dummy implementation)
+func (proxy *FSProxyManager) handleStreamRead(processID int, streamType string, size int) FSResponse {
+	// TODO: Implement actual stream reading in future phase
+	log.Printf("FS Proxy: STREAM_READ called - ProcessID: %d, StreamType: %s, Size: %d", 
+		processID, streamType, size)
+	
+	// Fail-First: Validate parameters
+	if processID <= 0 {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   "invalid process_id: must be positive",
+		}
+	}
+	
+	if streamType != "stdout" && streamType != "stderr" {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   fmt.Sprintf("invalid stream_type: %s", streamType),
+		}
+	}
+	
+	if size < 0 {
+		return FSResponse{
+			Status: "ERROR", 
+			Data:   "invalid size: must be non-negative",
+		}
+	}
+	
+	// Check if process exists
+	process := proxy.processTable.GetProcess(processID)
+	if process == nil {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   fmt.Sprintf("process not found: %d", processID),
+		}
+	}
+	
+	// Phase 2: Return dummy response (not implemented yet)
+	return FSResponse{
+		Status: "ERROR",
+		Data:   "STREAM_READ not yet implemented",
+	}
+}
+
+// handleStreamWrite handles STREAM_WRITE requests (Phase 2: Dummy implementation)  
+func (proxy *FSProxyManager) handleStreamWrite(processID int, streamType string, data []byte) FSResponse {
+	// TODO: Implement actual stream writing in future phase
+	log.Printf("FS Proxy: STREAM_WRITE called - ProcessID: %d, StreamType: %s, DataSize: %d",
+		processID, streamType, len(data))
+	
+	// Fail-First: Validate parameters
+	if processID <= 0 {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   "invalid process_id: must be positive",
+		}
+	}
+	
+	if streamType != "stdin" {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   fmt.Sprintf("invalid stream_type: %s", streamType),
+		}
+	}
+	
+	// Check if process exists
+	process := proxy.processTable.GetProcess(processID)
+	if process == nil {
+		return FSResponse{
+			Status: "ERROR",
+			Data:   fmt.Sprintf("process not found: %d", processID),
+		}
+	}
+	
+	// Phase 2: Return dummy response (not implemented yet)
+	return FSResponse{
+		Status: "ERROR",
+		Data:   "STREAM_WRITE not yet implemented",
+	}
 }

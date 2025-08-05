@@ -50,7 +50,7 @@ func TestSpawnCommandIOStreams(t *testing.T) {
 
 		// Wait for process completion to verify cleanup
 		time.Sleep(100 * time.Millisecond)
-		
+
 		// Process should have completed successfully
 		if process.GetStatus() != "exited" {
 			t.Errorf("Expected status 'exited', got %s", process.GetStatus())
