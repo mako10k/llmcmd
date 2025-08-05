@@ -113,6 +113,11 @@ type BackgroundProcess struct {
 	EndTime   time.Time   `json:"end_time,omitempty"`
 	Error     error       `json:"-"` // Error details (not serialized)
 	Handle    *exec.Cmd   `json:"-"` // Process handle (not serialized)
+	
+	// I/O Stream management (Phase 1: Structure only)
+	Stdin  io.WriteCloser `json:"-"` // Process stdin pipe (if created)
+	Stdout io.ReadCloser  `json:"-"` // Process stdout pipe (if created)
+	Stderr io.ReadCloser  `json:"-"` // Process stderr pipe (if created)
 }
 
 // GetStatus returns the current status in a thread-safe manner
@@ -674,17 +679,51 @@ func (fm *FSProxyManager) handleSpawn(params map[string]interface{}) map[string]
 	// Create command
 	cmd := exec.Command(command, args...)
 	
-	// Start the process
-	err := cmd.Start()
+	// Phase 1: Create I/O pipes for stream management (minimal implementation)
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		// Fail-First: Return error immediately
+		return map[string]interface{}{
+			"status": "error",
+			"error":  fmt.Sprintf("failed to create stdin pipe: %v", err),
+		}
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		// Close stdin pipe and fail fast
+		stdin.Close()
+		return map[string]interface{}{
+			"status": "error",
+			"error":  fmt.Sprintf("failed to create stdout pipe: %v", err),
+		}
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		// Close previous pipes and fail fast
+		stdin.Close()
+		stdout.Close()
+		return map[string]interface{}{
+			"status": "error",
+			"error":  fmt.Sprintf("failed to create stderr pipe: %v", err),
+		}
+	}
+	
+	// Start the process
+	err = cmd.Start()
+	if err != nil {
+		// Fail-First: Clean up pipes and return error immediately
+		stdin.Close()
+		stdout.Close()
+		stderr.Close()
 		return map[string]interface{}{
 			"status": "error",
 			"error":  fmt.Sprintf("failed to start process: %v", err),
 		}
 	}
 
-	// Create background process record
+	// Create background process record with I/O streams
 	process := &BackgroundProcess{
 		PID:       pid,
 		Command:   command,
@@ -692,6 +731,9 @@ func (fm *FSProxyManager) handleSpawn(params map[string]interface{}) map[string]
 		Status:    "running",
 		StartTime: time.Now(),
 		Handle:    cmd,
+		Stdin:     stdin,
+		Stdout:    stdout,
+		Stderr:    stderr,
 	}
 
 	// Register process in table
@@ -710,6 +752,33 @@ func (fm *FSProxyManager) handleSpawn(params map[string]interface{}) map[string]
 func (fm *FSProxyManager) monitorProcess(process *BackgroundProcess) {
 	// Wait for process completion
 	err := process.Handle.Wait()
+	
+	// Clean up I/O streams (Phase 1: Basic cleanup)
+	// Note: cmd.Wait() may already close pipes, so handle errors gracefully
+	if process.Stdin != nil {
+		if closeErr := process.Stdin.Close(); closeErr != nil {
+			// Log only if it's not "already closed" error
+			if !strings.Contains(closeErr.Error(), "file already closed") {
+				log.Printf("Process %d: Failed to close stdin: %v", process.PID, closeErr)
+			}
+		}
+	}
+	if process.Stdout != nil {
+		if closeErr := process.Stdout.Close(); closeErr != nil {
+			// Log only if it's not "already closed" error
+			if !strings.Contains(closeErr.Error(), "file already closed") {
+				log.Printf("Process %d: Failed to close stdout: %v", process.PID, closeErr)
+			}
+		}
+	}
+	if process.Stderr != nil {
+		if closeErr := process.Stderr.Close(); closeErr != nil {
+			// Log only if it's not "already closed" error
+			if !strings.Contains(closeErr.Error(), "file already closed") {
+				log.Printf("Process %d: Failed to close stderr: %v", process.PID, closeErr)
+			}
+		}
+	}
 	
 	// Update process status in a thread-safe manner
 	process.EndTime = time.Now()
