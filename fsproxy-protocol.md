@@ -220,54 +220,41 @@ ERROR message\n
 
 ### 5. LLM_CHAT Command (New)
 
-Executes OpenAI ChatCompletion API and retrieves LLM responses. Provides equivalent functionality to llmcmd command-line options.
+Executes OpenAI ChatCompletion API by running llmcmd as subprocess with VFS environment injection.
 
 #### Request
 ```
-LLM_CHAT is_top_level input_files_count output_files_count prompt_length preset_length\n
+LLM_CHAT is_top_level stdin_fd stdout_fd stderr_fd input_files_count prompt_length\n
 [input_files_text]
-[output_files_text]
 [prompt_text]
-[preset_text]
 ```
 
 **Parameters**:
 - `is_top_level`: Top-level execution flag ("true" or "false")
+- `stdin_fd`: File descriptor number for stdin input (pipeline source)
+- `stdout_fd`: File descriptor number for stdout output (pipeline destination)
+- `stderr_fd`: File descriptor number for stderr output (typically 2)
 - `input_files_count`: Byte count of input files text
-- `output_files_count`: Byte count of output files text
 - `prompt_length`: Byte count of prompt text
-- `preset_length`: Byte count of preset key
-- `input_files_text`: Input file paths separated by newlines
-- `output_files_text`: Output file paths separated by newlines
-- `prompt_text`: User instruction text (equivalent to -p/--prompt)
-- `preset_text`: System prompt preset key (equivalent to -r/--preset)
+- `input_files_text`: Input file paths separated by newlines (VFS file paths)
+- `prompt_text`: User instruction text
 
-**Model Selection Logic**:
-- `is_top_level=true`: Uses default model from config file (user-specified model)
-- `is_top_level=false`: Fixed to "gpt-4o-mini" (child process restriction)
+**Implementation Strategy**:
+- **Subprocess Execution**: Runs `llmcmd` as subprocess with VFS environment injection
+- **Pipeline Support**: Maps specified stdin_fd/stdout_fd/stderr_fd to subprocess streams
+- **VFS Environment**: VFS Proxy Pipe (FD3) inheritance for file operations
+- **Existing Logic Reuse**: CreateInitialMessages operates within VFS constraints automatically
+- **Token Management**: Existing quota calculation and readFileWithTokenLimit apply automatically
 
-**Configuration Control**:
-- **temperature**: Uses config file or hardcoded values
-- **max_tokens**: Uses config file or hardcoded values
-- **Other API parameters**: Retrieved from configuration file
+**Model Selection Logic (existing llmcmd pattern)**:
+- `is_top_level=true`: Uses `config.model` (user-specified model)
+- `is_top_level=false`: Uses `config.internalModel` (typically "gpt-4o-mini")
 
-**File Format**:
-```
-# input_files_text (newline-separated)
-/path/to/input1.txt
-/path/to/input2.txt
--
-
-# output_files_text (newline-separated)
-/path/to/output1.txt
-/path/to/output2.txt
-
-# prompt_text (free text)
-Analyze the input data and generate a summary report.
-
-# preset_text (system prompt preset key)
-data_proc
-```
+**Automatic VFS Integration**:
+- **FD Stream Mapping**: stdin_fd/stdout_fd/stderr_fd streams mapped to subprocess pipes
+- **File Information**: getStdFileInfo() operates via VFS within subprocess  
+- **Pipeline Compatibility**: Supports non-standard FD assignments in llmsh pipelines
+- **Token Limits**: MIN(standard_limit, quota_calculated_limit) applied automatically
 
 #### Response
 
@@ -278,7 +265,7 @@ OK response_size quota_status\n
 ```
 - `response_size`: Byte count of response JSON
 - `quota_status`: Quota usage status (e.g., "1250.5/5000 weighted tokens")
-- `response_json`: ChatCompletion response JSON
+- `response_json`: ChatCompletion response JSON with existing token tracking structure
 
 **Error**:
 ```
@@ -286,40 +273,52 @@ ERROR message\n
 ```
 
 **Error Patterns**:
-- `ERROR LLM_CHAT requires is_top_level, input_files_count, output_files_count, prompt_length, and preset_length` - Missing parameters
+- `ERROR LLM_CHAT requires is_top_level, stdin_fd, stdout_fd, stderr_fd, input_files_count, and prompt_length` - Missing parameters
 - `ERROR invalid is_top_level: maybe` - Invalid top-level flag
+- `ERROR invalid stdin_fd: -1` - Invalid stdin file descriptor
+- `ERROR invalid stdout_fd: -1` - Invalid stdout file descriptor  
+- `ERROR invalid stderr_fd: -1` - Invalid stderr file descriptor
+- `ERROR fd not found: 5` - Referenced FD does not exist in VFS table
 - `ERROR quota exceeded: cannot make LLM call` - Quota exceeded
-- `ERROR OpenAI API call failed: reason` - API call error
+- `ERROR subprocess execution failed: reason` - llmcmd subprocess execution error
+- `ERROR OpenAI API call failed: reason` - API call error (from subprocess)
 - `ERROR LLM not available` - LLM functionality unavailable
 - `ERROR failed to read input files data` - Input files data read error
-- `ERROR failed to read output files data` - Output files data read error
 - `ERROR failed to read prompt data` - Prompt data read error
-- `ERROR failed to read preset data` - Preset data read error
 
 #### Examples
 
 ```
-# Success case (top-level execution - prompt specified)
-Client → Server: "LLM_CHAT true 25 12 45 9\n/tmp/input.txt\n-\noutput.txt\nAnalyze the input data and create a summary.\ndata_proc"
+# Success case (top-level execution with file input)
+Client → Server: "LLM_CHAT true 0 1 2 25 45\n/tmp/input.txt\n/tmp/output.txt\nAnalyze the input data and create a summary."
 Server → Client: "OK 156 1250.5/5000 weighted tokens\n{\"choices\":[{\"message\":{\"content\":\"Analysis complete...\"}}],\"usage\":{\"prompt_tokens\":15,\"completion_tokens\":8}}"
 
-# Success case (child process execution - preset specified)
-Client → Server: "LLM_CHAT false 0 0 0 7\n\n\n\ngeneral"
+# Success case (child process execution)
+Client → Server: "LLM_CHAT false 0 1 2 0 20\n\nExecute simple analysis"
 Server → Client: "OK 142 1350.0/5000 weighted tokens\n{\"choices\":[{\"message\":{\"content\":\"Simple task completed\"}}],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":6}}"
 
-# Error case
-Client → Server: "LLM_CHAT invalid 0 0 0 0\n"
+# Error case (invalid is_top_level)
+Client → Server: "LLM_CHAT invalid 0 1 2 0 0\n"
 Server → Client: "ERROR invalid is_top_level: invalid\n"
+
+# Error case (invalid FD)
+Client → Server: "LLM_CHAT true -1 1 2 0 20\n\nTest prompt"
+Server → Client: "ERROR invalid stdin_fd: -1\n"
 ```
 
 ### 6. LLM_QUOTA Command (New)
 
-Checks current quota usage status.
+Checks current quota usage status. **Restricted to LLM execution contexts only** - available exclusively within subprocess environments that use LLM_CHAT functionality.
 
 #### Request
 ```
 LLM_QUOTA\n
 ```
+
+**Access Control**:
+- **Allowed**: Child processes spawned by LLM_CHAT command execution
+- **Denied**: General VFS clients without LLM execution context
+- **Security**: Prevents unauthorized quota information disclosure
 
 #### Response
 
@@ -336,62 +335,19 @@ ERROR message\n
 
 **Error Patterns**:
 - `ERROR LLM quota not available` - Quota functionality unavailable
+- `ERROR LLM quota access denied` - Client not in LLM execution context
+- `ERROR LLM functionality not enabled` - LLM features disabled
 
 #### Examples
 
 ```
+# Success case (within LLM execution context)
 Client → Server: "LLM_QUOTA\n"
 Server → Client: "OK 1250.5/5000 weighted tokens (25.0% used, 3749.5 remaining)\n"
-```
 
-### 7. LLM_CONFIG Command (New)
-
-Retrieves LLM configuration information.
-
-#### Request
-```
-LLM_CONFIG\n
-```
-
-#### Response
-
-**Success**:
-```
-OK config_size\n
-[config_json]
-```
-- `config_size`: Byte count of configuration JSON
-- `config_json`: LLM configuration information JSON
-
-**Configuration Information Format**:
-```json
-{
-  "default_model": "gpt-4o-mini",
-  "api_key_configured": true,
-  "base_url": "https://api.openai.com/v1",
-  "max_calls": 50,
-  "quota_max_tokens": 5000,
-  "quota_weights": {
-    "input": 1.0,
-    "cached": 0.25,
-    "output": 4.0
-  }
-}
-```
-
-**Error**:
-```
-ERROR message\n
-```
-
-**Error Patterns**:
-- `ERROR LLM config not available` - LLM configuration unavailable
-
-#### Examples
-
-```
-Client → Server: "LLM_CONFIG\n"
-Server → Client: "OK 234\n{\"default_model\":\"gpt-4o-mini\",\"api_key_configured\":true...}"
+# Error case (general VFS client without LLM context)
+Client → Server: "LLM_QUOTA\n"
+Server → Client: "ERROR LLM quota access denied\n"
 ```
 
 ## Error Handling
@@ -454,7 +410,6 @@ ERROR invalid size: xyz
 ### Phase 3 (New: VFS-Centralized LLM Execution)
 - 🆕 LLM_CHAT command implementation
 - 🆕 LLM_QUOTA command implementation
-- 🆕 LLM_CONFIG command implementation
 - 🆕 OpenAI API integration in VFS server
 - 🆕 Unified quota management system
 - 🆕 Unified LLM execution for llmcmd/llmsh
@@ -592,6 +547,7 @@ func (proxy *FSProxyManager) monitorProcess(pid int, clientID string) {
 8. **Response Validation**: LLM API response validity verification
 9. **Resource Leak Prevention**: Automatic file descriptor cleanup for resource protection
 10. **Process Monitoring**: Reliable resource recovery on abnormal termination
+11. **LLM Context Access Control**: LLM_QUOTA restricted to LLM execution contexts only
 
 ## Usage Examples
 
@@ -618,29 +574,19 @@ client.Close(fileno)
 // Child process side (FS Client) - Top-level execution
 client, _ := fsclient.NewFSClient()
 
-// Check LLM configuration
-config, _ := client.LLMConfig()
-fmt.Printf("Default model: %s\n", config.DefaultModel)
-
 // Check quota
 quota, _ := client.LLMQuota()
 fmt.Printf("Quota: %s\n", quota)
 
 // LLM execution (top-level - prompt specified)
 inputFiles := "/tmp/prompt.txt\n/tmp/data.csv"
-outputFiles := "/tmp/result.txt"
 prompt := "Analyze the input data and generate a summary report."
-preset := "" // No preset used
-response, _ := client.LLMChat(true, inputFiles, outputFiles, prompt, preset)
+response, _ := client.LLMChat(true, inputFiles, prompt)
 fmt.Printf("Response: %s\n", response.Choices[0].Message.Content)
 
-// LLM execution (top-level - preset specified)
-response2, _ := client.LLMChat(true, "", "", "", "data_proc")
-fmt.Printf("Response: %s\n", response2.Choices[0].Message.Content)
-
 // LLM execution (child process - restricted mode)
-response3, _ := client.LLMChat(false, "", "", "Simple calculation: 2+2", "")
-fmt.Printf("Response: %s\n", response3.Choices[0].Message.Content)
+response2, _ := client.LLMChat(false, "", "Simple calculation: 2+2")
+fmt.Printf("Response: %s\n", response2.Choices[0].Message.Content)
 
 // Check updated quota
 newQuota, _ := client.LLMQuota()

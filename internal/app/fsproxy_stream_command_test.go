@@ -13,10 +13,10 @@ func TestStreamCommandInterface(t *testing.T) {
 
 	// Create a test process for stream operations
 	testProcess := &BackgroundProcess{
-		PID:       1001,
-		Command:   "test",
-		Args:      []string{},
-		Status:    "running",
+		PID:     1001,
+		Command: "test",
+		Args:    []string{},
+		Status:  "running",
 	}
 	fsProxy.processTable.AddProcess(testProcess)
 
@@ -101,14 +101,14 @@ func TestStreamCommandInterface(t *testing.T) {
 	t.Run("StreamCommandInterfaceAvailability", func(t *testing.T) {
 		// Test that the interface is available but returns not implemented
 		// This ensures the command framework is in place for future implementation
-		
+
 		// STREAM_READ interface test
 		response := fsProxy.handleStreamRead(1001, "stdout", 0)
 		if response.Status != "ERROR" {
 			t.Error("STREAM_READ should return ERROR status in Phase 2")
 		}
 
-		// STREAM_WRITE interface test  
+		// STREAM_WRITE interface test
 		response = fsProxy.handleStreamWrite(1001, "stdin", []byte{})
 		if response.Status != "ERROR" {
 			t.Error("STREAM_WRITE should return ERROR status in Phase 2")

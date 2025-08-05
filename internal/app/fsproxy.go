@@ -243,9 +243,9 @@ type FSRequest struct {
 	Fileno   int
 	Size     int
 	Data     []byte
-	
+
 	// Stream management fields (Phase 2: Interface only)
-	ProcessID int    // For stream operations
+	ProcessID  int    // For stream operations
 	StreamType string // "stdin", "stdout", "stderr"
 }
 
@@ -292,12 +292,12 @@ func (proxy *FSProxyManager) readRequest() (FSRequest, error) {
 	}
 
 	line = strings.TrimSpace(line)
-	
+
 	// Try to parse as JSON first (for SPAWN and new commands)
 	if strings.HasPrefix(line, "{") {
 		return proxy.parseJSONRequest(line)
 	}
-	
+
 	// Fallback to legacy line-based parsing
 	return proxy.parseLegacyRequest(line)
 }
@@ -307,16 +307,16 @@ func (proxy *FSProxyManager) parseJSONRequest(jsonStr string) (FSRequest, error)
 	if err := json.Unmarshal([]byte(jsonStr), &jsonReq); err != nil {
 		return FSRequest{}, fmt.Errorf("invalid JSON: %w", err)
 	}
-	
+
 	command, ok := jsonReq["command"].(string)
 	if !ok {
 		return FSRequest{}, fmt.Errorf("missing or invalid command field")
 	}
-	
+
 	request := FSRequest{
 		Command: command,
 	}
-	
+
 	switch command {
 	case "SPAWN":
 		// Parse spawn parameters
@@ -335,7 +335,7 @@ func (proxy *FSProxyManager) parseJSONRequest(jsonStr string) (FSRequest, error)
 		} else {
 			return FSRequest{}, fmt.Errorf("spawn requires args array")
 		}
-		
+
 	case "STREAM_READ":
 		if processID, ok := jsonReq["process_id"].(float64); ok {
 			request.ProcessID = int(processID)
@@ -355,7 +355,7 @@ func (proxy *FSProxyManager) parseJSONRequest(jsonStr string) (FSRequest, error)
 		} else {
 			return FSRequest{}, fmt.Errorf("stream_read requires size")
 		}
-		
+
 	case "STREAM_WRITE":
 		if processID, ok := jsonReq["process_id"].(float64); ok {
 			request.ProcessID = int(processID)
@@ -376,11 +376,11 @@ func (proxy *FSProxyManager) parseJSONRequest(jsonStr string) (FSRequest, error)
 		} else {
 			return FSRequest{}, fmt.Errorf("stream_write requires data")
 		}
-		
+
 	default:
 		return FSRequest{}, fmt.Errorf("unknown JSON command: %s", command)
 	}
-	
+
 	return request, nil
 }
 
@@ -497,7 +497,7 @@ func (proxy *FSProxyManager) parseLegacyRequest(line string) (FSRequest, error) 
 			return FSRequest{}, fmt.Errorf("invalid stream_type: %s (must be stdin)", streamType)
 		}
 		request.StreamType = streamType
-		
+
 		if size, err := strconv.Atoi(parts[3]); err != nil {
 			return FSRequest{}, fmt.Errorf("invalid size: %s", parts[3])
 		} else {
@@ -543,14 +543,14 @@ func (proxy *FSProxyManager) processRequest(request FSRequest) FSResponse {
 				Data:   fmt.Sprintf("invalid spawn args: %v", err),
 			}
 		}
-		
+
 		// Convert to map format expected by handleSpawn
 		params := map[string]interface{}{
 			"args": args,
 		}
-		
+
 		result := proxy.handleSpawn(params)
-		
+
 		// Convert map result back to FSResponse
 		if status, ok := result["status"].(string); ok {
 			if data, ok := result["data"]; ok {
@@ -560,12 +560,12 @@ func (proxy *FSProxyManager) processRequest(request FSRequest) FSResponse {
 				}
 			}
 		}
-		
+
 		return FSResponse{
 			Status: "ERROR",
 			Data:   "spawn handler returned invalid format",
 		}
-		
+
 	case "STREAM_READ":
 		// Phase 3: Delegate to stream read handler (actual implementation)
 		return proxy.handleStreamRead(request.ProcessID, request.StreamType, request.Size)
@@ -979,9 +979,9 @@ func (fm *FSProxyManager) monitorProcess(process *BackgroundProcess) {
 
 // handleStreamRead handles STREAM_READ requests (Phase 3: Actual implementation)
 func (proxy *FSProxyManager) handleStreamRead(processID int, streamType string, size int) FSResponse {
-	log.Printf("FS Proxy: STREAM_READ called - ProcessID: %d, StreamType: %s, Size: %d", 
+	log.Printf("FS Proxy: STREAM_READ called - ProcessID: %d, StreamType: %s, Size: %d",
 		processID, streamType, size)
-	
+
 	// Fail-First: Validate parameters
 	if processID <= 0 {
 		return FSResponse{
@@ -989,21 +989,21 @@ func (proxy *FSProxyManager) handleStreamRead(processID int, streamType string, 
 			Data:   "invalid process_id: must be positive",
 		}
 	}
-	
+
 	if streamType != "stdout" && streamType != "stderr" {
 		return FSResponse{
 			Status: "ERROR",
 			Data:   fmt.Sprintf("invalid stream_type: %s", streamType),
 		}
 	}
-	
+
 	if size < 0 {
 		return FSResponse{
-			Status: "ERROR", 
+			Status: "ERROR",
 			Data:   "invalid size: must be non-negative",
 		}
 	}
-	
+
 	// Handle zero size request
 	if size == 0 {
 		return FSResponse{
@@ -1011,7 +1011,7 @@ func (proxy *FSProxyManager) handleStreamRead(processID int, streamType string, 
 			Data:   "",
 		}
 	}
-	
+
 	// Check if process exists
 	process := proxy.processTable.GetProcess(processID)
 	if process == nil {
@@ -1020,7 +1020,7 @@ func (proxy *FSProxyManager) handleStreamRead(processID int, streamType string, 
 			Data:   fmt.Sprintf("process not found: %d", processID),
 		}
 	}
-	
+
 	// Get the appropriate pipe based on stream type
 	var pipe io.ReadCloser
 	switch streamType {
@@ -1041,14 +1041,14 @@ func (proxy *FSProxyManager) handleStreamRead(processID int, streamType string, 
 		}
 		pipe = process.Stderr
 	}
-	
+
 	// Limit buffer size to 16KB for safety and performance
 	const maxBufferSize = 16 * 1024
 	bufferSize := size
 	if bufferSize > maxBufferSize {
 		bufferSize = maxBufferSize
 	}
-	
+
 	// Read data from the pipe
 	buffer := make([]byte, bufferSize)
 	n, err := pipe.Read(buffer)
@@ -1065,22 +1065,22 @@ func (proxy *FSProxyManager) handleStreamRead(processID int, streamType string, 
 			Data:   fmt.Sprintf("read error from %s: %v", streamType, err),
 		}
 	}
-	
+
 	// Return the actual data read
 	actualData := buffer[:n]
 	log.Printf("FS Proxy: Read %d bytes from %s of process %d", n, streamType, processID)
-	
+
 	return FSResponse{
 		Status: "OK",
 		Data:   string(actualData), // Note: This assumes text data - binary data needs different handling
 	}
 }
 
-// handleStreamWrite handles STREAM_WRITE requests (Phase 3: Actual implementation)  
+// handleStreamWrite handles STREAM_WRITE requests (Phase 3: Actual implementation)
 func (proxy *FSProxyManager) handleStreamWrite(processID int, streamType string, data []byte) FSResponse {
 	log.Printf("FS Proxy: STREAM_WRITE called - ProcessID: %d, StreamType: %s, DataSize: %d",
 		processID, streamType, len(data))
-	
+
 	// Fail-First: Validate parameters
 	if processID <= 0 {
 		return FSResponse{
@@ -1088,14 +1088,14 @@ func (proxy *FSProxyManager) handleStreamWrite(processID int, streamType string,
 			Data:   "invalid process_id: must be positive",
 		}
 	}
-	
+
 	if streamType != "stdin" {
 		return FSResponse{
 			Status: "ERROR",
 			Data:   fmt.Sprintf("invalid stream_type: %s", streamType),
 		}
 	}
-	
+
 	// Check if process exists
 	process := proxy.processTable.GetProcess(processID)
 	if process == nil {
@@ -1104,7 +1104,7 @@ func (proxy *FSProxyManager) handleStreamWrite(processID int, streamType string,
 			Data:   fmt.Sprintf("process not found: %d", processID),
 		}
 	}
-	
+
 	// Check if stdin pipe is available
 	if process.Stdin == nil {
 		return FSResponse{
@@ -1112,7 +1112,7 @@ func (proxy *FSProxyManager) handleStreamWrite(processID int, streamType string,
 			Data:   "stdin pipe not available",
 		}
 	}
-	
+
 	// Handle empty data case
 	if len(data) == 0 {
 		return FSResponse{
@@ -1120,7 +1120,7 @@ func (proxy *FSProxyManager) handleStreamWrite(processID int, streamType string,
 			Data:   "0", // 0 bytes written
 		}
 	}
-	
+
 	// Write data to the stdin pipe
 	n, err := process.Stdin.Write(data)
 	if err != nil {
@@ -1136,9 +1136,9 @@ func (proxy *FSProxyManager) handleStreamWrite(processID int, streamType string,
 			Data:   fmt.Sprintf("write error to stdin: %v", err),
 		}
 	}
-	
+
 	log.Printf("FS Proxy: Wrote %d bytes to stdin of process %d", n, processID)
-	
+
 	return FSResponse{
 		Status: "OK",
 		Data:   fmt.Sprintf("%d", n), // Return number of bytes written
