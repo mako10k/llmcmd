@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -101,6 +102,94 @@ func (fdt *FileDescriptorTable) GetAllFiles() map[int]*OpenFile {
 	return result
 }
 
+// BackgroundProcess represents a background process managed by FSProxy
+type BackgroundProcess struct {
+	mu        sync.RWMutex // Protects mutable fields
+	PID       int         `json:"pid"`
+	Command   string      `json:"command"`
+	Args      []string    `json:"args"`
+	Status    string      `json:"status"` // "running", "exited", "failed"
+	StartTime time.Time   `json:"start_time"`
+	EndTime   time.Time   `json:"end_time,omitempty"`
+	Error     error       `json:"-"` // Error details (not serialized)
+	Handle    *exec.Cmd   `json:"-"` // Process handle (not serialized)
+}
+
+// GetStatus returns the current status in a thread-safe manner
+func (bp *BackgroundProcess) GetStatus() string {
+	bp.mu.RLock()
+	defer bp.mu.RUnlock()
+	return bp.Status
+}
+
+// SetStatus updates the status in a thread-safe manner
+func (bp *BackgroundProcess) SetStatus(status string) {
+	bp.mu.Lock()
+	defer bp.mu.Unlock()
+	bp.Status = status
+}
+
+// ProcessTable manages background processes with thread-safe operations
+type ProcessTable struct {
+	mu        sync.RWMutex
+	processes map[int]*BackgroundProcess
+	nextPID   int
+}
+
+// NewProcessTable creates a new process table
+func NewProcessTable() *ProcessTable {
+	return &ProcessTable{
+		processes: make(map[int]*BackgroundProcess),
+		nextPID:   1000, // Start PIDs from 1000 to avoid conflicts
+	}
+}
+
+// AddProcess adds a process to the table
+func (pt *ProcessTable) AddProcess(process *BackgroundProcess) {
+	pt.mu.Lock()
+	defer pt.mu.Unlock()
+	
+	pt.processes[process.PID] = process
+}
+
+// GetProcess retrieves a process by PID
+func (pt *ProcessTable) GetProcess(pid int) *BackgroundProcess {
+	pt.mu.RLock()
+	defer pt.mu.RUnlock()
+	
+	return pt.processes[pid]
+}
+
+// RemoveProcess removes a process from the table
+func (pt *ProcessTable) RemoveProcess(pid int) {
+	pt.mu.Lock()
+	defer pt.mu.Unlock()
+	
+	delete(pt.processes, pid)
+}
+
+// ListProcesses returns all processes
+func (pt *ProcessTable) ListProcesses() []*BackgroundProcess {
+	pt.mu.RLock()
+	defer pt.mu.RUnlock()
+	
+	processes := make([]*BackgroundProcess, 0, len(pt.processes))
+	for _, process := range pt.processes {
+		processes = append(processes, process)
+	}
+	return processes
+}
+
+// GeneratePID generates a new unique process ID
+func (pt *ProcessTable) GeneratePID() int {
+	pt.mu.Lock()
+	defer pt.mu.Unlock()
+	
+	pid := pt.nextPID
+	pt.nextPID++
+	return pid
+}
+
 // FSProxyManager manages file system access for restricted child processes
 type FSProxyManager struct {
 	vfs       tools.VirtualFileSystem
@@ -118,20 +207,24 @@ type FSProxyManager struct {
 	// Enhanced fd management
 	fdTable  *FileDescriptorTable // New fd management table
 	clientID string               // Client identifier for this manager
+
+	// Background process management
+	processTable *ProcessTable // Process management table
 }
 
 // NewFSProxyManager creates a new FS proxy manager
 func NewFSProxyManager(vfs tools.VirtualFileSystem, pipe *os.File, isVFSMode bool) *FSProxyManager {
 	return &FSProxyManager{
-		vfs:       vfs,
-		pipe:      pipe,
-		isVFSMode: isVFSMode,
-		reader:    bufio.NewReader(pipe),
-		writer:    bufio.NewWriter(pipe),
-		nextFD:    1000, // Start from 1000 to avoid conflicts
-		openFiles: make(map[int]io.ReadWriteCloser),
-		fdTable:   NewFileDescriptorTable(),
-		clientID:  fmt.Sprintf("client-%d", time.Now().UnixNano()), // Generate unique client ID
+		vfs:          vfs,
+		pipe:         pipe,
+		isVFSMode:    isVFSMode,
+		reader:       bufio.NewReader(pipe),
+		writer:       bufio.NewWriter(pipe),
+		nextFD:       1000, // Start from 1000 to avoid conflicts
+		openFiles:    make(map[int]io.ReadWriteCloser),
+		fdTable:      NewFileDescriptorTable(),
+		clientID:     fmt.Sprintf("client-%d", time.Now().UnixNano()), // Generate unique client ID
+		processTable: NewProcessTable(), // Initialize process table
 	}
 }
 
@@ -542,4 +635,91 @@ func (proxy *FSProxyManager) cleanup() {
 	proxy.fdMutex.Unlock()
 
 	log.Printf("FS Proxy: Resource cleanup completed for client %s", proxy.clientID)
+}
+
+// handleSpawn handles spawn command requests
+func (fm *FSProxyManager) handleSpawn(params map[string]interface{}) map[string]interface{} {
+	// Validate input parameters
+	command, ok := params["command"].(string)
+	if !ok || command == "" {
+		return map[string]interface{}{
+			"status": "error",
+			"error":  "command parameter is required and must be a non-empty string",
+		}
+	}
+
+	args, ok := params["args"].([]string)
+	if !ok {
+		// Try to convert from []interface{} to []string
+		if argsInterface, exists := params["args"].([]interface{}); exists {
+			args = make([]string, len(argsInterface))
+			for i, arg := range argsInterface {
+				if argStr, ok := arg.(string); ok {
+					args[i] = argStr
+				} else {
+					return map[string]interface{}{
+						"status": "error",
+						"error":  "all arguments must be strings",
+					}
+				}
+			}
+		} else {
+			args = []string{} // Default to empty args
+		}
+	}
+
+	// Generate unique process ID
+	pid := fm.processTable.GeneratePID()
+
+	// Create command
+	cmd := exec.Command(command, args...)
+	
+	// Start the process
+	err := cmd.Start()
+	if err != nil {
+		// Fail-First: Return error immediately
+		return map[string]interface{}{
+			"status": "error",
+			"error":  fmt.Sprintf("failed to start process: %v", err),
+		}
+	}
+
+	// Create background process record
+	process := &BackgroundProcess{
+		PID:       pid,
+		Command:   command,
+		Args:      args,
+		Status:    "running",
+		StartTime: time.Now(),
+		Handle:    cmd,
+	}
+
+	// Register process in table
+	fm.processTable.AddProcess(process)
+
+	// Start monitoring goroutine for process completion
+	go fm.monitorProcess(process)
+
+	return map[string]interface{}{
+		"status":     "success",
+		"process_id": pid,
+	}
+}
+
+// monitorProcess monitors a background process and updates its status
+func (fm *FSProxyManager) monitorProcess(process *BackgroundProcess) {
+	// Wait for process completion
+	err := process.Handle.Wait()
+	
+	// Update process status in a thread-safe manner
+	process.EndTime = time.Now()
+	if err != nil {
+		process.SetStatus("failed")
+		process.Error = err
+	} else {
+		process.SetStatus("exited")
+	}
+
+	log.Printf("Process %d (%s) completed with status: %s", 
+		process.PID, process.Command, process.GetStatus())
 }
