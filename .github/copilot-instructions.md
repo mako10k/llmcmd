@@ -92,6 +92,12 @@ Before writing any code, I need to confirm:
 - Feeling urge to write code → Use mcp-confirm first
 - Unclear requirements → Continue design discussion
 
+**🚨 CRITICAL: User Response Timeout Handling:**
+- **When user response times out**: ALWAYS wait for user to respond
+- **Never assume user intent**: Timeout means user needs more time to respond
+- **Continue waiting patiently**: User will provide clarification when ready
+- **No autonomous continuation**: Never proceed without explicit user instruction after timeout
+
 ## Project Overview
 
 `llmcmd` is a command-line tool that enables Large Language Models (LLMs) to execute tasks using the OpenAI ChatCompletion API. The tool provides LLMs with secure, built-in functions for file operations and text processing without external command execution.
