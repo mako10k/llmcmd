@@ -10,7 +10,7 @@ import (
 func TestLLMChatProtocolIntegration(t *testing.T) {
 	// Create mock VFS
 	vfs := NewMockVFS(false)
-	
+
 	// Create FSProxy
 	proxy := &FSProxyManager{
 		vfs:     vfs,
@@ -72,7 +72,7 @@ func TestLLMChatProtocolIntegration(t *testing.T) {
 func TestLLMQuotaProtocolIntegration(t *testing.T) {
 	// Create mock VFS
 	vfs := NewMockVFS(false)
-	
+
 	// Create FSProxy
 	proxy := &FSProxyManager{
 		vfs:     vfs,
@@ -102,7 +102,7 @@ func TestLLMQuotaProtocolIntegration(t *testing.T) {
 func TestLLMCommandsErrorHandling(t *testing.T) {
 	// Create mock VFS
 	vfs := NewMockVFS(false)
-	
+
 	// Create FSProxy
 	proxy := &FSProxyManager{
 		vfs:     vfs,
@@ -112,11 +112,11 @@ func TestLLMCommandsErrorHandling(t *testing.T) {
 	t.Run("LLM_CHAT with invalid FDs", func(t *testing.T) {
 		data := []byte("input.txt\nTest prompt")
 		response := proxy.handleLLMChat(true, -1, -1, -1, data)
-		
+
 		if response.Status != "ERROR" {
 			t.Errorf("Expected ERROR status for invalid FDs, got %s", response.Status)
 		}
-		
+
 		if !strings.Contains(response.Data, "invalid file descriptors") {
 			t.Errorf("Expected error about invalid FDs, got %q", response.Data)
 		}
@@ -125,11 +125,11 @@ func TestLLMCommandsErrorHandling(t *testing.T) {
 	t.Run("LLM_CHAT with malformed data", func(t *testing.T) {
 		data := []byte("malformed data without newline separator")
 		response := proxy.handleLLMChat(true, 0, 1, 2, data)
-		
+
 		if response.Status != "ERROR" {
 			t.Errorf("Expected ERROR status for malformed data, got %s", response.Status)
 		}
-		
+
 		if !strings.Contains(response.Data, "invalid data format") {
 			t.Errorf("Expected error about invalid data format, got %q", response.Data)
 		}

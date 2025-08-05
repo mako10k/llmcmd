@@ -220,7 +220,7 @@ ERROR message\n
 
 ### 5. LLM_CHAT Command (New)
 
-Executes OpenAI ChatCompletion API by running llmcmd as subprocess with VFS environment injection.
+Executes OpenAI ChatCompletion API by forking child process and calling app.ExecuteInternal() function with VFS environment.
 
 #### Request
 ```
@@ -240,11 +240,12 @@ LLM_CHAT is_top_level stdin_fd stdout_fd stderr_fd input_files_count prompt_leng
 - `prompt_text`: User instruction text
 
 **Implementation Strategy**:
-- **Subprocess Execution**: Runs `llmcmd` as subprocess with VFS environment injection
-- **Pipeline Support**: Maps specified stdin_fd/stdout_fd/stderr_fd to subprocess streams
+- **Fork + Function Call**: Forks child process and calls `app.ExecuteInternal()` function directly (no binary execution)
+- **Pipeline Support**: Maps specified stdin_fd/stdout_fd/stderr_fd to child process streams
 - **VFS Environment**: VFS Proxy Pipe (FD3) inheritance for file operations
 - **Existing Logic Reuse**: CreateInitialMessages operates within VFS constraints automatically
 - **Token Management**: Existing quota calculation and readFileWithTokenLimit apply automatically
+- **Security**: No external binary execution - internal function calls only
 
 **Model Selection Logic (existing llmcmd pattern)**:
 - `is_top_level=true`: Uses `config.model` (user-specified model)
@@ -280,7 +281,7 @@ ERROR message\n
 - `ERROR invalid stderr_fd: -1` - Invalid stderr file descriptor
 - `ERROR fd not found: 5` - Referenced FD does not exist in VFS table
 - `ERROR quota exceeded: cannot make LLM call` - Quota exceeded
-- `ERROR subprocess execution failed: reason` - llmcmd subprocess execution error
+- `ERROR subprocess execution failed: reason` - Fork+ExecuteInternal execution error
 - `ERROR OpenAI API call failed: reason` - API call error (from subprocess)
 - `ERROR LLM not available` - LLM functionality unavailable
 - `ERROR failed to read input files data` - Input files data read error

@@ -8,14 +8,14 @@ import (
 func TestLLMChatHandler(t *testing.T) {
 	// Create mock VFS
 	vfs := NewMockVFS(false)
-	
+
 	// Create FSProxy
 	proxy := &FSProxyManager{
 		vfs:     vfs,
 		fdTable: NewFileDescriptorTable(),
 	}
 
-	// Test LLM_CHAT handler
+	// Test LLM_CHAT handler (fork+ExecuteInternal implementation)
 	data := []byte("test.txt\nHello, World!")
 	response := proxy.handleLLMChat(true, 0, 1, 2, data)
 
@@ -33,7 +33,7 @@ func TestLLMChatHandler(t *testing.T) {
 func TestLLMQuotaHandler(t *testing.T) {
 	// Create mock VFS
 	vfs := NewMockVFS(false)
-	
+
 	// Create FSProxy
 	proxy := &FSProxyManager{
 		vfs:     vfs,
