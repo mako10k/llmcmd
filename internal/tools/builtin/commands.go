@@ -25,10 +25,28 @@ func SetVFS(vfs VFS) {
 
 // openFileForReading opens a file for reading, using VFS if available
 func openFileForReading(filename string) (io.ReadCloser, error) {
-	if currentVFS != nil {
-		return currentVFS.OpenFileWithContext(filename, os.O_RDONLY, 0644, true)
+	if currentVFS == nil {
+		panic("SECURITY VIOLATION: VFS not initialized - builtin commands MUST use VFS for all file operations")
 	}
-	return os.Open(filename)
+
+	// Debug print
+	fmt.Fprintf(os.Stderr, "DEBUG: Opening file for reading: %s\n", filename)
+
+	// Use external context (isInternal=false) to properly handle real files
+	return currentVFS.OpenFileWithContext(filename, os.O_RDONLY, 0644, false)
+}
+
+// openFileForWriting opens a file for writing, using VFS if available
+func openFileForWriting(filename string) (io.WriteCloser, error) {
+	if currentVFS == nil {
+		panic("SECURITY VIOLATION: VFS not initialized - builtin commands MUST use VFS for all file operations")
+	}
+
+	// Debug print
+	fmt.Fprintf(os.Stderr, "DEBUG: Opening file for writing: %s\n", filename)
+
+	// Use external context (isInternal=false) to properly handle real files
+	return currentVFS.OpenFileWithContext(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644, false)
 }
 
 // processInput processes either stdin or files based on args
@@ -87,6 +105,7 @@ var Commands = map[string]CommandFunc{
 	"echo":   Echo,
 	"llmcmd": Llmcmd,
 	"llmsh":  Llmsh,
+	"exit":   Exit,
 }
 
 // compileRegex compiles a regex pattern and returns an error if invalid

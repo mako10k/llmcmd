@@ -9,12 +9,12 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/mako10k/llmcmd/internal/cli"
 	"github.com/mako10k/llmcmd/internal/openai"
 	"github.com/mako10k/llmcmd/internal/tools"
+	"github.com/mako10k/llmcmd/internal/tools/builtin"
 )
 
 // App represents the main application
@@ -152,12 +152,12 @@ func (a *App) initializeOpenAI() error {
 
 // initializeToolEngine initializes the tool execution engine
 func (a *App) initializeToolEngine() error {
-	shellExecutor := &SimpleShellExecutor{}
+	shellExecutor := &ShellExecutor{}
 
 	// Use the isTopLevel from the App instance
 	isTopLevel := a.isTopLevel
 
-	virtualFS := NewEnhancedVFSWithLevel(isTopLevel)
+	virtualFS := VFSWithLevel(isTopLevel)
 
 	// Allow input/output files for real file access if top-level
 	if isTopLevel {
@@ -173,6 +173,9 @@ func (a *App) initializeToolEngine() error {
 
 	// Configure shell executor with VFS for redirect support
 	shellExecutor.SetVFS(virtualFS)
+
+	// Configure builtin commands with VFS for file operations
+	builtin.SetVFS(virtualFS)
 
 	config := tools.EngineConfig{
 		InputFiles:    a.config.InputFiles,
@@ -191,7 +194,7 @@ func (a *App) initializeToolEngine() error {
 	}
 
 	if a.config.Verbose {
-		log.Printf("Tool engine initialized with EnhancedVFS (isTopLevel: %v, input files: %d, buffer size: %d)",
+		log.Printf("Tool engine initialized with VFS (isTopLevel: %v, input files: %d, buffer size: %d)",
 			isTopLevel, len(a.config.InputFiles), a.fileConfig.ReadBufferSize)
 	}
 
@@ -620,20 +623,18 @@ func max(a, b int) int {
 	return b
 }
 
-// SimpleShellExecutor implements tools.ShellExecutor interface
-type SimpleShellExecutor struct {
-	vfs *SimpleVirtualFS
+// ShellExecutor implements tools.ShellExecutor interface
+type ShellExecutor struct {
+	vfs tools.VirtualFileSystem
 }
 
 // SetVFS sets the virtual file system for redirect support
-func (s *SimpleShellExecutor) SetVFS(vfs tools.VirtualFileSystem) {
-	if vfsImpl, ok := vfs.(*SimpleVirtualFS); ok {
-		s.vfs = vfsImpl
-	}
+func (s *ShellExecutor) SetVFS(vfs tools.VirtualFileSystem) {
+	s.vfs = vfs
 }
 
 // Execute executes a shell command with VFS redirect support
-func (s *SimpleShellExecutor) Execute(command string) error {
+func (s *ShellExecutor) Execute(command string) error {
 	// TODO: Parse command for redirects and handle VFS integration
 	// For now, use simple execution
 	cmd := exec.Command("sh", "-c", command)
@@ -641,212 +642,10 @@ func (s *SimpleShellExecutor) Execute(command string) error {
 }
 
 // ExecuteWithIO executes a shell command with specified IO
-func (s *SimpleShellExecutor) ExecuteWithIO(command string, stdin io.Reader, stdout, stderr io.Writer) error {
+func (s *ShellExecutor) ExecuteWithIO(command string, stdin io.Reader, stdout, stderr io.Writer) error {
 	cmd := exec.Command("sh", "-c", command)
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	return cmd.Run()
-}
-
-// SimpleVirtualFS implements tools.VirtualFileSystem interface
-type SimpleVirtualFS struct {
-	files    map[string]*VirtualFile
-	consumed map[string]bool // Track files that have been fully read (PIPE behavior)
-	mutex    sync.RWMutex
-}
-
-// VirtualFile represents a virtual file in memory
-type VirtualFile struct {
-	name   string
-	data   []byte
-	offset int64
-	flag   int
-	perm   os.FileMode
-	closed bool
-}
-
-// VirtualFileWrapper wraps VirtualFile to handle consumption tracking
-type VirtualFileWrapper struct {
-	file *VirtualFile
-	vfs  *SimpleVirtualFS
-	name string
-}
-
-// Read implements io.Reader with consumption tracking
-func (w *VirtualFileWrapper) Read(p []byte) (n int, err error) {
-	n, err = w.file.Read(p)
-
-	// Check if file has been fully consumed
-	if w.file.data == nil || w.file.offset >= int64(len(w.file.data)) {
-		// Mark as consumed in VFS
-		w.vfs.mutex.Lock()
-		w.vfs.consumed[w.name] = true
-		w.vfs.mutex.Unlock()
-	}
-
-	return n, err
-}
-
-// Write implements io.Writer
-func (w *VirtualFileWrapper) Write(p []byte) (n int, err error) {
-	return w.file.Write(p)
-}
-
-// Close implements io.Closer
-func (w *VirtualFileWrapper) Close() error {
-	return w.file.Close()
-}
-
-// Read implements io.Reader with PIPE-like behavior (consume data)
-func (f *VirtualFile) Read(p []byte) (n int, err error) {
-	if f.closed {
-		return 0, os.ErrClosed
-	}
-	if f.offset >= int64(len(f.data)) {
-		return 0, io.EOF
-	}
-	n = copy(p, f.data[f.offset:])
-	f.offset += int64(n)
-
-	// PIPE behavior: once data is read, it's consumed and removed
-	// This simulates pipe consumption where data can only be read once
-	if f.offset >= int64(len(f.data)) {
-		// All data has been read, mark as consumed
-		f.data = nil // Clear data to prevent re-reading
-	}
-
-	return n, nil
-}
-
-// Write implements io.Writer
-func (f *VirtualFile) Write(p []byte) (n int, err error) {
-	if f.closed {
-		return 0, os.ErrClosed
-	}
-	if f.flag&os.O_APPEND != 0 {
-		f.data = append(f.data, p...)
-	} else {
-		// Extend data if necessary
-		needed := f.offset + int64(len(p))
-		if int64(len(f.data)) < needed {
-			newData := make([]byte, needed)
-			copy(newData, f.data)
-			f.data = newData
-		}
-		copy(f.data[f.offset:], p)
-		f.offset += int64(len(p))
-	}
-	return len(p), nil
-}
-
-// Close implements io.Closer
-func (f *VirtualFile) Close() error {
-	f.closed = true
-	return nil
-}
-
-// NewSimpleVirtualFS creates a new virtual file system
-func NewSimpleVirtualFS() *SimpleVirtualFS {
-	return &SimpleVirtualFS{
-		files:    make(map[string]*VirtualFile),
-		consumed: make(map[string]bool),
-	}
-}
-
-// OpenFile opens or creates a virtual file with PIPE-like behavior
-func (vfs *SimpleVirtualFS) OpenFile(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
-	vfs.mutex.Lock()
-	defer vfs.mutex.Unlock()
-
-	// Check if file was already consumed (PIPE behavior)
-	if vfs.consumed[name] && (flag&os.O_RDONLY != 0 || flag&os.O_RDWR != 0) {
-		return nil, fmt.Errorf("virtual file '%s' already consumed (PIPE behavior - cannot read twice)", name)
-	}
-
-	file, exists := vfs.files[name]
-	if !exists {
-		if flag&os.O_CREATE == 0 {
-			return nil, os.ErrNotExist
-		}
-		// Create new file
-		file = &VirtualFile{
-			name: name,
-			data: []byte{},
-			flag: flag,
-			perm: perm,
-		}
-		vfs.files[name] = file
-		// Clear consumed flag when creating new file
-		delete(vfs.consumed, name)
-	}
-
-	if flag&os.O_TRUNC != 0 {
-		file.data = []byte{}
-		file.offset = 0
-		// Clear consumed flag when truncating
-		delete(vfs.consumed, name)
-	}
-
-	// Create a wrapper that will mark file as consumed when fully read
-	wrapper := &VirtualFileWrapper{
-		file: file,
-		vfs:  vfs,
-		name: name,
-	}
-
-	return wrapper, nil
-}
-
-// CreateTemp creates a temporary virtual file
-func (vfs *SimpleVirtualFS) CreateTemp(pattern string) (io.ReadWriteCloser, string, error) {
-	vfs.mutex.Lock()
-	defer vfs.mutex.Unlock()
-
-	name := fmt.Sprintf("temp_%s_%d", pattern, len(vfs.files))
-	file := &VirtualFile{
-		name: name,
-		data: []byte{},
-		flag: os.O_RDWR | os.O_CREATE,
-		perm: 0644,
-	}
-	vfs.files[name] = file
-	// Clear consumed flag for new temp file
-	delete(vfs.consumed, name)
-
-	wrapper := &VirtualFileWrapper{
-		file: file,
-		vfs:  vfs,
-		name: name,
-	}
-
-	return wrapper, name, nil
-}
-
-// RemoveFile removes a virtual file
-func (vfs *SimpleVirtualFS) RemoveFile(name string) error {
-	vfs.mutex.Lock()
-	defer vfs.mutex.Unlock()
-
-	if _, exists := vfs.files[name]; !exists {
-		return os.ErrNotExist
-	}
-	delete(vfs.files, name)
-	return nil
-}
-
-// ListFiles lists all virtual files with their status
-func (vfs *SimpleVirtualFS) ListFiles() []string {
-	vfs.mutex.RLock()
-	defer vfs.mutex.RUnlock()
-
-	files := make([]string, 0, len(vfs.files))
-	for name := range vfs.files {
-		status := ""
-		if vfs.consumed[name] {
-			status = " (consumed)"
-		}
-		files = append(files, name+status)
-	}
-	return files
 }

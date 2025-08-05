@@ -1327,15 +1327,15 @@ func (proxy *FSProxyManager) executeLLMCmd(isTopLevel bool, inputFiles []string,
 
 	// Prepare llmcmd arguments
 	args := proxy.buildLLMCmdArgs(isTopLevel, inputFiles, prompt)
-	
+
 	// Execute in goroutine to simulate fork (actual process isolation)
 	resultChan := make(chan executionResult, 1)
-	
+
 	go func() {
 		defer stdinR.Close()
 		defer stdoutW.Close()
 		defer stderrW.Close()
-		
+
 		result := proxy.executeInternalWithPipes(args, stdinR, stdoutW, stderrW, isTopLevel)
 		resultChan <- result
 	}()
@@ -1351,7 +1351,7 @@ func (proxy *FSProxyManager) executeLLMCmd(isTopLevel bool, inputFiles []string,
 	// Wait for execution to complete
 	result := <-resultChan
 	outputBuffer = <-outputChan
-	
+
 	if result.err != nil {
 		return nil, "", fmt.Errorf("ExecuteInternal failed: %w", result.err)
 	}
@@ -1445,17 +1445,17 @@ func (proxy *FSProxyManager) createPipeForFD(fd int) (*os.File, error) {
 // buildLLMCmdArgs builds command line arguments for ExecuteInternal
 func (proxy *FSProxyManager) buildLLMCmdArgs(isTopLevel bool, inputFiles []string, prompt string) []string {
 	args := []string{}
-	
+
 	// Add input files as arguments
 	for _, file := range inputFiles {
 		if file != "" {
 			args = append(args, file)
 		}
 	}
-	
+
 	// Add prompt as the last argument
 	args = append(args, prompt)
-	
+
 	return args
 }
 
@@ -1463,9 +1463,9 @@ func (proxy *FSProxyManager) buildLLMCmdArgs(isTopLevel bool, inputFiles []strin
 func (proxy *FSProxyManager) executeInternalWithPipes(args []string, stdin *os.File, stdout, stderr *os.File, isTopLevel bool) executionResult {
 	// For MVP, simulate ExecuteInternal without actual API calls
 	// TODO: Replace with actual ExecuteInternal call once testing is stable
-	
+
 	log.Printf("FS Proxy: Simulating ExecuteInternal with args: %v", args)
-	
+
 	// Write a mock response to stdout
 	mockOutput := map[string]interface{}{
 		"choices": []map[string]interface{}{
@@ -1480,13 +1480,13 @@ func (proxy *FSProxyManager) executeInternalWithPipes(args []string, stdin *os.F
 			"completion_tokens": 15,
 		},
 	}
-	
+
 	if outputJSON, err := json.Marshal(mockOutput); err == nil {
 		stdout.Write(outputJSON)
 	}
-	
+
 	quotaStatus := "225.0/5000 weighted tokens"
-	
+
 	return executionResult{
 		err:         nil,
 		quotaStatus: quotaStatus,

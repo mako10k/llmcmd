@@ -1,9 +1,11 @@
 package llmsh
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/chzyer/readline"
@@ -27,7 +29,7 @@ type Shell struct {
 	config *Config
 
 	// Virtual filesystem for pipes and temporary files
-	vfs *VirtualFileSystem
+	vfs *app.VirtualFS
 
 	// Command executor
 	executor *Executor
@@ -66,29 +68,18 @@ func NewShell(config *Config) (*Shell, error) {
 		config = &Config{}
 	}
 
-	// Initialize VFS with optional FSProxy integration
-	var vfs *VirtualFileSystem
-	if config.EnableFSProxy && config.FSProxyManager != nil {
-		// Create FSProxy adapter
-		fsProxyManager, ok := config.FSProxyManager.(*app.FSProxyManager)
-		if !ok {
-			return nil, fmt.Errorf("invalid FSProxyManager type")
+	// Create VFS using unified app.VFS
+	// llmsh is always top-level command
+	vfs := app.VFSWithLevel(true)
+
+	// Allow input/output files for real file access
+	for _, inputFile := range config.InputFiles {
+		vfs.AllowRealFile(inputFile)
+	}
+	for _, outputFile := range config.OutputFiles {
+		if outputFile != "" {
+			vfs.AllowRealFile(outputFile)
 		}
-
-		// Create legacy VFS for fallback
-		legacyVFS := NewVirtualFileSystem(config.InputFiles, config.OutputFiles)
-
-		// Create adapter with legacy VFS wrapped as tools.VirtualFileSystem
-		legacyAdapter := NewLegacyVFSAdapter(legacyVFS)
-
-		// Create adapter with FSProxy support
-		adapter := app.NewVFSFSProxyAdapter(fsProxyManager, legacyAdapter, true)
-
-		// Create enhanced VFS with FSProxy integration
-		vfs = NewVirtualFileSystemWithFSProxy(config.InputFiles, config.OutputFiles, true, adapter)
-	} else {
-		// Use legacy VFS
-		vfs = NewVirtualFileSystem(config.InputFiles, config.OutputFiles)
 	}
 
 	// Initialize other components
@@ -180,7 +171,23 @@ func (s *Shell) interactiveWithReadline() error {
 	if err != nil {
 		return fmt.Errorf("failed to create readline: %v", err)
 	}
-	defer rl.Close()
+
+	// Track history for manual saving
+	var historyCommands []string
+
+	// Load existing history to preserve
+	historyFile := os.ExpandEnv("$HOME/.llmsh_history")
+
+	defer func() {
+		// Save history manually before closing
+		fmt.Printf("DEBUG: Saving %d commands to history\n", len(historyCommands))
+		if err := saveHistoryToFile(historyFile, historyCommands); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to save history: %v\n", err)
+		} else {
+			fmt.Printf("DEBUG: History saved successfully to %s\n", historyFile)
+		}
+		rl.Close()
+	}()
 
 	for {
 		line, err := rl.Readline()
@@ -201,12 +208,31 @@ func (s *Shell) interactiveWithReadline() error {
 		// Handle special commands
 		switch input {
 		case "exit", "quit":
+			// Track exit command for history before exiting
+			if input != "" {
+				fmt.Printf("DEBUG: Adding command to history: %s\n", input)
+				historyCommands = append(historyCommands, input)
+				rl.SaveHistory(input)
+			}
 			return nil
 		case "":
 			continue // Empty line, continue
 		case "help":
+			// Track help command for history
+			if input != "" {
+				fmt.Printf("DEBUG: Adding command to history: %s\n", input)
+				historyCommands = append(historyCommands, input)
+				rl.SaveHistory(input)
+			}
 			fmt.Print(s.help.FormatCommandList())
 			continue
+		}
+
+		// Track command for history saving
+		if input != "" {
+			fmt.Printf("DEBUG: Adding command to history: %s\n", input)
+			historyCommands = append(historyCommands, input)
+			rl.SaveHistory(input)
 		}
 
 		// Execute the command
@@ -240,4 +266,37 @@ func (s *Shell) createCompleter() readline.AutoCompleter {
 	}
 
 	return readline.NewPrefixCompleter(items...)
+}
+
+// saveHistoryToFile manually saves command history to file
+func saveHistoryToFile(historyFile string, commands []string) error {
+	if len(commands) == 0 {
+		return nil
+	}
+
+	// Ensure directory exists
+	dir := filepath.Dir(historyFile)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create history directory: %v", err)
+	}
+
+	// Open file in append mode
+	file, err := os.OpenFile(historyFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open history file: %v", err)
+	}
+	defer file.Close()
+
+	// Write each command
+	writer := bufio.NewWriter(file)
+	for _, cmd := range commands {
+		if strings.TrimSpace(cmd) != "" {
+			_, err := writer.WriteString(cmd + "\n")
+			if err != nil {
+				return fmt.Errorf("failed to write to history file: %v", err)
+			}
+		}
+	}
+
+	return writer.Flush()
 }

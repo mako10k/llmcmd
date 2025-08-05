@@ -15,14 +15,17 @@ import (
 
 // Executor executes parsed shell commands
 type Executor struct {
-	vfs          *VirtualFileSystem
+	vfs          *app.VirtualFS
 	help         *HelpSystem
 	quotaManager interface{} // Will be properly typed later
 	commands     *Commands
 }
 
 // NewExecutor creates a new executor
-func NewExecutor(vfs *VirtualFileSystem, help *HelpSystem, quotaManager interface{}) *Executor {
+func NewExecutor(vfs *app.VirtualFS, help *HelpSystem, quotaManager interface{}) *Executor {
+	// Configure builtin commands with VFS
+	builtin.SetVFS(vfs)
+
 	return &Executor{
 		vfs:          vfs,
 		help:         help,
@@ -322,7 +325,7 @@ func (e *Executor) executeCommand(cmd *parser.CommandNode, stdin, stdout, stderr
 
 // Commands manages command execution
 type Commands struct {
-	vfs          *VirtualFileSystem
+	vfs          *app.VirtualFS
 	help         *HelpSystem
 	quotaManager interface{}
 	manager      *commands.Manager
@@ -330,7 +333,7 @@ type Commands struct {
 }
 
 // NewCommands creates a new command manager
-func NewCommands(vfs *VirtualFileSystem, help *HelpSystem, quotaManager interface{}) *Commands {
+func NewCommands(vfs *app.VirtualFS, help *HelpSystem, quotaManager interface{}) *Commands {
 	// Create shared quota manager for llmcmd calls
 	// TODO: This should use actual quota configuration
 	defaultQuotaConfig := &openai.QuotaConfig{
