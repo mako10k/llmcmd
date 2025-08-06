@@ -1,0 +1,42 @@
+package main
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/chzyer/readline"
+)
+
+func main() {
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:      "test> ",
+		HistoryFile: os.ExpandEnv("$HOME/.test_history"),
+	})
+	if err != nil {
+		fmt.Printf("Error creating readline: %v\n", err)
+		return
+	}
+	defer rl.Close()
+
+	fmt.Println("Test readline history - type 'exit' to quit")
+
+	for {
+		line, err := rl.Readline()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			fmt.Printf("Error: %v\n", err)
+			continue
+		}
+
+		input := strings.TrimSpace(line)
+		if input == "exit" {
+			break
+		}
+
+		fmt.Printf("You entered: %s\n", input)
+	}
+}

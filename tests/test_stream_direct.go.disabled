@@ -1,0 +1,556 @@
+// Simple Stream I/O Test Program for FSProxy Phase 3
+// Tests handleStreamRead and handleStreamWrite directly
+package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/mako10k/llmcmd/internal/tools"
+)
+
+// Simple process table for test
+var processTable = make(map[int]*TestProcess)
+var processIDCounter = 1
+
+type TestProcess struct {
+	ID     int
+	Cmd    *exec.Cmd
+	Stdin  io.WriteCloser
+	Stdout io.ReadCloser
+	Stderr io.ReadCloser
+}
+
+// MockVFS implements VirtualFileSystem interface for testing
+type MockVFS struct {
+	mu        sync.RWMutex
+	files     map[string]*MockFile
+	nextFD    int
+	openFiles map[int]*MockFile
+}
+
+type MockFile struct {
+	mu        sync.RWMutex
+	content   []byte
+	position  int
+	mode      string
+	closed    bool
+	readOnly  bool
+	writeOnly bool
+}
+
+func NewMockVFS() *MockVFS {
+	return &MockVFS{
+		files:     make(map[string]*MockFile),
+		openFiles: make(map[int]*MockFile),
+		nextFD:    1000,
+	}
+}
+
+func (m *MockVFS) OpenFile(filename string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	file := &MockFile{
+		content:   []byte("Hello, World! This is test content for reading."),
+		position:  0,
+		mode:      "rw",
+		readOnly:  flag == os.O_RDONLY,
+		writeOnly: (flag & os.O_WRONLY) != 0,
+	}
+
+	m.files[filename] = file
+	m.nextFD++
+	m.openFiles[m.nextFD] = file
+
+	return file, nil
+}
+
+func (m *MockVFS) CreateTemp(pattern string) (io.ReadWriteCloser, string, error) {
+	filename := fmt.Sprintf("/tmp/%s-%d", pattern, m.nextFD)
+	file, err := m.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0644)
+	return file, filename, err
+}
+
+func (m *MockVFS) RemoveFile(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.files, name)
+	return nil
+}
+
+func (m *MockVFS) ListFiles() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	files := make([]string, 0, len(m.files))
+	for filename := range m.files {
+		files = append(files, filename)
+	}
+	return files
+}
+
+func (f *MockFile) Read(p []byte) (n int, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.closed {
+		return 0, os.ErrClosed
+	}
+
+	if f.position >= len(f.content) {
+		return 0, io.EOF
+	}
+
+	n = copy(p, f.content[f.position:])
+	f.position += n
+	return n, nil
+}
+
+func (f *MockFile) Write(p []byte) (n int, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.closed {
+		return 0, os.ErrClosed
+	}
+
+	if f.writeOnly || !f.readOnly {
+		if f.position+len(p) > len(f.content) {
+			newContent := make([]byte, f.position+len(p))
+			copy(newContent, f.content)
+			f.content = newContent
+		}
+		copy(f.content[f.position:], p)
+		f.position += len(p)
+		return len(p), nil
+	}
+
+	return 0, os.ErrPermission
+}
+
+func (f *MockFile) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = true
+	return nil
+}
+
+func main() {
+	log.Println("Starting FSProxy Stream I/O Test...")
+
+	// Create temp directory for test files
+	tempDir := "/tmp/fsproxy_stream_test"
+	os.MkdirAll(tempDir, 0755)
+	defer os.RemoveAll(tempDir)
+
+	// Create MockVFS for testing
+	mockVFS := NewMockVFS()
+
+	// Create a Unix socket for FSProxy communication
+	socketPath := filepath.Join(tempDir, "fsproxy.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		log.Fatalf("Failed to create socket: %v", err)
+	}
+	defer listener.Close()
+
+	log.Printf("FSProxy socket listening at: %s", socketPath)
+
+	// Handle FSProxy connections
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				log.Printf("Accept error: %v", err)
+				return
+			}
+
+			log.Println("FSProxy client connected")
+			handleFSProxyConnection(conn, mockVFS, tempDir)
+		}
+	}()
+
+	// Test client
+	time.Sleep(100 * time.Millisecond) // Wait for server to start
+	testStreamIO(socketPath, tempDir)
+}
+
+func handleDirectRequest(request map[string]interface{}, tempDir string) map[string]interface{} {
+	command, ok := request["command"].(string)
+	if !ok {
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   "missing command",
+		}
+	}
+
+	switch command {
+	case "SPAWN":
+		return handleSpawnDirect(request)
+	case "STREAM_READ":
+		return handleStreamReadDirect(request)
+	case "STREAM_WRITE":
+		return handleStreamWriteDirect(request)
+	default:
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   fmt.Sprintf("unknown command: %s", command),
+		}
+	}
+}
+
+func handleSpawnDirect(request map[string]interface{}) map[string]interface{} {
+	args, ok := request["args"].([]interface{})
+	if !ok {
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   "missing args",
+		}
+	}
+
+	// Convert args to string slice
+	stringArgs := make([]string, len(args))
+	for i, arg := range args {
+		if str, ok := arg.(string); ok {
+			stringArgs[i] = str
+		} else {
+			return map[string]interface{}{
+				"status": "ERROR",
+				"data":   "args must be strings",
+			}
+		}
+	}
+
+	if len(stringArgs) == 0 {
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   "empty args",
+		}
+	}
+
+	// Create command
+	cmd := exec.Command(stringArgs[0], stringArgs[1:]...)
+
+	// Create pipes
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   fmt.Sprintf("failed to create stdin pipe: %v", err),
+		}
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		stdin.Close()
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   fmt.Sprintf("failed to create stdout pipe: %v", err),
+		}
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		stdin.Close()
+		stdout.Close()
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   fmt.Sprintf("failed to create stderr pipe: %v", err),
+		}
+	}
+
+	// Start process
+	if err := cmd.Start(); err != nil {
+		stdin.Close()
+		stdout.Close()
+		stderr.Close()
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   fmt.Sprintf("failed to start process: %v", err),
+		}
+	}
+
+	// Store in process table
+	processID := processIDCounter
+	processIDCounter++
+
+	processTable[processID] = &TestProcess{
+		ID:     processID,
+		Cmd:    cmd,
+		Stdin:  stdin,
+		Stdout: stdout,
+		Stderr: stderr,
+	}
+
+	log.Printf("Spawned process %d: %v", processID, stringArgs)
+
+	return map[string]interface{}{
+		"status": "OK",
+		"data":   processID,
+	}
+}
+
+func handleStreamReadDirect(request map[string]interface{}) map[string]interface{} {
+	processID, ok := request["process_id"].(float64)
+	if !ok {
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   "missing process_id",
+		}
+	}
+
+	streamType, ok := request["stream_type"].(string)
+	if !ok {
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   "missing stream_type",
+		}
+	}
+
+	size, ok := request["size"].(float64)
+	if !ok {
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   "missing size",
+		}
+	}
+
+	process, ok := processTable[int(processID)]
+	if !ok {
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   "process not found",
+		}
+	}
+
+	var reader io.Reader
+	switch streamType {
+	case "stdout":
+		reader = process.Stdout
+	case "stderr":
+		reader = process.Stderr
+	default:
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   "invalid stream_type",
+		}
+	}
+
+	// Read data
+	buffer := make([]byte, int(size))
+	n, err := reader.Read(buffer)
+	if err != nil {
+		if err == io.EOF {
+			return map[string]interface{}{
+				"status": "OK",
+				"data":   "",
+			}
+		}
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   fmt.Sprintf("read error: %v", err),
+		}
+	}
+
+	return map[string]interface{}{
+		"status": "OK",
+		"data":   string(buffer[:n]),
+	}
+}
+
+func handleStreamWriteDirect(request map[string]interface{}) map[string]interface{} {
+	processID, ok := request["process_id"].(float64)
+	if !ok {
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   "missing process_id",
+		}
+	}
+
+	data, ok := request["data"].(string)
+	if !ok {
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   "missing data",
+		}
+	}
+
+	process, ok := processTable[int(processID)]
+	if !ok {
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   "process not found",
+		}
+	}
+
+	// Write data to stdin
+	n, err := process.Stdin.Write([]byte(data))
+	if err != nil {
+		return map[string]interface{}{
+			"status": "ERROR",
+			"data":   fmt.Sprintf("write error: %v", err),
+		}
+	}
+
+	return map[string]interface{}{
+		"status": "OK",
+		"data":   fmt.Sprintf("%d", n),
+	}
+}
+
+func handleFSProxyConnection(conn net.Conn, vfs tools.VirtualFileSystem, tempDir string) {
+	defer conn.Close()
+
+	log.Println("Creating simplified FSProxy handler...")
+
+	scanner := bufio.NewScanner(conn)
+	for scanner.Scan() {
+		line := scanner.Text()
+		log.Printf("Received request: %s", line)
+
+		// Parse JSON request
+		var request map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &request); err != nil {
+			log.Printf("JSON parse error: %v", err)
+			continue
+		}
+
+		// Handle request directly without FSProxy Manager
+		response := handleDirectRequest(request, tempDir)
+
+		// Send response
+		responseJSON, _ := json.Marshal(response)
+		fmt.Fprintf(conn, "%s\n", responseJSON)
+	}
+}
+
+func testStreamIO(socketPath, tempDir string) {
+	log.Println("Starting stream I/O test...")
+
+	// Connect to FSProxy
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		log.Fatalf("Failed to connect to FSProxy: %v", err)
+	}
+	defer conn.Close()
+
+	// Create test Python script
+	scriptPath := filepath.Join(tempDir, "echo_test.py")
+	scriptContent := `#!/usr/bin/env python3
+import sys
+import time
+
+print("Python echo script started", file=sys.stderr)
+sys.stderr.flush()
+
+try:
+    for line in sys.stdin:
+        line = line.strip()
+        if line == "exit":
+            break
+        print(f"Echo: {line}")
+        sys.stdout.flush()
+except KeyboardInterrupt:
+    pass
+
+print("Python echo script finished", file=sys.stderr)
+sys.stderr.flush()
+`
+	err = os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	if err != nil {
+		log.Fatalf("Failed to create test script: %v", err)
+	}
+
+	// Test 1: Spawn process
+	log.Println("Test 1: Spawning Python echo process...")
+	spawnRequest := map[string]interface{}{
+		"command": "SPAWN",
+		"args":    []string{"python3", scriptPath},
+	}
+
+	response := sendRequest(conn, spawnRequest)
+	if response["status"] != "OK" {
+		log.Fatalf("Spawn failed: %v", response)
+	}
+
+	processID := int(response["data"].(float64))
+	log.Printf("Process spawned with ID: %d", processID)
+
+	// Wait for process to start
+	time.Sleep(500 * time.Millisecond)
+
+	// Test 2: Write to stdin
+	log.Println("Test 2: Writing to process stdin...")
+	writeRequest := map[string]interface{}{
+		"command":     "STREAM_WRITE",
+		"process_id":  processID,
+		"stream_type": "stdin",
+		"data":        "Hello, FSProxy!\n",
+	}
+
+	response = sendRequest(conn, writeRequest)
+	if response["status"] != "OK" {
+		log.Fatalf("Write failed: %v", response)
+	}
+	log.Printf("Write result: %v bytes written", response["data"])
+
+	// Test 3: Read from stdout
+	log.Println("Test 3: Reading from process stdout...")
+	readRequest := map[string]interface{}{
+		"command":     "STREAM_READ",
+		"process_id":  processID,
+		"stream_type": "stdout",
+		"size":        1024,
+	}
+
+	response = sendRequest(conn, readRequest)
+	if response["status"] != "OK" {
+		log.Fatalf("Read failed: %v", response)
+	}
+
+	output, ok := response["data"].(string)
+	if !ok || output == "" {
+		log.Printf("No output received or wrong type: %v", response["data"])
+	} else {
+		log.Printf("Received output: %q", output)
+	}
+
+	// Test 4: Write exit command
+	log.Println("Test 4: Sending exit command...")
+	writeRequest["data"] = "exit\n"
+	response = sendRequest(conn, writeRequest)
+	if response["status"] != "OK" {
+		log.Fatalf("Exit write failed: %v", response)
+	}
+
+	log.Println("Stream I/O test completed successfully!")
+}
+
+func sendRequest(conn net.Conn, request map[string]interface{}) map[string]interface{} {
+	// Send request
+	requestJSON, _ := json.Marshal(request)
+	fmt.Fprintf(conn, "%s\n", requestJSON)
+
+	// Read response
+	scanner := bufio.NewScanner(conn)
+	if !scanner.Scan() {
+		log.Fatalf("Failed to read response")
+	}
+
+	var response map[string]interface{}
+	err := json.Unmarshal([]byte(scanner.Text()), &response)
+	if err != nil {
+		log.Fatalf("Failed to parse response: %v", err)
+	}
+
+	return response
+}
