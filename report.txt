@@ -1,0 +1,6 @@
+Sales Analysis Report
+Product: Laptop, Total Qty: 8, Total Revenue: $9600
+Product: Mouse, Total Qty: 55, Total Revenue: $1395
+Product: Monitor, Total Qty: 8, Total Revenue: $2400
+Product: Keyboard, Total Qty: 27, Total Revenue: $2025
+Report generated successfully

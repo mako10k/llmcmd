@@ -9,7 +9,12 @@ setup_fsproxy_test_env() {
     local execution_mode="$2"  # llmcmd|llmsh-virtual|llmsh-real
     
     export TEST_ENV_DIR="/tmp/fsproxy_test_$$_$test_name"
+    export TEST_DATA="$TEST_ENV_DIR/temp"
     mkdir -p "$TEST_ENV_DIR"/{input,output,temp}
+    
+    # Set binary paths
+    export LLMCMD_BIN="/home/mako10k/llmcmd/bin/llmcmd"
+    export LLMSH_BIN="/home/mako10k/llmcmd/bin/llmsh"
     
     # Configure based on execution mode
     case "$execution_mode" in
@@ -248,7 +253,7 @@ main_test_wrapper() {
     setup_fsproxy_test_env "${TEST_NAME:-unknown_test}" "${TEST_MODE:-llmcmd}"
     
     # Initialize logging
-    LOG_FILE="$TEST_DATA/test.log"
+    export LOG_FILE="$TEST_DATA/test.log"
     touch "$LOG_FILE"
     
     # Run the test function
