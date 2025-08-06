@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/mako10k/llmcmd/internal/tools/builtin"
+	"github.com/mako10k/llmcmd/internal/utils"
 )
 
 // ShellExecutor interface for executing shell commands
@@ -1067,24 +1068,10 @@ func (e *Engine) executeOpen(args map[string]interface{}) (string, error) {
 	}
 
 	// Validate mode and convert to os flags
-	var flag int
-	var perm os.FileMode = 0644
-	switch mode {
-	case "r":
-		flag = os.O_RDONLY
-	case "w":
-		flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-	case "a":
-		flag = os.O_WRONLY | os.O_CREATE | os.O_APPEND
-	case "r+":
-		flag = os.O_RDWR
-	case "w+":
-		flag = os.O_RDWR | os.O_CREATE | os.O_TRUNC
-	case "a+":
-		flag = os.O_RDWR | os.O_CREATE | os.O_APPEND
-	default:
+	flag, perm, err := utils.ParseFileMode(mode)
+	if err != nil {
 		e.stats.ErrorCount++
-		return "", fmt.Errorf("invalid mode: %s (valid modes: r, w, a, r+, w+, a+)", mode)
+		return "", err
 	}
 
 	// Use VFS to open the file

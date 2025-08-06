@@ -212,21 +212,14 @@ func (e *EncodingCommands) uudecodeChunk(line string) ([]byte, error) {
 
 // ExecuteGzip implements gzip compression (simplified)
 func (e *EncodingCommands) ExecuteGzip(args []string, stdin io.ReadWriteCloser, stdout io.ReadWriteCloser) error {
-	decompress := false
+	compArgs := ParseCompressionArgs(args)
 
-	// Parse arguments
-	for _, arg := range args {
-		if arg == "-d" || arg == "--decompress" {
-			decompress = true
-		}
-	}
-
-	input, err := io.ReadAll(stdin)
+	input, err := ReadInput(stdin)
 	if err != nil {
 		return fmt.Errorf("gzip: error reading input: %w", err)
 	}
 
-	if decompress {
+	if compArgs.Decompress {
 		// For simplicity, we'll use base64 as a compression placeholder
 		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(input)))
 		if err != nil {
@@ -249,27 +242,20 @@ func (e *EncodingCommands) ExecuteGunzip(args []string, stdin io.ReadWriteCloser
 
 // ExecuteBzip2 implements bzip2 compression (simplified)
 func (e *EncodingCommands) ExecuteBzip2(args []string, stdin io.ReadWriteCloser, stdout io.ReadWriteCloser) error {
-	decompress := false
+	compArgs := ParseCompressionArgs(args)
 
-	// Parse arguments
-	for _, arg := range args {
-		if arg == "-d" || arg == "--decompress" {
-			decompress = true
-		}
-	}
-
-	input, err := io.ReadAll(stdin)
+	input, err := ReadInput(stdin)
 	if err != nil {
 		return fmt.Errorf("bzip2: error reading input: %w", err)
 	}
 
-	if decompress {
+	if compArgs.Decompress {
 		// For simplicity, we'll use base64 as a compression placeholder with prefix
-		text := strings.TrimSpace(string(input))
-		if !strings.HasPrefix(text, "BZ2:") {
+		content, hasPrefix := CheckPrefix(string(input), "BZ2:")
+		if !hasPrefix {
 			return fmt.Errorf("bzip2: not a bzip2 file")
 		}
-		decoded, err := base64.StdEncoding.DecodeString(text[4:])
+		decoded, err := base64.StdEncoding.DecodeString(content)
 		if err != nil {
 			return fmt.Errorf("bzip2: decompression error: %w", err)
 		}
@@ -290,27 +276,20 @@ func (e *EncodingCommands) ExecuteBunzip2(args []string, stdin io.ReadWriteClose
 
 // ExecuteXz implements xz compression (simplified)
 func (e *EncodingCommands) ExecuteXz(args []string, stdin io.ReadWriteCloser, stdout io.ReadWriteCloser) error {
-	decompress := false
+	compArgs := ParseCompressionArgs(args)
 
-	// Parse arguments
-	for _, arg := range args {
-		if arg == "-d" || arg == "--decompress" {
-			decompress = true
-		}
-	}
-
-	input, err := io.ReadAll(stdin)
+	input, err := ReadInput(stdin)
 	if err != nil {
 		return fmt.Errorf("xz: error reading input: %w", err)
 	}
 
-	if decompress {
+	if compArgs.Decompress {
 		// For simplicity, we'll use base64 as a compression placeholder with prefix
-		text := strings.TrimSpace(string(input))
-		if !strings.HasPrefix(text, "XZ:") {
+		content, hasPrefix := CheckPrefix(string(input), "XZ:")
+		if !hasPrefix {
 			return fmt.Errorf("xz: not an xz file")
 		}
-		decoded, err := base64.StdEncoding.DecodeString(text[3:])
+		decoded, err := base64.StdEncoding.DecodeString(content)
 		if err != nil {
 			return fmt.Errorf("xz: decompression error: %w", err)
 		}

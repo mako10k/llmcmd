@@ -4,7 +4,8 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"strconv"
+
+	"github.com/mako10k/llmcmd/internal/utils"
 )
 
 // Head shows the first n lines of input (default: 10)
@@ -28,23 +29,9 @@ Examples:
 		}
 	}
 
-	lines := 10
-
-	// Parse number of lines from arguments
-	for i, arg := range args {
-		if arg == "-n" && i+1 < len(args) {
-			n, err := strconv.Atoi(args[i+1])
-			if err != nil {
-				return fmt.Errorf("invalid number: %s", args[i+1])
-			}
-			if n < 0 {
-				return fmt.Errorf("negative line count: %d", n)
-			}
-			lines = n
-			// Remove processed arguments
-			args = append(args[:i], args[i+2:]...)
-			break
-		}
+	lines, args, err := utils.ParseLineCountArgument(args, 10)
+	if err != nil {
+		return err
 	}
 
 	processFunc := func(input io.Reader) error {

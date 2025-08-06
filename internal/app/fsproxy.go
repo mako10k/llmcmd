@@ -16,6 +16,7 @@ import (
 
 	"github.com/mako10k/llmcmd/internal/openai"
 	"github.com/mako10k/llmcmd/internal/tools"
+	"github.com/mako10k/llmcmd/internal/utils"
 )
 
 // executionResult holds the result of ExecuteInternal call
@@ -1044,24 +1045,11 @@ func (proxy *FSProxyManager) handleOpen(filename, mode, isTopLevelStr string) FS
 	}
 
 	// Validate mode
-	var flag int
-	switch mode {
-	case "r":
-		flag = os.O_RDONLY
-	case "w":
-		flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-	case "a":
-		flag = os.O_WRONLY | os.O_CREATE | os.O_APPEND
-	case "r+":
-		flag = os.O_RDWR
-	case "w+":
-		flag = os.O_RDWR | os.O_CREATE | os.O_TRUNC
-	case "a+":
-		flag = os.O_RDWR | os.O_CREATE | os.O_APPEND
-	default:
+	flag, _, err := utils.ParseFileMode(mode)
+	if err != nil {
 		return FSResponse{
 			Status: "ERROR",
-			Data:   fmt.Sprintf("invalid mode: %s", mode),
+			Data:   err.Error(),
 		}
 	}
 
