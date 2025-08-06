@@ -13,6 +13,9 @@ RESULTS_DIR="$TEST_ROOT/results/$(date +%Y%m%d_%H%M%S)"
 BINARY_TESTS=(
     "integration/llmcmd"
     "security/llmcmd"
+    "integration/llmsh_virtual"
+    "security/llmsh_virtual"
+    "integration/llmsh_real"
 )
 
 UNIT_TESTS=(

@@ -224,3 +224,41 @@ run_test_with_timeout() {
         return $exit_code
     fi
 }
+
+# Logging functions
+log_info() {
+    echo -e "\033[0;34m[INFO]\033[0m $*"
+}
+
+log_success() {
+    echo -e "\033[0;32m[PASS]\033[0m $*"
+}
+
+log_warning() {
+    echo -e "\033[1;33m[WARN]\033[0m $*"
+}
+
+log_error() {
+    echo -e "\033[0;31m[FAIL]\033[0m $*"
+}
+
+# Main test wrapper for unit tests
+main_test_wrapper() {
+    # Setup test environment
+    setup_fsproxy_test_env "${TEST_NAME:-unknown_test}" "${TEST_MODE:-llmcmd}"
+    
+    # Initialize logging
+    LOG_FILE="$TEST_DATA/test.log"
+    touch "$LOG_FILE"
+    
+    # Run the test function
+    if test_function; then
+        log_success "Test ${TEST_NAME} completed successfully"
+        cleanup_test_env
+        exit 0
+    else
+        log_error "Test ${TEST_NAME} failed"
+        cleanup_test_env
+        exit 1
+    fi
+}
