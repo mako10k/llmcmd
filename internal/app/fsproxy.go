@@ -143,18 +143,99 @@ func (bp *BackgroundProcess) SetStatus(status string) {
 	bp.Status = status
 }
 
-// ProcessTable manages background processes with thread-safe operations
+// ProcessTable manages background processes with thread-safe operations and monitoring
 type ProcessTable struct {
-	mu        sync.RWMutex
-	processes map[int]*BackgroundProcess
-	nextPID   int
+	mu              sync.RWMutex
+	processes       map[int]*BackgroundProcess
+	nextPID         int
+	monitoringStop  chan struct{} // Signal to stop monitoring
+	cleanupCallback func(pid int) // Callback for process cleanup
+	isMonitoring    bool          // Flag to track monitoring state
 }
 
 // NewProcessTable creates a new process table
 func NewProcessTable() *ProcessTable {
 	return &ProcessTable{
-		processes: make(map[int]*BackgroundProcess),
-		nextPID:   1000, // Start PIDs from 1000 to avoid conflicts
+		processes:       make(map[int]*BackgroundProcess),
+		nextPID:         1000, // Start PIDs from 1000 to avoid conflicts
+		monitoringStop:  make(chan struct{}),
+		cleanupCallback: nil, // Will be set by SetCleanupCallback
+		isMonitoring:    false,
+	}
+}
+
+// SetCleanupCallback sets the callback function for process cleanup
+func (pt *ProcessTable) SetCleanupCallback(callback func(pid int)) {
+	pt.mu.Lock()
+	defer pt.mu.Unlock()
+	pt.cleanupCallback = callback
+}
+
+// StartMonitoring starts background process monitoring
+func (pt *ProcessTable) StartMonitoring() {
+	pt.mu.Lock()
+	if pt.isMonitoring {
+		pt.mu.Unlock()
+		return // Already monitoring
+	}
+	pt.isMonitoring = true
+	pt.mu.Unlock()
+
+	go pt.monitorProcesses()
+	log.Printf("ProcessTable: Started background process monitoring")
+}
+
+// StopMonitoring stops background process monitoring
+func (pt *ProcessTable) StopMonitoring() {
+	pt.mu.Lock()
+	if !pt.isMonitoring {
+		pt.mu.Unlock()
+		return // Not monitoring
+	}
+	pt.isMonitoring = false
+	pt.mu.Unlock()
+
+	close(pt.monitoringStop)
+	log.Printf("ProcessTable: Stopped background process monitoring")
+}
+
+// monitorProcesses monitors all processes for termination
+func (pt *ProcessTable) monitorProcesses() {
+	ticker := time.NewTicker(1 * time.Second) // Check every second
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-pt.monitoringStop:
+			log.Printf("ProcessTable: Monitoring stopped")
+			return
+		case <-ticker.C:
+			pt.checkProcessStatus()
+		}
+	}
+}
+
+// checkProcessStatus checks the status of all running processes
+func (pt *ProcessTable) checkProcessStatus() {
+	pt.mu.Lock()
+	defer pt.mu.Unlock()
+
+	for pid, process := range pt.processes {
+		if process.GetStatus() == "running" && process.Handle != nil {
+			// Check if process is still alive
+			if process.Handle.ProcessState != nil && process.Handle.ProcessState.Exited() {
+				// Process has exited
+				process.SetStatus("exited")
+				process.EndTime = time.Now()
+
+				log.Printf("ProcessTable: Process %d exited", pid)
+
+				// Call cleanup callback if set
+				if pt.cleanupCallback != nil {
+					go pt.cleanupCallback(pid) // Run in goroutine to avoid blocking
+				}
+			}
+		}
 	}
 }
 
@@ -204,6 +285,208 @@ func (pt *ProcessTable) GeneratePID() int {
 	return pid
 }
 
+// Client represents a connected client with resource tracking
+type Client struct {
+	ID           string    `json:"id"`
+	ConnectedAt  time.Time `json:"connected_at"`
+	OpenFiles    []int     `json:"open_files"`     // List of open file descriptors
+	IsLLMContext bool      `json:"is_llm_context"` // Whether this client is in LLM execution context
+}
+
+// ClientTable manages connected clients with thread-safe operations
+type ClientTable struct {
+	mu      sync.RWMutex
+	clients map[string]*Client // clientID -> Client
+}
+
+// NewClientTable creates a new client table
+func NewClientTable() *ClientTable {
+	return &ClientTable{
+		clients: make(map[string]*Client),
+	}
+}
+
+// AddClient adds a new client to the table
+func (ct *ClientTable) AddClient(clientID string, isLLMContext bool) {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+
+	ct.clients[clientID] = &Client{
+		ID:           clientID,
+		ConnectedAt:  time.Now(),
+		OpenFiles:    make([]int, 0),
+		IsLLMContext: isLLMContext,
+	}
+}
+
+// RemoveClient removes a client from the table
+func (ct *ClientTable) RemoveClient(clientID string) bool {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+
+	if _, exists := ct.clients[clientID]; exists {
+		delete(ct.clients, clientID)
+		return true
+	}
+	return false
+}
+
+// GetClient retrieves a client by ID
+func (ct *ClientTable) GetClient(clientID string) (*Client, bool) {
+	ct.mu.RLock()
+	defer ct.mu.RUnlock()
+
+	client, exists := ct.clients[clientID]
+	return client, exists
+}
+
+// AddFileToClient adds a file descriptor to a client's open files list
+func (ct *ClientTable) AddFileToClient(clientID string, fileno int) {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+
+	if client, exists := ct.clients[clientID]; exists {
+		client.OpenFiles = append(client.OpenFiles, fileno)
+	}
+}
+
+// GetClientOpenFiles returns all open files for a client
+func (ct *ClientTable) GetClientOpenFiles(clientID string) []int {
+	ct.mu.RLock()
+	defer ct.mu.RUnlock()
+
+	if client, exists := ct.clients[clientID]; exists {
+		// Return a copy to avoid race conditions
+		files := make([]int, len(client.OpenFiles))
+		copy(files, client.OpenFiles)
+		return files
+	}
+	return []int{}
+}
+
+// FileAccessController manages file access control based on security requirements
+type FileAccessController struct {
+	mu               sync.RWMutex
+	allowedInputs    map[string]bool // -i specified files (read-only)
+	allowedOutputs   map[string]bool // -o specified files (write-only)
+	allowedReadWrite map[string]bool // files with both -i and -o (read-write)
+	isVirtualMode    bool            // --virtual mode flag
+	executionMode    string          // "llmcmd", "llmsh-virtual", "llmsh-real"
+}
+
+// NewFileAccessController creates a new file access controller
+func NewFileAccessController(executionMode string, isVirtualMode bool) *FileAccessController {
+	return &FileAccessController{
+		allowedInputs:    make(map[string]bool),
+		allowedOutputs:   make(map[string]bool),
+		allowedReadWrite: make(map[string]bool),
+		isVirtualMode:    isVirtualMode,
+		executionMode:    executionMode,
+	}
+}
+
+// AddInputFile adds a file that can be read (-i option)
+func (fac *FileAccessController) AddInputFile(filename string) {
+	fac.mu.Lock()
+	defer fac.mu.Unlock()
+
+	// If already in outputs, move to read-write
+	if fac.allowedOutputs[filename] {
+		delete(fac.allowedOutputs, filename)
+		fac.allowedReadWrite[filename] = true
+		log.Printf("FileAccessController: File %s moved to read-write access", filename)
+	} else if !fac.allowedReadWrite[filename] {
+		fac.allowedInputs[filename] = true
+		log.Printf("FileAccessController: Added input file %s", filename)
+	}
+}
+
+// AddOutputFile adds a file that can be written (-o option)
+func (fac *FileAccessController) AddOutputFile(filename string) {
+	fac.mu.Lock()
+	defer fac.mu.Unlock()
+
+	// If already in inputs, move to read-write
+	if fac.allowedInputs[filename] {
+		delete(fac.allowedInputs, filename)
+		fac.allowedReadWrite[filename] = true
+		log.Printf("FileAccessController: File %s moved to read-write access", filename)
+	} else if !fac.allowedReadWrite[filename] {
+		fac.allowedOutputs[filename] = true
+		log.Printf("FileAccessController: Added output file %s", filename)
+	}
+}
+
+// CheckFileAccess checks if a file can be accessed with the specified mode
+func (fac *FileAccessController) CheckFileAccess(filename, mode string, isTopLevel bool) error {
+	fac.mu.RLock()
+	defer fac.mu.RUnlock()
+
+	log.Printf("FileAccessController: Checking access for %s (mode: %s, topLevel: %v, execMode: %s)",
+		filename, mode, isTopLevel, fac.executionMode)
+
+	// Apply security requirements based on execution mode
+	switch fac.executionMode {
+	case "llmcmd":
+		return fac.checkLLMCmdAccess(filename, mode)
+	case "llmsh-virtual":
+		return fac.checkLLMShVirtualAccess(filename, mode)
+	case "llmsh-real":
+		return fac.checkLLMShRealAccess(filename, mode, isTopLevel)
+	default:
+		return fmt.Errorf("unknown execution mode: %s", fac.executionMode)
+	}
+}
+
+// checkLLMCmdAccess implements llmcmd security policy
+func (fac *FileAccessController) checkLLMCmdAccess(filename, mode string) error {
+	// llmcmd: Only files specified by -i/-o options
+	isReadMode := mode == "r" || mode == "r+"
+	isWriteMode := mode == "w" || mode == "a" || mode == "w+" || mode == "a+" || mode == "r+"
+
+	if fac.allowedReadWrite[filename] {
+		// File has both read and write permission
+		return nil
+	}
+
+	if isReadMode && fac.allowedInputs[filename] {
+		// Reading from -i file
+		if isWriteMode {
+			return fmt.Errorf("file %s is input-only (-i), write access denied", filename)
+		}
+		return nil
+	}
+
+	if isWriteMode && fac.allowedOutputs[filename] {
+		// Writing to -o file
+		if isReadMode {
+			return fmt.Errorf("file %s is output-only (-o), read access denied", filename)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("file %s not in allowed file list for llmcmd", filename)
+}
+
+// checkLLMShVirtualAccess implements llmsh --virtual security policy
+func (fac *FileAccessController) checkLLMShVirtualAccess(filename, mode string) error {
+	// llmsh --virtual: Same as llmcmd
+	return fac.checkLLMCmdAccess(filename, mode)
+}
+
+// checkLLMShRealAccess implements llmsh (non-virtual) security policy
+func (fac *FileAccessController) checkLLMShRealAccess(filename, mode string, isTopLevel bool) error {
+	if isTopLevel {
+		// Top-level llmsh: Access to real files allowed
+		log.Printf("FileAccessController: Real file access allowed for top-level llmsh: %s", filename)
+		return nil
+	} else {
+		// llmsh via llmcmd internal command: Same restrictions as --virtual
+		log.Printf("FileAccessController: llmsh via internal command, applying virtual restrictions")
+		return fac.checkLLMCmdAccess(filename, mode)
+	}
+}
+
 // FSProxyManager manages file system access for restricted child processes
 type FSProxyManager struct {
 	vfs       tools.VirtualFileSystem
@@ -222,30 +505,50 @@ type FSProxyManager struct {
 	fdTable  *FileDescriptorTable // New fd management table
 	clientID string               // Client identifier for this manager
 
+	// Client management
+	clientTable *ClientTable // Client management table
+
 	// Background process management
 	processTable *ProcessTable // Process management table
 
+	// Security and access control
+	accessController *FileAccessController // File access control
+
 	// LLM integration
-	llmClient    *openai.Client              // OpenAI client for LLM_CHAT
+	llmClient    *openai.Client             // OpenAI client for LLM_CHAT
 	quotaManager *openai.SharedQuotaManager // Quota manager for LLM operations
 }
 
 // NewFSProxyManager creates a new FS proxy manager
 func NewFSProxyManager(vfs tools.VirtualFileSystem, pipe *os.File, isVFSMode bool) *FSProxyManager {
-	return &FSProxyManager{
-		vfs:          vfs,
-		pipe:         pipe,
-		isVFSMode:    isVFSMode,
-		reader:       bufio.NewReader(pipe),
-		writer:       bufio.NewWriter(pipe),
-		nextFD:       1000, // Start from 1000 to avoid conflicts
-		openFiles:    make(map[int]io.ReadWriteCloser),
-		fdTable:      NewFileDescriptorTable(),
-		clientID:     fmt.Sprintf("client-%d", time.Now().UnixNano()), // Generate unique client ID
-		processTable: NewProcessTable(),                               // Initialize process table
-		llmClient:    nil,                                             // Will be set via SetLLMClient
-		quotaManager: nil,                                             // Will be set via SetQuotaManager
+	// Determine execution mode based on VFS mode and context
+	executionMode := "llmcmd" // Default to most restrictive
+	if isVFSMode {
+		executionMode = "llmsh-virtual"
 	}
+
+	proxy := &FSProxyManager{
+		vfs:              vfs,
+		pipe:             pipe,
+		isVFSMode:        isVFSMode,
+		reader:           bufio.NewReader(pipe),
+		writer:           bufio.NewWriter(pipe),
+		nextFD:           1000, // Start from 1000 to avoid conflicts
+		openFiles:        make(map[int]io.ReadWriteCloser),
+		fdTable:          NewFileDescriptorTable(),
+		clientID:         fmt.Sprintf("client-%d", time.Now().UnixNano()),   // Generate unique client ID
+		clientTable:      NewClientTable(),                                  // Initialize client table
+		processTable:     NewProcessTable(),                                 // Initialize process table
+		accessController: NewFileAccessController(executionMode, isVFSMode), // Initialize access control
+		llmClient:        nil,                                               // Will be set via SetLLMClient
+		quotaManager:     nil,                                               // Will be set via SetQuotaManager
+	}
+
+	// Set up process monitoring with cleanup callback
+	proxy.processTable.SetCleanupCallback(proxy.handleProcessTermination)
+	proxy.processTable.StartMonitoring()
+
+	return proxy
 }
 
 // SetLLMClient sets the OpenAI client for LLM operations
@@ -256,6 +559,26 @@ func (proxy *FSProxyManager) SetLLMClient(client *openai.Client) {
 // SetQuotaManager sets the quota manager for LLM operations
 func (proxy *FSProxyManager) SetQuotaManager(manager *openai.SharedQuotaManager) {
 	proxy.quotaManager = manager
+}
+
+// Security configuration methods
+
+// AddInputFile adds a file to the allowed input files list (-i option)
+func (proxy *FSProxyManager) AddInputFile(filename string) {
+	proxy.accessController.AddInputFile(filename)
+}
+
+// AddOutputFile adds a file to the allowed output files list (-o option)
+func (proxy *FSProxyManager) AddOutputFile(filename string) {
+	proxy.accessController.AddOutputFile(filename)
+}
+
+// SetExecutionMode sets the execution mode for security policy
+func (proxy *FSProxyManager) SetExecutionMode(mode string) {
+	proxy.accessController.mu.Lock()
+	defer proxy.accessController.mu.Unlock()
+	proxy.accessController.executionMode = mode
+	log.Printf("FS Proxy: Set execution mode to %s", mode)
 }
 
 // FSRequest represents a file system operation request
@@ -281,25 +604,38 @@ type FSResponse struct {
 
 // HandleFSRequest handles file system requests from child processes
 func (proxy *FSProxyManager) HandleFSRequest() error {
-	// Ensure cleanup when function exits
-	defer proxy.cleanup()
+	return proxy.HandleFSRequestWithClientID("default-client")
+}
+
+// HandleFSRequestWithClientID handles file system requests from child processes with client tracking
+func (proxy *FSProxyManager) HandleFSRequestWithClientID(clientID string) error {
+	// Register client connection
+	proxy.registerClient(clientID)
+
+	// Ensure cleanup when function exits (enhanced with client-specific cleanup)
+	defer func() {
+		log.Printf("FS Proxy: Cleaning up resources for client %s", clientID)
+		proxy.cleanupClient(clientID)
+		proxy.cleanup()
+	}()
 
 	for {
 		request, err := proxy.readRequest()
 		if err != nil {
 			if err == io.EOF {
-				// Child process closed the pipe - cleanup resources
-				log.Printf("FS Proxy: Child process disconnected, cleaning up resources")
+				// Child process closed the pipe - enhanced cleanup with client tracking
+				log.Printf("FS Proxy: Client %s disconnected (EOF), performing enhanced cleanup", clientID)
+				proxy.handlePipeEOF(clientID)
 				return nil
 			}
-			log.Printf("FS Proxy: Error reading request: %v", err)
+			log.Printf("FS Proxy: Error reading request from client %s: %v", clientID, err)
 			continue
 		}
 
 		response := proxy.processRequest(request)
 
 		if err := proxy.sendResponse(response); err != nil {
-			log.Printf("FS Proxy: Error sending response: %v", err)
+			log.Printf("FS Proxy: Error sending response to client %s: %v", clientID, err)
 			return err
 		}
 	}
@@ -743,6 +1079,15 @@ func (proxy *FSProxyManager) handleOpen(filename, mode, isTopLevelStr string) FS
 		}
 	}
 
+	// Security Check: Apply file access control
+	if err := proxy.accessController.CheckFileAccess(filename, mode, isTopLevel); err != nil {
+		log.Printf("FS Proxy: Access denied for file %s (mode: %s): %v", filename, mode, err)
+		return FSResponse{
+			Status: "ERROR",
+			Data:   fmt.Sprintf("access denied: %v", err),
+		}
+	}
+
 	// Open file through VFS
 	file, err := proxy.vfs.OpenFile(filename, flag, 0644)
 	if err != nil {
@@ -765,7 +1110,10 @@ func (proxy *FSProxyManager) handleOpen(filename, mode, isTopLevelStr string) FS
 	// Store in new fd management table
 	proxy.fdTable.AddFile(fd, filename, mode, proxy.clientID, isTopLevel, rwc)
 
-	log.Printf("FS Proxy: Opened file '%s' with fd %d", filename, fd)
+	// Associate file with current client
+	proxy.clientTable.AddFileToClient(proxy.clientID, fd)
+
+	log.Printf("FS Proxy: Opened file '%s' with fd %d for client %s", filename, fd, proxy.clientID)
 
 	return FSResponse{
 		Status: "OK",
@@ -902,6 +1250,23 @@ func (proxy *FSProxyManager) sendResponse(response FSResponse) error {
 
 // cleanup closes all open files when the proxy manager shuts down
 func (proxy *FSProxyManager) cleanup() {
+	log.Printf("FS Proxy: Starting comprehensive cleanup")
+
+	// Stop process monitoring
+	proxy.processTable.StopMonitoring()
+
+	// Clean up all processes
+	processes := proxy.processTable.ListProcesses()
+	for _, process := range processes {
+		if process.GetStatus() == "running" && process.Handle != nil {
+			log.Printf("FS Proxy: Terminating running process %d during cleanup", process.PID)
+			if err := process.Handle.Process.Kill(); err != nil {
+				log.Printf("FS Proxy: Warning - failed to kill process %d: %v", process.PID, err)
+			}
+		}
+		proxy.cleanupProcessResources(process)
+	}
+
 	// Get all open files from new fd table
 	allFiles := proxy.fdTable.GetAllFiles()
 
@@ -933,7 +1298,7 @@ func (proxy *FSProxyManager) cleanup() {
 	proxy.openFiles = make(map[int]io.ReadWriteCloser)
 	proxy.fdMutex.Unlock()
 
-	log.Printf("FS Proxy: Resource cleanup completed for client %s", proxy.clientID)
+	log.Printf("FS Proxy: Comprehensive cleanup completed for client %s", proxy.clientID)
 }
 
 // handleSpawn handles spawn command requests
@@ -1259,6 +1624,13 @@ func (proxy *FSProxyManager) handleStreamWrite(processID int, streamType string,
 func (proxy *FSProxyManager) handleLLMChat(isTopLevel bool, stdinFD, stdoutFD, stderrFD int, data []byte) FSResponse {
 	log.Printf("FS Proxy: LLM_CHAT called - TopLevel: %v, FDs: %d,%d,%d, DataSize: %d",
 		isTopLevel, stdinFD, stdoutFD, stderrFD, len(data))
+
+	// Set this client as being in LLM execution context
+	proxy.setClientLLMContext(proxy.clientID, true)
+	defer func() {
+		// Reset LLM context when done (optional, depending on design)
+		// proxy.setClientLLMContext(proxy.clientID, false)
+	}()
 
 	// Fail-First: Validate file descriptors
 	if stdinFD < 0 || stdoutFD < 0 || stderrFD < 0 {
@@ -1660,12 +2032,166 @@ func (proxy *FSProxyManager) handleLLMQuota() FSResponse {
 
 // isLLMExecutionContext checks if the current client is in an LLM execution context
 func (proxy *FSProxyManager) isLLMExecutionContext() bool {
-	// Simple implementation: Allow access for MVP
-	// TODO: Implement proper context tracking in future versions
-	// - Track which clients were spawned by LLM_CHAT commands
-	// - Maintain client context state in FSProxyManager
-	// - Check client ID against LLM execution registry
+	// Enhanced implementation: Check actual client context
+	client, exists := proxy.clientTable.GetClient(proxy.clientID)
+	if !exists {
+		log.Printf("FS Proxy: LLM context check - client %s not found in table", proxy.clientID)
+		return false
+	}
 
-	log.Printf("FS Proxy: LLM context check - allowing access for MVP (simple implementation)")
-	return true // Allow access for now
+	log.Printf("FS Proxy: LLM context check for client %s - IsLLMContext: %v", proxy.clientID, client.IsLLMContext)
+	return client.IsLLMContext
+}
+
+// Enhanced Client Management Methods
+
+// registerClient registers a new client connection
+func (proxy *FSProxyManager) registerClient(clientID string) {
+	// Determine if this is an LLM execution context
+	isLLMContext := false // Default to false, will be set to true by LLM_CHAT commands
+
+	proxy.clientTable.AddClient(clientID, isLLMContext)
+	log.Printf("FS Proxy: Registered client %s (LLM context: %v)", clientID, isLLMContext)
+}
+
+// cleanupClient performs client-specific cleanup
+func (proxy *FSProxyManager) cleanupClient(clientID string) {
+	// Get all open files for this client
+	openFiles := proxy.clientTable.GetClientOpenFiles(clientID)
+
+	// Close all files opened by this client
+	for _, fileno := range openFiles {
+		if openFile, exists := proxy.fdTable.GetFile(fileno); exists {
+			if err := openFile.Handle.Close(); err != nil {
+				log.Printf("FS Proxy: Warning - failed to close file %d during client cleanup: %v", fileno, err)
+			} else {
+				log.Printf("FS Proxy: Auto-closed file %d during client %s cleanup", fileno, clientID)
+			}
+
+			// Remove from both tables
+			proxy.fdMutex.Lock()
+			delete(proxy.openFiles, fileno)
+			proxy.fdMutex.Unlock()
+
+			proxy.fdTable.RemoveFile(fileno)
+		}
+	}
+
+	// Remove client from table
+	if proxy.clientTable.RemoveClient(clientID) {
+		log.Printf("FS Proxy: Removed client %s from client table", clientID)
+	}
+}
+
+// handlePipeEOF handles pipe EOF with enhanced resource cleanup
+func (proxy *FSProxyManager) handlePipeEOF(clientID string) {
+	log.Printf("FS Proxy: Handling pipe EOF for client %s", clientID)
+
+	// Get client information before cleanup
+	client, exists := proxy.clientTable.GetClient(clientID)
+	if exists {
+		log.Printf("FS Proxy: Client %s had %d open files at disconnect", clientID, len(client.OpenFiles))
+
+		// Log LLM context information
+		if client.IsLLMContext {
+			log.Printf("FS Proxy: Client %s was in LLM execution context", clientID)
+		}
+	}
+
+	// Perform comprehensive cleanup
+	proxy.cleanupClient(clientID)
+
+	// Additional cleanup: Check for any orphaned resources
+	proxy.performOrphanedResourceCleanup()
+}
+
+// performOrphanedResourceCleanup checks for and cleans up any orphaned resources
+func (proxy *FSProxyManager) performOrphanedResourceCleanup() {
+	// Get all open files from fdTable
+	allFiles := proxy.fdTable.GetAllFiles()
+
+	// Check if any files are not associated with active clients
+	orphanedFiles := 0
+	for fileno, openFile := range allFiles {
+		// Check if the client ID of this file exists in client table
+		if _, exists := proxy.clientTable.GetClient(openFile.ClientID); !exists {
+			// This file belongs to a disconnected client - clean it up
+			if err := openFile.Handle.Close(); err != nil {
+				log.Printf("FS Proxy: Warning - failed to close orphaned file %d: %v", fileno, err)
+			} else {
+				log.Printf("FS Proxy: Cleaned up orphaned file %d (client: %s)", fileno, openFile.ClientID)
+				orphanedFiles++
+			}
+
+			// Remove from both tables
+			proxy.fdMutex.Lock()
+			delete(proxy.openFiles, fileno)
+			proxy.fdMutex.Unlock()
+
+			proxy.fdTable.RemoveFile(fileno)
+		}
+	}
+
+	if orphanedFiles > 0 {
+		log.Printf("FS Proxy: Cleaned up %d orphaned files during EOF cleanup", orphanedFiles)
+	}
+}
+
+// setClientLLMContext sets the LLM execution context flag for a client
+func (proxy *FSProxyManager) setClientLLMContext(clientID string, isLLMContext bool) {
+	if client, exists := proxy.clientTable.GetClient(clientID); exists {
+		client.IsLLMContext = isLLMContext
+		log.Printf("FS Proxy: Set LLM context flag for client %s to %v", clientID, isLLMContext)
+	}
+}
+
+// Process Monitoring and Termination Handling
+
+// handleProcessTermination handles process termination cleanup
+func (proxy *FSProxyManager) handleProcessTermination(pid int) {
+	log.Printf("FS Proxy: Handling termination of process %d", pid)
+
+	// Get process information
+	process := proxy.processTable.GetProcess(pid)
+	if process == nil {
+		log.Printf("FS Proxy: Warning - process %d not found in table", pid)
+		return
+	}
+
+	log.Printf("FS Proxy: Process %d (%s) terminated after %v",
+		pid, process.Command, time.Since(process.StartTime))
+
+	// Perform cleanup based on process type and status
+	proxy.cleanupProcessResources(process)
+
+	// Remove from process table
+	proxy.processTable.RemoveProcess(pid)
+
+	log.Printf("FS Proxy: Completed cleanup for terminated process %d", pid)
+}
+
+// cleanupProcessResources performs resource cleanup for a terminated process
+func (proxy *FSProxyManager) cleanupProcessResources(process *BackgroundProcess) {
+	// Close any open process streams
+	if process.Stdin != nil {
+		if err := process.Stdin.Close(); err != nil {
+			log.Printf("FS Proxy: Warning - failed to close stdin for process %d: %v", process.PID, err)
+		}
+	}
+
+	if process.Stdout != nil {
+		if err := process.Stdout.Close(); err != nil {
+			log.Printf("FS Proxy: Warning - failed to close stdout for process %d: %v", process.PID, err)
+		}
+	}
+
+	if process.Stderr != nil {
+		if err := process.Stderr.Close(); err != nil {
+			log.Printf("FS Proxy: Warning - failed to close stderr for process %d: %v", process.PID, err)
+		}
+	}
+
+	// Additional cleanup: Check for any files that might be associated with this process
+	// (In a more advanced implementation, we could track process-file relationships)
+	log.Printf("FS Proxy: Cleaned up streams for process %d", process.PID)
 }
