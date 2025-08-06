@@ -167,6 +167,23 @@ func (f *VirtualFile) Close() error {
 	return nil
 }
 
+// Clone creates a copy of the VirtualFile with new flag and perm settings
+// This allows the same virtual file data to be opened with different access modes
+func (f *VirtualFile) Clone(flag int, perm os.FileMode) *VirtualFile {
+	// Create a copy of the data
+	dataCopy := make([]byte, len(f.data))
+	copy(dataCopy, f.data)
+	
+	return &VirtualFile{
+		name:   f.name,
+		data:   dataCopy,
+		offset: 0, // Reset offset for new handle
+		flag:   flag,
+		perm:   perm,
+		closed: false,
+	}
+}
+
 // VFSEntry represents an entry in the virtual file system
 type VFSEntry struct {
 	Name     string   // File name or path
@@ -355,6 +372,31 @@ func (vfs *VirtualFS) openFile(name string, flag int, perm os.FileMode) (File, e
 			return nil, fmt.Errorf("temp file '%s' already consumed", name)
 		}
 
+		// For real files, always create a new file handle (real files can be reopened)
+		if entry.Type == FileTypeRealFile {
+			// Check if it's a real filesystem path and reopen it
+			if filepath.IsAbs(name) || name[0] != '<' {
+				rawFile, err := os.OpenFile(name, flag, perm)
+				if err != nil {
+					return nil, err
+				}
+				// Update the entry with new file handle
+				entry.File = rawFile
+				vfs.entries[fd] = entry
+				return rawFile, nil
+			}
+		}
+
+		// For virtual files and temp files, create a new handle with appropriate flags
+		if entry.Type == FileTypeVirtual {
+			if vf, ok := entry.File.(*VirtualFile); ok {
+				// Create a cloned virtual file with the new flag/perm settings
+				clonedFile := vf.Clone(flag, perm)
+				return clonedFile, nil
+			}
+		}
+		
+		// For temp files, return existing entry (they should not be duplicated)
 		return entry.File, nil
 	}
 
