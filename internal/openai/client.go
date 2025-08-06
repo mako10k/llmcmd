@@ -546,11 +546,11 @@ func getStdFileInfo(fd int) map[string]interface{} {
 
 // CreateInitialMessages creates the initial message sequence for llmcmd
 func CreateInitialMessages(prompt, instructions string, inputFiles []string, customSystemPrompt string, disableTools bool) []ChatMessage {
-	return CreateInitialMessagesWithQuota(prompt, instructions, inputFiles, customSystemPrompt, disableTools, "", false)
+	return CreateInitialMessagesWithQuota(prompt, instructions, inputFiles, []string{}, customSystemPrompt, disableTools, "", false)
 }
 
 // CreateInitialMessagesWithQuota creates the initial message sequence with quota information
-func CreateInitialMessagesWithQuota(prompt, instructions string, inputFiles []string, customSystemPrompt string, disableTools bool, quotaStatus string, isLastCall bool) []ChatMessage {
+func CreateInitialMessagesWithQuota(prompt, instructions string, inputFiles []string, outputFiles []string, customSystemPrompt string, disableTools bool, quotaStatus string, isLastCall bool) []ChatMessage {
 	var messages []ChatMessage
 
 	// Use custom system prompt if provided, otherwise use default
@@ -566,7 +566,12 @@ func CreateInitialMessagesWithQuota(prompt, instructions string, inputFiles []st
 
 CORE TOOLS: read(fd), write(fd,data), spawn(script), open(path), close(fd), exit(code), help(keys)
 
-WORKFLOW: read() → process → write(1,result) → exit(0)
+WORKFLOW: read() → process → OUTPUT → exit(0)
+OUTPUT RULES:
+  ⚠️ CRITICAL: Check if -o output file was specified in file descriptor mapping
+  - If -o option was used: open("output_file", "w") → get new_fd → write(new_fd, result)
+  - If no -o option: write(1, result) (standard output)
+  - fd=1 is ALWAYS standard output, regardless of -o option
 COMMANDS: Built-in only (cat,grep,sed,head,tail,sort,wc,tr,cut,uniq) - no external tools
 PIPES: spawn("cmd1 | cmd2") for multi-stage processing
 FILES: Virtual filesystem - files consumed after read (PIPE behavior)
@@ -803,6 +808,18 @@ C) Virtual File Operations:
 	fdMappingContent += fmt.Sprintf("\n- fd=0: %s", stdinDisplay)
 	fdMappingContent += fmt.Sprintf("\n- fd=1: %s", stdoutDisplay)
 	fdMappingContent += fmt.Sprintf("\n- fd=2: %s", stderrDisplay)
+
+	// Add -o option information if output files are specified
+	if len(outputFiles) > 0 {
+		fdMappingContent += "\n\n⚠️ OUTPUT FILE SPECIFIED (-o option):"
+		for i, outputFile := range outputFiles {
+			fdMappingContent += fmt.Sprintf("\n- OUTPUT TARGET: %s", outputFile)
+			if i == 0 {
+				fdMappingContent += "\n- REQUIRED ACTION: Use open(\"" + outputFile + "\", \"w\") → get new_fd → write(new_fd, result)"
+			}
+		}
+		fdMappingContent += "\n- DO NOT write to fd=1 (stdout) when -o option is used"
+	}
 
 	if len(actualFiles) > 0 {
 		for i, file := range actualFiles {
