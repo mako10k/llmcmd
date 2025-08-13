@@ -10,10 +10,7 @@ import (
 
 // Head shows the first n lines of input (default: 10)
 func Head(args []string, stdin io.Reader, stdout io.Writer) error {
-	// Check for help option first
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			fmt.Fprint(stdout, `head - Display first lines of input
+	if handled, _ := HandleHelp(args, stdout, `head - Display first lines of input
 
 Usage: head [-n lines] [file...]
 
@@ -24,9 +21,8 @@ Options:
 Examples:
   head file.txt             Show first 10 lines
   head -n 5 file.txt        Show first 5 lines
-`)
-			return nil
-		}
+`); handled {
+		return nil
 	}
 
 	lines, args, err := utils.ParseLineCountArgument(args, 10)
