@@ -24,14 +24,7 @@ type PatchLine struct {
 // Input format: original_text + ---LLMCMD_PATCH_SEPARATOR--- + patch_content
 // Args: [--validate] - optional pre-validation without applying patch
 func Patch(args []string, stdin io.Reader, stdout io.Writer) error {
-	// Parse arguments
-	dryRun := false
-	for _, arg := range args {
-		switch arg {
-		case "--dry-run":
-			dryRun = true
-		case "--help", "-h":
-			fmt.Fprint(stdout, `patch - Apply unified diff patches to text
+	if handled, _ := HandleHelp(args, stdout, `patch - Apply unified diff patches to text
 
 Usage: patch [--dry-run]
 
@@ -40,8 +33,18 @@ Options:
   --help, -h        Show this help message
 
 Input format: original_text + ---LLMCMD_PATCH_SEPARATOR--- + patch_content
-`)
-			return nil
+`); handled {
+		return nil
+	}
+
+	// Parse arguments
+	dryRun := false
+	for _, arg := range args {
+		switch arg {
+		case "--dry-run":
+			dryRun = true
+		case "--help", "-h":
+			// Already handled above; ignore silently
 		default:
 			return fmt.Errorf("patch: unknown argument %q. Use --help for usage information", arg)
 		}

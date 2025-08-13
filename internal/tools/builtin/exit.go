@@ -9,30 +9,26 @@ import (
 
 // Exit implements the exit command for shell termination
 func Exit(args []string, stdin io.Reader, stdout io.Writer) error {
-	// Check for help option first
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			fmt.Fprint(stdout, `exit - Exit the shell
+		if handled, _ := HandleHelp(args, stdout, `exit - Exit the shell
 
 Usage: exit [exit_code]
 
 Description:
-  Exit the shell with optional exit code (default: 0)
+	Exit the shell with optional exit code (default: 0)
 
 Parameters:
-  exit_code     Integer exit code (0-255, default: 0)
+	exit_code     Integer exit code (0-255, default: 0)
 
 Options:
-  --help, -h    Show this help message
+	--help, -h    Show this help message
 
 Examples:
-  exit          Exit with code 0 (success)
-  exit 0        Exit with code 0 (success)
-  exit 1        Exit with code 1 (error)
-`)
-			return nil
+	exit          Exit with code 0 (success)
+	exit 0        Exit with code 0 (success)
+	exit 1        Exit with code 1 (error)
+`); handled {
+				return nil
 		}
-	}
 
 	exitCode := 0
 

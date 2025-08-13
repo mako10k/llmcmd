@@ -10,31 +10,26 @@ import (
 
 // Sed performs basic text substitution (s/pattern/replacement/flags)
 func Sed(args []string, stdin io.Reader, stdout io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("sed: missing expression")
-	}
-
-	// Check for help option
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			fmt.Fprint(stdout, `sed - Stream editor for basic text substitution
+		if len(args) == 0 {
+				return fmt.Errorf("sed: missing expression")
+		}
+		if handled, _ := HandleHelp(args, stdout, `sed - Stream editor for basic text substitution
 
 Usage: sed s/pattern/replacement/[flags] [file...]
 
 Flags:
-  g                 Replace all occurrences (global)
-  i                 Case insensitive matching
+	g                 Replace all occurrences (global)
+	i                 Case insensitive matching
 
 Options:
-  --help, -h        Show this help message
+	--help, -h        Show this help message
 
 Examples:
-  sed s/old/new/g           Replace all "old" with "new"
-  sed s/error/ERROR/i       Case-insensitive replacement
-`)
-			return nil
+	sed s/old/new/g           Replace all "old" with "new"
+	sed s/error/ERROR/i       Case-insensitive replacement
+`); handled {
+				return nil
 		}
-	}
 
 	expr := args[0]
 	if !strings.HasPrefix(expr, "s/") {

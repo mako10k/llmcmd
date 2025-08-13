@@ -9,31 +9,26 @@ import (
 
 // Grep searches for patterns in text (basic regex support)
 func Grep(args []string, stdin io.Reader, stdout io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("grep: missing pattern")
-	}
-
-	// Check for help option
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			fmt.Fprint(stdout, `grep - Search text patterns
+		if len(args) == 0 {
+				return fmt.Errorf("grep: missing pattern")
+		}
+		if handled, _ := HandleHelp(args, stdout, `grep - Search text patterns
 
 Usage: grep [options] pattern [file...]
 
 Options:
-  -v                Invert match (show non-matching lines)
-  -i                Case insensitive matching
-  -n                Show line numbers
-  --help, -h        Show this help message
+	-v                Invert match (show non-matching lines)
+	-i                Case insensitive matching
+	-n                Show line numbers
+	--help, -h        Show this help message
 
 Examples:
-  grep "error" log.txt      Find lines containing "error"
-  grep -i "warning" file    Case-insensitive search
-  grep -v "debug" log       Show lines not containing "debug"
-`)
-			return nil
+	grep "error" log.txt      Find lines containing "error"
+	grep -i "warning" file    Case-insensitive search
+	grep -v "debug" log       Show lines not containing "debug"
+`); handled {
+				return nil
 		}
-	}
 
 	// Parse flags and pattern
 	invertMatch := false

@@ -11,26 +11,22 @@ import (
 
 // Llmcmd executes the llmcmd command in a separate process
 func Llmcmd(args []string, stdin io.Reader, stdout io.Writer) error {
-	// Check for help option first
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			fmt.Fprint(stdout, `llmcmd - Execute llmcmd in subprocess
+		if handled, _ := HandleHelp(args, stdout, `llmcmd - Execute llmcmd in subprocess
 
 Usage: llmcmd [llmcmd-args...]
 
 Description:
-  Execute llmcmd command in a separate forked process
+	Execute llmcmd command in a separate forked process
 
 Options:
-  --help, -h        Show this help message
+	--help, -h        Show this help message
 
 Examples:
-  llmcmd read file.txt      Execute llmcmd read command
-  llmcmd help               Show llmcmd help
-`)
-			return nil
+	llmcmd read file.txt      Execute llmcmd read command
+	llmcmd help               Show llmcmd help
+`); handled {
+				return nil
 		}
-	}
 
 	// Parse arguments for llmcmd execution
 	if len(args) == 0 {

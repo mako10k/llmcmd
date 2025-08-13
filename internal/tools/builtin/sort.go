@@ -10,27 +10,23 @@ import (
 
 // Sort sorts lines of text
 func Sort(args []string, stdin io.Reader, stdout io.Writer) error {
-	// Check for help option first
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			fmt.Fprint(stdout, `sort - Sort lines of text
+		if handled, _ := HandleHelp(args, stdout, `sort - Sort lines of text
 
 Usage: sort [options] [file...]
 
 Options:
-  -r                Reverse sort order
-  -n                Numeric sort
-  -u                Remove duplicate lines
-  --help, -h        Show this help message
+	-r                Reverse sort order
+	-n                Numeric sort
+	-u                Remove duplicate lines
+	--help, -h        Show this help message
 
 Examples:
-  sort file.txt             Sort lines alphabetically
-  sort -r file.txt          Sort in reverse order
-  sort -n numbers.txt       Sort numerically
-`)
-			return nil
+	sort file.txt             Sort lines alphabetically
+	sort -r file.txt          Sort in reverse order
+	sort -n numbers.txt       Sort numerically
+`); handled {
+				return nil
 		}
-	}
 
 	reverse := false
 	numeric := false

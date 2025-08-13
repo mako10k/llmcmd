@@ -8,26 +8,22 @@ import (
 
 // Tee writes input to both stdout and multiple files
 func Tee(args []string, stdin io.Reader, stdout io.Writer) error {
-	// Check for help option first
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			fmt.Fprint(stdout, `tee - Write input to stdout and files
+		if handled, _ := HandleHelp(args, stdout, `tee - Write input to stdout and files
 
 Usage: tee [file...]
 
 Description:
-  Copy input to standard output and to files
+	Copy input to standard output and to files
 
 Options:
-  --help, -h        Show this help message
+	--help, -h        Show this help message
 
 Examples:
-  tee file.txt              Copy input to stdout and file.txt
-  echo "data" | tee out.txt Display and save data to out.txt
-`)
-			return nil
+	tee file.txt              Copy input to stdout and file.txt
+	echo "data" | tee out.txt Display and save data to out.txt
+`); handled {
+				return nil
 		}
-	}
 
 	processFunc := func(input io.Reader) error {
 		// Read all input first

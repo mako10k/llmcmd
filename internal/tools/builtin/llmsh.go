@@ -11,26 +11,22 @@ import (
 
 // Llmsh executes the llmsh command in a separate process
 func Llmsh(args []string, stdin io.Reader, stdout io.Writer) error {
-	// Check for help option first
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			fmt.Fprint(stdout, `llmsh - Execute llmsh shell in subprocess
+		if handled, _ := HandleHelp(args, stdout, `llmsh - Execute llmsh shell in subprocess
 
 Usage: llmsh [llmsh-args...]
 
 Description:
-  Execute llmsh shell command in a separate forked process
+	Execute llmsh shell command in a separate forked process
 
 Options:
-  --help, -h        Show this help message
+	--help, -h        Show this help message
 
 Examples:
-  llmsh                     Start interactive shell
-  llmsh -c "command"        Execute command in shell
-`)
-			return nil
+	llmsh                     Start interactive shell
+	llmsh -c "command"        Execute command in shell
+`); handled {
+				return nil
 		}
-	}
 
 	// Parse arguments for llmsh execution
 	processedArgs, err := parseLlmshArgs(args)
