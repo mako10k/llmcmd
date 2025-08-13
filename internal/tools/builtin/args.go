@@ -12,15 +12,15 @@ func ExtractHelp(args []string) (bool, []string) {
 	return false, args
 }
 
-// HandleHelp writes helpText to stdout when help requested and returns handled=true.
-func HandleHelp(args []string, stdout io.Writer, helpText string) (handled bool, remaining []string) {
+// HandleHelp writes helpText to stdout when help requested.
+// Returns handled=true if help was printed. Any write error is returned.
+func HandleHelp(args []string, stdout io.Writer, helpText string) (handled bool, remaining []string, err error) {
 	help, a := ExtractHelp(args)
 	if help {
-		if _, err := io.WriteString(stdout, helpText); err != nil {
-			// Write failure: still mark handled; upstream could be extended later to surface error if desired.
-			return true, a
+		if _, werr := io.WriteString(stdout, helpText); werr != nil {
+			return true, a, werr
 		}
-		return true, a
+		return true, a, nil
 	}
-	return false, a
+	return false, a, nil
 }

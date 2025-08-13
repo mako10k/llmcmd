@@ -10,7 +10,7 @@ import (
 
 // Sort sorts lines of text
 func Sort(args []string, stdin io.Reader, stdout io.Writer) error {
-		if handled, _ := HandleHelp(args, stdout, `sort - Sort lines of text
+		if handled, _, err := HandleHelp(args, stdout, `sort - Sort lines of text
 
 Usage: sort [options] [file...]
 
@@ -25,7 +25,7 @@ Examples:
 	sort -r file.txt          Sort in reverse order
 	sort -n numbers.txt       Sort numerically
 `); handled {
-				return nil
+				return err
 		}
 
 	reverse := false

@@ -9,7 +9,7 @@ import (
 
 // Nl numbers lines
 func Nl(args []string, stdin io.Reader, stdout io.Writer) error {
-		if handled, _ := HandleHelp(args, stdout, `nl - Number lines
+		if handled, _, err := HandleHelp(args, stdout, `nl - Number lines
 
 Usage: nl [options] [file...]
 
@@ -21,7 +21,7 @@ Examples:
 	nl file.txt               Number all lines
 	nl -b file.txt            Number non-empty lines only
 `); handled {
-				return nil
+				return err
 		}
 
 	numberNonEmpty := false

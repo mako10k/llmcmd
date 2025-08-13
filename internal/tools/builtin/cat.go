@@ -6,7 +6,7 @@ import (
 
 // Cat copies input to output (like Unix cat)
 func Cat(args []string, stdin io.Reader, stdout io.Writer) error {
-		if handled, _ := HandleHelp(args, stdout, `cat - Copy input to output
+		if handled, _, err := HandleHelp(args, stdout, `cat - Copy input to output
 
 Usage: cat [file...]
 
@@ -20,7 +20,7 @@ Examples:
 	cat file.txt      Display contents of file.txt
 	cat a.txt b.txt   Display contents of both files
 `); handled {
-				return nil
+				return err
 		}
 
 	return processInput(args, stdin, func(input io.Reader) error {

@@ -10,7 +10,7 @@ import (
 
 // Tail shows the last n lines of input (default: 10)
 func Tail(args []string, stdin io.Reader, stdout io.Writer) error {
-	if handled, _ := HandleHelp(args, stdout, `tail - Display last lines of input
+	if handled, _, err := HandleHelp(args, stdout, `tail - Display last lines of input
 
 Usage: tail [-n lines] [file...]
 
@@ -22,7 +22,7 @@ Examples:
   tail file.txt             Show last 10 lines
   tail -n 5 file.txt        Show last 5 lines
 `); handled {
-		return nil
+		return err
 	}
 
 	lines, args, err := utils.ParseLineCountArgument(args, 10)

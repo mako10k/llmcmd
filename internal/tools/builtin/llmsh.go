@@ -11,7 +11,7 @@ import (
 
 // Llmsh executes the llmsh command in a separate process
 func Llmsh(args []string, stdin io.Reader, stdout io.Writer) error {
-		if handled, _ := HandleHelp(args, stdout, `llmsh - Execute llmsh shell in subprocess
+		if handled, _, err := HandleHelp(args, stdout, `llmsh - Execute llmsh shell in subprocess
 
 Usage: llmsh [llmsh-args...]
 
@@ -25,7 +25,7 @@ Examples:
 	llmsh                     Start interactive shell
 	llmsh -c "command"        Execute command in shell
 `); handled {
-				return nil
+				return err
 		}
 
 	// Parse arguments for llmsh execution

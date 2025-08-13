@@ -9,7 +9,7 @@ import (
 
 // Tr translates or deletes characters
 func Tr(args []string, stdin io.Reader, stdout io.Writer) error {
-		if handled, _ := HandleHelp(args, stdout, `tr - Translate or delete characters
+		if handled, _, err := HandleHelp(args, stdout, `tr - Translate or delete characters
 
 Usage: tr [options] set1 [set2]
 			 tr -d set1
@@ -23,7 +23,7 @@ Examples:
 	tr -d '0-9'               Delete all digits
 	tr ' ' '_'                Replace spaces with underscores
 `); handled {
-				return nil
+				return err
 		}
 
 	if len(args) < 1 {

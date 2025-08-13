@@ -9,7 +9,7 @@ import (
 
 // Exit implements the exit command for shell termination
 func Exit(args []string, stdin io.Reader, stdout io.Writer) error {
-		if handled, _ := HandleHelp(args, stdout, `exit - Exit the shell
+		if handled, _, err := HandleHelp(args, stdout, `exit - Exit the shell
 
 Usage: exit [exit_code]
 
@@ -27,7 +27,7 @@ Examples:
 	exit 0        Exit with code 0 (success)
 	exit 1        Exit with code 1 (error)
 `); handled {
-				return nil
+				return err
 		}
 
 	exitCode := 0

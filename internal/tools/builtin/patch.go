@@ -24,7 +24,7 @@ type PatchLine struct {
 // Input format: original_text + ---LLMCMD_PATCH_SEPARATOR--- + patch_content
 // Args: [--validate] - optional pre-validation without applying patch
 func Patch(args []string, stdin io.Reader, stdout io.Writer) error {
-	if handled, _ := HandleHelp(args, stdout, `patch - Apply unified diff patches to text
+	if handled, _, err := HandleHelp(args, stdout, `patch - Apply unified diff patches to text
 
 Usage: patch [--dry-run]
 
@@ -34,7 +34,7 @@ Options:
 
 Input format: original_text + ---LLMCMD_PATCH_SEPARATOR--- + patch_content
 `); handled {
-		return nil
+		return err
 	}
 
 	// Parse arguments

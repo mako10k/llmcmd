@@ -12,7 +12,7 @@ func Grep(args []string, stdin io.Reader, stdout io.Writer) error {
 		if len(args) == 0 {
 				return fmt.Errorf("grep: missing pattern")
 		}
-		if handled, _ := HandleHelp(args, stdout, `grep - Search text patterns
+		if handled, _, err := HandleHelp(args, stdout, `grep - Search text patterns
 
 Usage: grep [options] pattern [file...]
 
@@ -27,7 +27,7 @@ Examples:
 	grep -i "warning" file    Case-insensitive search
 	grep -v "debug" log       Show lines not containing "debug"
 `); handled {
-				return nil
+				return err
 		}
 
 	// Parse flags and pattern
