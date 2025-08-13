@@ -16,7 +16,10 @@ func ExtractHelp(args []string) (bool, []string) {
 func HandleHelp(args []string, stdout io.Writer, helpText string) (handled bool, remaining []string) {
 	help, a := ExtractHelp(args)
 	if help {
-		_, _ = stdout.Write([]byte(helpText))
+		if _, err := io.WriteString(stdout, helpText); err != nil {
+			// Write failure: still mark handled; upstream could be extended later to surface error if desired.
+			return true, a
+		}
 		return true, a
 	}
 	return false, a
