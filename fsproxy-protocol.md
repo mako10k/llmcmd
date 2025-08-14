@@ -1,5 +1,17 @@
 # FS Proxy Protocol Specification
 
+## Revision Notice (JSON Framing Adoption)
+
+This document has been updated to designate a JSON length‑prefixed framing (4‑byte big‑endian unsigned length + UTF‑8 JSON payload) as the primary protocol (Option A decision). The previously described line‑oriented textual command syntax (e.g. `OPEN filename mode is_top_level`) is now considered a Legacy Variant and retained in an appendix for reference / possible compatibility bridges.
+
+Primary goals of the revision:
+1. Unified structured messages (easier extension, consistent error payloads)
+2. Explicit error code taxonomy (Fail‑First, machine readable)
+3. Reservation of future operations (QUOTA, LLMCMD) at protocol level
+4. Stable foundation for builtin shell commands implemented directly in-process (no exec) using a VFS client
+
+---
+
 ## Overview
 
 The FS Proxy Protocol is a communication protocol designed to control file access by child processes in LLM execution environments. The parent process (llmsh/llmcmd) acts as an FS Proxy Manager, handling file operation requests from child processes.
@@ -25,12 +37,67 @@ The FS Proxy Protocol is a communication protocol designed to control file acces
 
 ## Protocol Specification
 
-### Communication Method
+### Communication Method (Primary / JSON)
 
-- **Transport**: Unix pipe (os.Pipe())
-- **Inheritance**: Child processes access FS Proxy via FD 3
-- **Data Format**: Text-based + Binary data
-- **Synchronization**: Request/Response synchronous communication
+- Transport: Inherited pipe or socket FD (commonly FD 3) parent <-> child
+- Framing: 4 bytes (big-endian u32) length prefix followed by UTF-8 JSON document
+- Encoding: All binary file contents are base64 within JSON for READ/WRITE (chunked)
+- Synchronization: Strict request/response (one response per request id)
+- Concurrency: Client may pipeline (send multiple requests) but must correlate via `id`
+
+### Message Envelope
+
+Request JSON:
+```
+{
+    "id": "<string>",
+    "op": "<operation>",
+    "params": { ... }          // optional; object only
+}
+```
+
+Response JSON:
+```
+// Success
+{
+    "id": "<same id>",
+    "ok": true,
+    "result": { ... }          // optional result object
+}
+
+// Error
+{
+    "id": "<same id>",
+    "ok": false,
+    "error": { "code": "E_NOENT", "message": "human readable" }
+}
+```
+
+Error Codes (initial set):
+| Code | Meaning |
+|------|---------|
+| E_ARG | Invalid / missing parameter |
+| E_NOENT | No such file / handle / path |
+| E_PERM | Permission / allowlist violation |
+| E_IO | Underlying I/O failure |
+| E_CLOSED | Handle already closed |
+| E_UNSUPPORTED | Operation not supported in build |
+| E_RANGE | Size or limit exceeded (e.g. max read) |
+
+Maximum chunk size for `read` requests (`max` parameter) is 4096 bytes. `max == 0` MUST yield `E_ARG`.
+
+### Reserved / Planned Operations
+
+The following operations are reserved (placeholders) for higher-level integrations and must not be repurposed:
+- `QUOTA` : Query aggregated resource/token quotas (successor of legacy `LLM_QUOTA`).
+- `LLMCMD` : Execute an LLM command session (superseding legacy `LLM_CHAT`) within controlled VFS context.
+
+Until implemented they MUST return `ok:false` with `E_UNSUPPORTED`.
+
+### Legacy Text Protocol (Appendix Preview)
+The earlier line‑oriented format remains documented in the Appendix (see *Legacy Textual Variant*). New clients SHOULD implement the JSON framing. Servers MAY optionally provide an auto‑detect shim (first byte not `{` => treat as legacy) but this is NOT required for minimum compliance.
+
+---
 
 ### Message Format
 
@@ -53,164 +120,62 @@ STATUS data\n
 
 ## Command Specification
 
-### 1. OPEN Command
+### 1. open (JSON Primary)
 
-Opens a file and returns a file number (fileno).
+Opens (or creates) a file. Path policy (allowlist vs virtual temp) is enforced server side.
 
-#### Request
+Request:
 ```
-OPEN filename mode is_top_level\n
+{ "id":"1", "op":"open", "params": { "path":"test.txt", "mode":"w", "top_level":false } }
 ```
+Parameters:
+- `path` (string, required)
+- `mode` (string, required): `r` | `w` | `a` | `rw` (future: `r+`,`w+`,`a+` synonyms)
+- `top_level` (bool, optional, default false) – reserved for policy branching
 
-**Parameters**:
-- `filename`: File name to open
-- `mode`: File open mode
-- `is_top_level`: Top-level execution flag ("true" or "false")
-
-**Supported Modes**:
-- `r`: Read-only (O_RDONLY)
-- `w`: Write-only, create, truncate (O_WRONLY|O_CREATE|O_TRUNC)
-- `a`: Write-only, create, append (O_WRONLY|O_CREATE|O_APPEND)
-- `r+`: Read-write (O_RDWR)
-- `w+`: Read-write, create, truncate (O_RDWR|O_CREATE|O_TRUNC)
-- `a+`: Read-write, create, append (O_RDWR|O_CREATE|O_APPEND)
-
-**Top-Level Execution Control**:
-- `true`: Top-level llmcmd execution. Direct access to real filesystem allowed
-- `false`: Child process execution. Access only to VFS restricted environment
-
-#### Response
-
-**Success**:
+Success Response:
 ```
-OK fileno\n
-```
-- `fileno`: Assigned file number
-
-**Error**:
-```
-ERROR message\n
+{ "id":"1", "ok":true, "result": { "handle": 42, "created": true } }
 ```
 
-**Error Patterns**:
-- `ERROR OPEN requires filename, mode, and is_top_level` - Missing parameters
-- `ERROR invalid mode: invalid` - Invalid mode
-- `ERROR invalid is_top_level: maybe` - Invalid top-level flag
-- `ERROR VFS not available` - VFS unavailable
-- `ERROR failed to open file 'path': reason` - File open error
-
-#### Examples
-
+Error Response Example:
 ```
-# Success case (top-level)
-Client → Server: "OPEN test.txt w true\n"
-Server → Client: "OK 12345\n"
-
-# Success case (child process)
-Client → Server: "OPEN test.txt w false\n"
-Server → Client: "OK 12346\n"
-
-# Error case
-Client → Server: "OPEN test.txt invalid true\n"
-Server → Client: "ERROR invalid mode: invalid\n"
+{ "id":"1", "ok":false, "error": { "code":"E_ARG", "message":"missing path" } }
 ```
 
-### 2. READ Command
-
-Reads specified bytes from a file number.
-
-#### Request
+### 2. read
+Request:
 ```
-READ fileno size\n
+{ "id":"2", "op":"read", "params": { "h":42, "max":4096 } }
 ```
-
-**Parameters**:
-- `fileno`: File number
-- `size`: Number of bytes to read
-
-#### Response
-
-**Success**:
+Result (data base64, may be empty when eof=true):
 ```
-OK actual_size\n
-[binary_data]
+{ "id":"2", "ok":true, "result": { "data":"aGVsbG8=", "eof":false } }
 ```
-- `actual_size`: Actual number of bytes read
-- `binary_data`: Read data (actual_size bytes)
-
-**EOF**:
+EOF example:
 ```
-OK 0\n
+{ "id":"3", "ok":true, "result": { "data":"", "eof":true } }
 ```
 
-**Error**:
+### 3. write
+Request:
 ```
-ERROR message\n
+{ "id":"4", "op":"write", "params": { "h":42, "data":"aGVsbG8=", "final":false } }
 ```
-
-**Error Patterns**:
-- `ERROR READ requires fileno and size` - Missing parameters
-- `ERROR invalid fileno: 99999` - Invalid file number
-- `ERROR invalid size: abc` - Invalid size
-- `ERROR READ not yet implemented` - Not implemented (Phase 1)
-
-### 3. WRITE Command
-
-Writes specified data to a file number.
-
-#### Request
+Response:
 ```
-WRITE fileno size\n
-[binary_data]
+{ "id":"4", "ok":true, "result": { "written":5 } }
 ```
+`final` (optional bool) may be used by clients in future for flush semantics (ignored now).
 
-**Parameters**:
-- `fileno`: File number
-- `size`: Number of bytes to write
-- `binary_data`: Data to write (size bytes)
-
-#### Response
-
-**Success**:
+### 4. close
+Request:
 ```
-OK written_size\n
+{ "id":"5", "op":"close", "params": { "h":42 } }
 ```
-- `written_size`: Actual number of bytes written
-
-**Error**:
+Response:
 ```
-ERROR message\n
-```
-
-**Error Patterns**:
-- `ERROR WRITE requires fileno and size` - Missing parameters
-- `ERROR invalid fileno: 99999` - Invalid file number
-- `ERROR invalid size: abc` - Invalid size
-- `ERROR failed to read data: reason` - Data read error
-- `ERROR WRITE not yet implemented` - Not implemented (Phase 1)
-
-### 4. CLOSE Command
-
-Closes a file number.
-
-#### Request
-```
-CLOSE fileno\n
-```
-
-**Parameters**:
-- `fileno`: File number
-
-#### Response
-
-**Success**:
-```
-OK\n
-```
-
-**Error**:
-```
-ERROR message\n
+{ "id":"5", "ok":true }
 ```
 
 **Error Patterns**:
@@ -218,7 +183,34 @@ ERROR message\n
 - `ERROR invalid fileno: abc` - Invalid file number
 - `ERROR CLOSE not yet implemented` - Not implemented (Phase 1)
 
-### 5. LLM_CHAT Command (New)
+### 5. LLMCMD (Reserved; replaces legacy LLM_CHAT)
+
+Status: RESERVED. Servers MUST return `E_UNSUPPORTED` until implemented.
+
+Intended Purpose (preview): Execute higher-level LLM operations within the same controlled VFS / quota environment. Will subsume prior `LLM_CHAT` design. Final parameter schema TBD (will likely carry structured prompt, file handle references, and stream options).
+
+### 6. QUOTA (Reserved; replaces legacy LLM_QUOTA)
+
+Status: RESERVED. Servers MUST return `E_UNSUPPORTED` until implemented.
+
+Intended Purpose: Provide aggregated and weighted token usage snapshot.
+
+---
+
+## Legacy Textual Variant (Appendix)
+
+The following sections preserve the original line-based command forms for historical reference and potential transitional tooling. They are **NOT** the primary specification anymore.
+
+### Legacy OPEN Command (Text)
+```
+OPEN filename mode is_top_level\n
+```
+... (original description retained above in earlier revision; keep or prune as the project deprecates legacy mode) ...
+
+### Legacy READ / WRITE / CLOSE / LLM_CHAT / LLM_QUOTA
+Refer to pre-revision copy. New development SHOULD ignore these unless building a compatibility bridge.
+
+---
 
 Executes OpenAI ChatCompletion API by forking child process and calling app.ExecuteInternal() function with VFS environment.
 
@@ -307,49 +299,7 @@ Client → Server: "LLM_CHAT true -1 1 2 0 20\n\nTest prompt"
 Server → Client: "ERROR invalid stdin_fd: -1\n"
 ```
 
-### 6. LLM_QUOTA Command (New)
-
-Checks current quota usage status. **Restricted to LLM execution contexts only** - available exclusively within subprocess environments that use LLM_CHAT functionality.
-
-#### Request
-```
-LLM_QUOTA\n
-```
-
-**Access Control**:
-- **Allowed**: Child processes spawned by LLM_CHAT command execution
-- **Denied**: General VFS clients without LLM execution context
-- **Security**: Prevents unauthorized quota information disclosure
-
-#### Response
-
-**Success**:
-```
-OK quota_info\n
-```
-- `quota_info`: Detailed quota information (e.g., "1250.5/5000 weighted tokens (25.0% used, 3749.5 remaining)")
-
-**Error**:
-```
-ERROR message\n
-```
-
-**Error Patterns**:
-- `ERROR LLM quota not available` - Quota functionality unavailable
-- `ERROR LLM quota access denied` - Client not in LLM execution context
-- `ERROR LLM functionality not enabled` - LLM features disabled
-
-#### Examples
-
-```
-# Success case (within LLM execution context)
-Client → Server: "LLM_QUOTA\n"
-Server → Client: "OK 1250.5/5000 weighted tokens (25.0% used, 3749.5 remaining)\n"
-
-# Error case (general VFS client without LLM context)
-Client → Server: "LLM_QUOTA\n"
-Server → Client: "ERROR LLM quota access denied\n"
-```
+<!-- Legacy quota section removed in favor of reserved QUOTA operation -->
 
 ## Error Handling
 

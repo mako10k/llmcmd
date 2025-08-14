@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/mako10k/llmcmd/internal/llmsh"
@@ -16,12 +17,13 @@ func main() {
 	var interactive bool
 	var scriptFile string
 	var virtual bool
+	vfsFd := -1
 
 	args := os.Args[1:]
 	i := 0
 	for i < len(args) {
 		arg := args[i]
-		switch arg {
+	switch arg {
 		case "-i":
 			if i+1 >= len(args) {
 				fmt.Fprintf(os.Stderr, "Error: option %s requires an argument\n", arg)
@@ -37,6 +39,20 @@ func main() {
 			i++
 			outputFiles = append(outputFiles, args[i])
 		case "--virtual":
+			virtual = true
+		case "--vfs-fd":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "Error: option %s requires an argument (fd)\n", arg)
+				os.Exit(1)
+			}
+			i++
+			fdStr := args[i]
+			fdNum, err := strconv.Atoi(fdStr)
+			if err != nil || fdNum < 0 {
+				fmt.Fprintf(os.Stderr, "Error: invalid fd for --vfs-fd: %s\n", fdStr)
+				os.Exit(1)
+			}
+			vfsFd = fdNum
 			virtual = true
 		case "-c":
 			if i+1 >= len(args) {
@@ -60,21 +76,30 @@ func main() {
 			fmt.Printf("%s version %s\n", llmsh.Name, llmsh.Version)
 			return
 		default:
-			if strings.HasPrefix(arg, "-") {
+			if strings.HasPrefix(arg, "--vfs-fd=") {
+				fdStr := strings.TrimPrefix(arg, "--vfs-fd=")
+				fdNum, err := strconv.Atoi(fdStr)
+				if err != nil || fdNum < 0 {
+					fmt.Fprintf(os.Stderr, "Error: invalid fd for --vfs-fd: %s\n", fdStr)
+					os.Exit(1)
+				}
+				vfsFd = fdNum
+				virtual = true
+			} else if strings.HasPrefix(arg, "-") {
 				fmt.Fprintf(os.Stderr, "Error: unknown option: %s\n", arg)
 				printUsage()
 				os.Exit(1)
+			} else {
+				if script != "" {
+					fmt.Fprintf(os.Stderr, "Error: cannot specify both -c option and script file\n")
+					os.Exit(1)
+				}
+				if scriptFile != "" {
+					fmt.Fprintf(os.Stderr, "Error: multiple script files specified: %s and %s\n", scriptFile, arg)
+					os.Exit(1)
+				}
+				scriptFile = arg
 			}
-			// This should be a script file
-			if script != "" {
-				fmt.Fprintf(os.Stderr, "Error: cannot specify both -c option and script file\n")
-				os.Exit(1)
-			}
-			if scriptFile != "" {
-				fmt.Fprintf(os.Stderr, "Error: multiple script files specified: %s and %s\n", scriptFile, arg)
-				os.Exit(1)
-			}
-			scriptFile = arg
 		}
 		i++
 	}
@@ -85,10 +110,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Validate -i/-o options require --virtual
+	// Validate -i/-o options require --virtual and are exclusive with --vfs-fd
 	if !virtual && (len(inputFiles) > 0 || len(outputFiles) > 0) {
 		fmt.Fprintf(os.Stderr, "Error: -i and -o options require --virtual flag\n")
-		fmt.Fprintf(os.Stderr, "Use --virtual to enable restricted file access mode\n")
+		os.Exit(1)
+	}
+	if vfsFd >= 0 && (len(inputFiles) > 0 || len(outputFiles) > 0) {
+		fmt.Fprintf(os.Stderr, "Error: -i/-o cannot be combined with --vfs-fd (mutually exclusive)\n")
 		os.Exit(1)
 	}
 
@@ -125,6 +153,7 @@ func main() {
 		OutputFiles: outputFiles,
 		VirtualMode: virtual,
 		Debug:       false,
+		VFSFd:       vfsFd,
 	}
 
 	// Create shell instance
@@ -160,6 +189,7 @@ func printUsage() {
 	fmt.Println("  -i <file>     Input file (requires --virtual)")
 	fmt.Println("  -o <file>     Output file (requires --virtual)")
 	fmt.Println("  --virtual     Enable virtual mode (restricted file access)")
+	fmt.Println("  --vfs-fd N    Reuse existing VFS pipe fd (implies --virtual, mutually exclusive with -i/-o)")
 	fmt.Println("  -c <script>   Execute script string")
 	fmt.Println("  -h, --help    Show this help")
 	fmt.Println("  --version     Show version")

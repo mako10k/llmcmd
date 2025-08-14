@@ -4,14 +4,18 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/mako10k/llmcmd/internal/tools/builtin"
 	"github.com/mako10k/llmcmd/internal/utils"
@@ -23,6 +27,31 @@ type ShellExecutor interface {
 	ExecuteWithIO(command string, stdin io.Reader, stdout, stderr io.Writer) error
 	// SetVFS allows shell executor to use virtual file system for redirects
 	SetVFS(vfs VirtualFileSystem)
+}
+
+// InternalShellRunner runs shell scripts inside the process using llmsh parser+executor
+type InternalShellRunner struct { nextPID *int64 }
+
+func NewInternalShellRunner(pidCounter *int64) *InternalShellRunner { return &InternalShellRunner{nextPID: pidCounter} }
+
+type InternalRunResult struct {
+	PID      int
+	Err      error
+	ExitCode int
+}
+
+// RunScript executes script synchronously writing output/errors to provided writers.
+func (r *InternalShellRunner) RunScript(script string, stdin io.Reader, stdout, stderr io.Writer) InternalRunResult {
+	pid := int(atomic.AddInt64(r.nextPID, 1))
+	start := time.Now()
+	var err error
+	defer func() { if rec := recover(); rec != nil { err = fmt.Errorf("panic: %v", rec) } }()
+	// TODO(feature/spawn-internal): Replace naive echo with real llmsh parser+executor pipeline.
+	// Current behavior: simply writes script text followed by newline to stdout; ignores stdin.
+	if _, werr := stdout.Write([]byte(script + "\n")); werr != nil { err = werr }
+	_ = time.Since(start)
+	code := 0; if err != nil { code = 1 }
+	return InternalRunResult{PID: pid, Err: err, ExitCode: code}
 }
 
 // ToolSpec defines contract for a tool's accepted / required / forbidden parameters
@@ -147,20 +176,8 @@ func isBinaryFile(filename string) bool {
 
 // RunningCommand tracks a running command and its pipes
 type RunningCommand struct {
-	cmd      *exec.Cmd
-	stdout   io.ReadCloser
-	stderr   io.ReadCloser
-	stdin    io.WriteCloser
-	done     chan error
-	exitCode int
-	finished bool
-	mu       sync.RWMutex
-
-	// File descriptor mappings for this command
-	inputFd     int    // The fd this command reads from
-	outputFd    int    // The fd this command writes to
-	pid         int    // Process ID
-	commandName string // Command name for debugging
+	// Simplified placeholder for future richer tracking (kept minimal to avoid unused lints)
+	commandName string
 }
 
 // FdDependency represents a file descriptor dependency relationship
@@ -188,6 +205,7 @@ type Engine struct {
 	// New components for llmsh integration
 	shellExecutor ShellExecutor
 	virtualFS     VirtualFileSystem
+	internalPidCounter *int64
 }
 
 // ExecutionStats tracks tool execution statistics
@@ -267,17 +285,8 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 }
 
 // addFdDependency adds a new file descriptor dependency relationship
-func (e *Engine) addFdDependency(source int, targets []int, toolType string) {
-	e.chainMutex.Lock()
-	defer e.chainMutex.Unlock()
-
-	dependency := FdDependency{
-		Source:   source,
-		Targets:  targets,
-		ToolType: toolType,
-	}
-	e.fdDependencies = append(e.fdDependencies, dependency)
-}
+// addFdDependency retained for potential future use (currently no-op to satisfy previous call sites removed)
+// func (e *Engine) addFdDependency(source int, targets []int, toolType string) {}
 
 // checkCloseDependencies checks if an input fd can be closed based on dependency rules
 // markFdClosed marks a file descriptor as closed
@@ -336,12 +345,9 @@ func (e *Engine) traverseChainRecursive(fd int, visited map[int]bool, results *[
 				// Get command information
 				e.commandsMutex.RLock()
 				if runningCmd, exists := e.runningCommands[dep.Source]; exists {
-					runningCmd.mu.RLock()
-					result.ExitCode = runningCmd.exitCode
+					result.ExitCode = 0
 					result.Command = runningCmd.commandName
-					result.Message = fmt.Sprintf("Command '%s' on fd %d exited with code %d",
-						runningCmd.commandName, dep.Source, runningCmd.exitCode)
-					runningCmd.mu.RUnlock()
+					result.Message = fmt.Sprintf("Command '%s' on fd %d (exit code not tracked)", runningCmd.commandName, dep.Source)
 				} else {
 					result.ExitCode = 0
 					result.Command = "unknown"
@@ -367,11 +373,8 @@ func (e *Engine) allocateFd() int {
 	return fd
 }
 
-// spawnError creates a standardized spawn error with stats increment
-func (e *Engine) spawnError(message string, err error) (string, error) {
-	e.stats.ErrorCount++
-	return "", fmt.Errorf("spawn: %s: %w", message, err)
-}
+// Deprecated: spawnError legacy helper (unused)
+// func (e *Engine) spawnError(message string, err error) (string, error) { e.stats.ErrorCount++; return "", fmt.Errorf("spawn: %s: %w", message, err) }
 
 // spawnSuccess creates a standardized spawn success result
 func (e *Engine) spawnSuccess(result map[string]interface{}) (string, error) {
@@ -379,26 +382,11 @@ func (e *Engine) spawnSuccess(result map[string]interface{}) (string, error) {
 	return string(resultBytes), nil
 }
 
-// createRunningCommand creates and stores a new RunningCommand
-func (e *Engine) createRunningCommand(cmd string, args []string, fd int, inputFd, outputFd int, stdin io.WriteCloser, stdout io.ReadCloser) *RunningCommand {
-	runningCmd := &RunningCommand{
-		stdin:       stdin,
-		stdout:      stdout,
-		done:        make(chan error, 1),
-		inputFd:     inputFd,
-		outputFd:    outputFd,
-		pid:         fd, // Use fd as pseudo-pid
-		commandName: fmt.Sprintf("%s %v", cmd, args),
-	}
+// Deprecated: createRunningCommand (internal background infra removed)
+// func (e *Engine) createRunningCommand(cmd string, args []string, fd int, inputFd, outputFd int, stdin io.WriteCloser, stdout io.ReadCloser) *RunningCommand { return &RunningCommand{commandName: fmt.Sprintf("%s %v", cmd, args)} }
 
-	e.commandsMutex.Lock()
-	e.runningCommands[fd] = runningCmd
-	e.commandsMutex.Unlock()
-
-	return runningCmd
-}
-
-// startBackgroundCommand starts a built-in command in the background and returns file descriptors
+/*
+// Deprecated background command API
 func (e *Engine) startBackgroundCommand(cmd string, args []string) (int, int, error) {
 	// Create pipes for communication
 	inReader, inWriter, err := os.Pipe()
@@ -417,16 +405,8 @@ func (e *Engine) startBackgroundCommand(cmd string, args []string) (int, int, er
 	inFd := e.allocateFd()
 	outFd := e.allocateFd()
 
-	// Create running command tracker
-	runningCmd := &RunningCommand{
-		stdin:       inWriter,
-		stdout:      outReader,
-		done:        make(chan error, 1),
-		inputFd:     inFd,
-		outputFd:    outFd,
-		pid:         inFd, // Use fd as pseudo-pid for built-in commands
-		commandName: fmt.Sprintf("%s %v", cmd, args),
-	}
+	// Create running command tracker (minimal after refactor)
+	runningCmd := &RunningCommand{commandName: fmt.Sprintf("%s %v", cmd, args)}
 
 	// Store the command
 	e.commandsMutex.Lock()
@@ -442,43 +422,21 @@ func (e *Engine) startBackgroundCommand(cmd string, args []string) (int, int, er
 	// Set up file descriptors for reading/writing
 	e.fileDescriptors[outFd] = outReader // For reading command output
 
-	// Start goroutine to execute built-in command
+	// Start goroutine to execute built-in command (simplified)
 	go func() {
-		defer func() {
-			// Close pipes when command finishes
-			inReader.Close()
-			outWriter.Close()
-
-			runningCmd.mu.Lock()
-			runningCmd.finished = true
-			runningCmd.mu.Unlock()
-
-			runningCmd.done <- nil
-			close(runningCmd.done)
-		}()
-
-		// Execute the built-in command
-		var err error
+		defer func() { inReader.Close(); outWriter.Close() }()
 		commandFunc, exists := builtin.Commands[cmd]
-		if !exists {
-			err = fmt.Errorf("unknown command: %s", cmd)
-		} else {
-			err = commandFunc(args, inReader, outWriter)
-		}
-
-		runningCmd.mu.Lock()
-		if err != nil {
-			runningCmd.exitCode = 1
-		} else {
-			runningCmd.exitCode = 0
-		}
-		runningCmd.mu.Unlock()
+		if !exists { return }
+		_ = commandFunc(args, inReader, outWriter)
 	}()
 
 	return inFd, outFd, nil
 }
+*/
 
 // startBackgroundCommandWithInput starts a command that reads from existing in_fd
+// startBackgroundCommandWithInput deprecated
+/*
 func (e *Engine) startBackgroundCommandWithInput(cmd string, args []string, inputFd int, size int) (int, error) {
 	// Validate input file descriptor
 	if inputFd < 0 || inputFd >= len(e.fileDescriptors) || e.fileDescriptors[inputFd] == nil {
@@ -494,8 +452,8 @@ func (e *Engine) startBackgroundCommandWithInput(cmd string, args []string, inpu
 	// Allocate output file descriptor
 	outFd := e.allocateFd()
 
-	// Create and store running command tracker
-	runningCmd := e.createRunningCommand(cmd, args, outFd, inputFd, outFd, nil, outReader)
+	// Create tracker (minimal)
+	// tracker removed in simplified internal runner
 
 	// Extend file descriptors array if needed
 	for len(e.fileDescriptors) <= outFd {
@@ -505,64 +463,15 @@ func (e *Engine) startBackgroundCommandWithInput(cmd string, args []string, inpu
 	// Set up file descriptor for reading command output
 	e.fileDescriptors[outFd] = outReader
 
-	// Start goroutine to execute built-in command
-	go func() {
-		defer func() {
-			outWriter.Close()
-
-			runningCmd.mu.Lock()
-			runningCmd.finished = true
-			runningCmd.mu.Unlock()
-
-			runningCmd.done <- nil
-			close(runningCmd.done)
-		}()
-
-		// Read limited input data
-		var inputData []byte
-		if size > 0 {
-			buf := make([]byte, size)
-			reader, ok := e.fileDescriptors[inputFd].(io.Reader)
-			if !ok {
-				runningCmd.mu.Lock()
-				runningCmd.exitCode = 1
-				runningCmd.mu.Unlock()
-				return
-			}
-			n, err := reader.Read(buf)
-			if err != nil && err != io.EOF {
-				runningCmd.mu.Lock()
-				runningCmd.exitCode = 1
-				runningCmd.mu.Unlock()
-				return
-			}
-			inputData = buf[:n]
-		}
-
-		// Execute the built-in command
-		var err error
-		inReader := bytes.NewReader(inputData)
-
-		commandFunc, exists := builtin.Commands[cmd]
-		if !exists {
-			err = fmt.Errorf("unknown command: %s", cmd)
-		} else {
-			err = commandFunc(args, inReader, outWriter)
-		}
-
-		runningCmd.mu.Lock()
-		if err != nil {
-			runningCmd.exitCode = 1
-		} else {
-			runningCmd.exitCode = 0
-		}
-		runningCmd.mu.Unlock()
-	}()
+	go func() { defer outWriter.Close(); var inputData []byte; if size > 0 { buf := make([]byte, size); if reader, ok := e.fileDescriptors[inputFd].(io.Reader); ok { n, _ := reader.Read(buf); inputData = buf[:n] } }; inReader := bytes.NewReader(inputData); if commandFunc, ok := builtin.Commands[cmd]; ok { _ = commandFunc(args, inReader, outWriter) } }()
 
 	return outFd, nil
 }
+*/
 
 // startBackgroundCommandWithExistingInput starts a command that reads from existing in_fd (reads all available data)
+// startBackgroundCommandWithExistingInput deprecated
+/*
 func (e *Engine) startBackgroundCommandWithExistingInput(cmd string, args []string, inputFd int) (int, error) {
 	// Validate input file descriptor
 	if inputFd < 0 || inputFd >= len(e.fileDescriptors) || e.fileDescriptors[inputFd] == nil {
@@ -578,8 +487,7 @@ func (e *Engine) startBackgroundCommandWithExistingInput(cmd string, args []stri
 	// Allocate output file descriptor
 	outFd := e.allocateFd()
 
-	// Create and store running command tracker
-	runningCmd := e.createRunningCommand(cmd, args, outFd, inputFd, outFd, nil, outReader)
+	// tracker removed in simplified internal runner
 
 	// Extend file descriptors array if needed
 	for len(e.fileDescriptors) <= outFd {
@@ -589,51 +497,16 @@ func (e *Engine) startBackgroundCommandWithExistingInput(cmd string, args []stri
 	// Set up file descriptor for reading command output
 	e.fileDescriptors[outFd] = outReader
 
-	// Start goroutine to execute built-in command
-	go func() {
-		defer func() {
-			outWriter.Close()
-
-			runningCmd.mu.Lock()
-			runningCmd.finished = true
-			runningCmd.mu.Unlock()
-
-			runningCmd.done <- nil
-			close(runningCmd.done)
-		}()
-
-		// Execute the built-in command directly with input stream
-		commandFunc, exists := builtin.Commands[cmd]
-		if !exists {
-			runningCmd.mu.Lock()
-			runningCmd.exitCode = 1
-			runningCmd.mu.Unlock()
-			return
-		}
-
-		reader, ok := e.fileDescriptors[inputFd].(io.Reader)
-		if !ok {
-			runningCmd.mu.Lock()
-			runningCmd.exitCode = 1
-			runningCmd.mu.Unlock()
-			return
-		}
-
-		err := commandFunc(args, reader, outWriter)
-		runningCmd.mu.Lock()
-		if err != nil {
-			runningCmd.exitCode = 1
-		} else {
-			runningCmd.exitCode = 0
-		}
-		runningCmd.mu.Unlock()
-	}()
+	go func() { defer outWriter.Close(); if commandFunc, ok := builtin.Commands[cmd]; ok { if reader, ok2 := e.fileDescriptors[inputFd].(io.Reader); ok2 { _ = commandFunc(args, reader, outWriter) } } }()
 
 	return outFd, nil
 }
+*/
 
 // startBackgroundCommandWithInputOutput starts a command that reads from in_fd and creates a new output fd (pipe chain middle)
 // startBackgroundCommandWithInputOutput starts a command that reads from in_fd and writes to out_fd (pipe chain middle)
+// startBackgroundCommandWithInputOutput deprecated
+/*
 func (e *Engine) startBackgroundCommandWithInputOutput(cmd string, args []string, inputFd int) error {
 	// Validate input file descriptor
 	if inputFd < 0 || inputFd >= len(e.fileDescriptors) || e.fileDescriptors[inputFd] == nil {
@@ -643,8 +516,11 @@ func (e *Engine) startBackgroundCommandWithInputOutput(cmd string, args []string
 	// Writing to arbitrary file descriptor not yet implemented - fd management redesign needed
 	return fmt.Errorf("startBackgroundCommandWithInputOutput not yet implemented - fd management redesign needed")
 }
+*/
 
 // startBackgroundCommandWithOutput starts a command that writes to existing out_fd
+// startBackgroundCommandWithOutput deprecated
+/*
 func (e *Engine) startBackgroundCommandWithOutput(cmd string, args []string, outputFd int) (int, error) {
 	// Validate output file descriptor exists
 	if outputFd < 0 || outputFd >= len(e.fileDescriptors) || e.fileDescriptors[outputFd] == nil {
@@ -654,6 +530,7 @@ func (e *Engine) startBackgroundCommandWithOutput(cmd string, args []string, out
 	// Writing to arbitrary file descriptor not yet implemented - fd management redesign needed
 	return 0, fmt.Errorf("writing to arbitrary file descriptor %d not yet implemented - fd management redesign needed", outputFd)
 }
+*/
 
 // Close closes all file handles
 func (e *Engine) Close() error {
@@ -871,15 +748,11 @@ func (e *Engine) executeWrite(args map[string]interface{}) (string, error) {
 	} else {
 		// Check if this is a running command's input fd
 		e.commandsMutex.RLock()
-		if runningCmd, exists := e.runningCommands[fd]; exists {
-			if runningCmd.inputFd == fd && runningCmd.stdin != nil {
-				writer = runningCmd.stdin
-				e.commandsMutex.RUnlock()
-			} else {
-				e.commandsMutex.RUnlock()
-				e.stats.ErrorCount++
-				return "", fmt.Errorf("write: fd %d is not an input fd for a running command", fd)
-			}
+		if _, exists := e.runningCommands[fd]; exists {
+			// Internal runner does not expose stdin for writing after spawn
+			e.commandsMutex.RUnlock()
+			e.stats.ErrorCount++
+			return "", fmt.Errorf("write: stdin piping to spawned scripts not supported in current internal runner")
 		} else {
 			e.commandsMutex.RUnlock()
 			e.stats.ErrorCount++
@@ -939,7 +812,7 @@ func (e *Engine) executeWrite(args map[string]interface{}) (string, error) {
 func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	e.stats.SpawnCalls++
 
-	// Required script parameter
+	// Validate and extract script
 	script, ok := args["script"].(string)
 	if !ok {
 		e.stats.ErrorCount++
@@ -950,153 +823,107 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("spawn: script cannot be empty")
 	}
 
-	// Reject deprecated legacy parameter names (no backward compatibility per spec)
-	if _, hasOld := args["in_fd"]; hasOld {
-		e.stats.ErrorCount++
-		return "", fmt.Errorf("spawn: deprecated parameter 'in_fd' (use 'stdin_fd')")
-	}
-	if _, hasOld := args["out_fd"]; hasOld {
-		e.stats.ErrorCount++
-		return "", fmt.Errorf("spawn: deprecated parameter 'out_fd' (use 'stdout_fd')")
-	}
+	// Fail-fast for deprecated keys (already enforced by validateArgs but belt+suspenders)
+	if _, hasOld := args["in_fd"]; hasOld { e.stats.ErrorCount++; return "", fmt.Errorf("spawn: deprecated / forbidden parameter 'in_fd'") }
+	if _, hasOld := args["out_fd"]; hasOld { e.stats.ErrorCount++; return "", fmt.Errorf("spawn: deprecated / forbidden parameter 'out_fd'") }
 
-	// New parameter names (no backward compatibility): stdin_fd / stdout_fd
-	var stdinSpecified, stdoutSpecified bool
-	var stdinFd, stdoutFd int
-	if v, ok := args["stdin_fd"].(float64); ok {
-		stdinFd = int(v)
-		stdinSpecified = true
-	}
-	if v, ok := args["stdout_fd"].(float64); ok {
-		stdoutFd = int(v)
-		stdoutSpecified = true
-	}
+	// Allocate pipes for child process
+	prIn, pwIn := io.Pipe()   // parent writes -> child stdin
+	prOut, pwOut := io.Pipe() // child stdout -> parent reads
+	prErr, pwErr := io.Pipe() // child stderr -> parent reads
 
-	// Validate provided FDs (if any)
-	validateFd := func(fd int, purpose string) error {
-		if fd < 0 || fd >= len(e.fileDescriptors) || e.fileDescriptors[fd] == nil {
-			return fmt.Errorf("spawn: %s fd %d invalid", purpose, fd)
-		}
-		return nil
-	}
-	if stdinSpecified {
-		if err := validateFd(stdinFd, "stdin"); err != nil {
-			e.stats.ErrorCount++
-			return "", err
-		}
-	}
-	if stdoutSpecified {
-		if err := validateFd(stdoutFd, "stdout"); err != nil {
-			e.stats.ErrorCount++
-			return "", err
-		}
-	}
-
-	// Prepare command: internal llmsh -c "script"
-	cmd := exec.Command("llmsh", "-c", script)
-
-	// Stdin wiring
-	var parentWrite *io.PipeWriter
-	if stdinSpecified {
-		// Use existing FD as stdin
-		rObj := e.fileDescriptors[stdinFd]
-		reader, ok := rObj.(io.Reader)
-		if !ok {
-			e.stats.ErrorCount++
-			return "", fmt.Errorf("spawn: stdin_fd %d not readable", stdinFd)
-		}
-		cmd.Stdin = reader
-	} else {
-		// Create new pipe for stdin (parent writes)
-		pr, pw := io.Pipe()
-		cmd.Stdin = pr
-		parentWrite = pw
-		// Allocate new fd for parent write end
-		newInFd := e.allocateFd()
-		// Ensure slice size
-		for len(e.fileDescriptors) <= newInFd {
-			e.fileDescriptors = append(e.fileDescriptors, nil)
-		}
-		e.fileDescriptors[newInFd] = parentWrite
-		stdinFd = newInFd
-	}
-
-	// Stdout wiring
-	var parentRead *io.PipeReader
-	if stdoutSpecified {
-		wObj := e.fileDescriptors[stdoutFd]
-		// Accept Writer or ReadWriter
-		if writer, ok := wObj.(io.Writer); ok {
-			cmd.Stdout = writer
-		} else {
-			e.stats.ErrorCount++
-			return "", fmt.Errorf("spawn: stdout_fd %d not writable", stdoutFd)
-		}
-	} else {
-		// Create pipe for child's stdout (parent reads)
-		pr, pw := io.Pipe()
-		cmd.Stdout = pw
-		parentRead = pr
-		newOutFd := e.allocateFd()
-		for len(e.fileDescriptors) <= newOutFd {
-			e.fileDescriptors = append(e.fileDescriptors, nil)
-		}
-		e.fileDescriptors[newOutFd] = parentRead
-		stdoutFd = newOutFd
-	}
-
-	// Stderr: always capture via pipe (optionally could be parameterized later)
-	errPr, errPw := io.Pipe()
-	cmd.Stderr = errPw
+	stdinFd := e.allocateFd()
+	stdoutFd := e.allocateFd()
 	stderrFd := e.allocateFd()
-	for len(e.fileDescriptors) <= stderrFd {
-		e.fileDescriptors = append(e.fileDescriptors, nil)
-	}
-	e.fileDescriptors[stderrFd] = errPr
+	for len(e.fileDescriptors) <= stderrFd { e.fileDescriptors = append(e.fileDescriptors, nil) }
+	e.fileDescriptors[stdinFd] = pwIn
+	e.fileDescriptors[stdoutFd] = prOut
+	e.fileDescriptors[stderrFd] = prErr
 
-	// Start process
+	// Resolve llmsh executable path (C2 -> C1)
+	exeName := "llmsh"
+	if runtime.GOOS == "windows" { exeName = "llmsh.exe" }
+	resolvedPath := ""
+	// 1. sibling path relative to current executable directory
+	if selfPath, err := os.Executable(); err == nil {
+		baseDir := filepath.Dir(selfPath)
+		cand := filepath.Join(baseDir, exeName)
+		if fi, err2 := os.Stat(cand); err2 == nil && fi.Mode()&0111 != 0 { resolvedPath = cand }
+	}
+	// 2. fallback to PATH
+	if resolvedPath == "" {
+		if lp, err := exec.LookPath(exeName); err == nil { resolvedPath = lp }
+	}
+	if resolvedPath == "" {
+		e.stats.ErrorCount++
+		// Close pipes to avoid leaks
+		pwIn.Close(); pwOut.Close(); pwErr.Close(); prIn.Close(); prOut.Close(); prErr.Close()
+		return "", fmt.Errorf("spawn: process_spawn_error: cannot locate llmsh executable")
+	}
+
+	// Prepare command arguments (B1: single process via -c)
+	argsList := []string{"-c", script}
+
+	// VFS FD reuse (D): if engine has a notion of existing VFS fd passed via env (LLM_VFS_FD)
+	// We read os.Getenv; parent (llmcmd) should have set when initial shell launched.
+	vfsFdEnv := os.Getenv("LLM_VFS_FD")
+	if vfsFdEnv != "" {
+		if _, err := strconv.Atoi(vfsFdEnv); err == nil {
+			// pass through using --vfs-fd flag; child side enforces mutual exclusion.
+			argsList = append([]string{"--vfs-fd", vfsFdEnv}, argsList...)
+		}
+	}
+
+	cmd := exec.Command(resolvedPath, argsList...)
+	cmd.Stdin = prIn
+	cmd.Stdout = pwOut
+	cmd.Stderr = pwErr
+
+	// Environment: propagate existing plus LLM_VFS_FD if present
+	cmd.Env = os.Environ()
+
+	// Launch process
 	if err := cmd.Start(); err != nil {
 		e.stats.ErrorCount++
-		return "", fmt.Errorf("spawn: failed to start llmsh: %w", err)
+		pwIn.Close(); pwOut.Close(); pwErr.Close(); prIn.Close(); prOut.Close(); prErr.Close()
+		return "", fmt.Errorf("spawn: process_spawn_error: failed to start llmsh: %w", err)
 	}
 
-	// If we created pipes for stdout/stderr, close child-side ends after start when appropriate
+	pid := cmd.Process.Pid
+
+	// Track command minimal info for traversal (associate all three fds)
+	running := &RunningCommand{commandName: fmt.Sprintf("%s -c", exeName)}
+	e.commandsMutex.Lock()
+	e.runningCommands[stdinFd] = running
+	e.runningCommands[stdoutFd] = running
+	e.runningCommands[stderrFd] = running
+	e.commandsMutex.Unlock()
+
+	// Goroutine to wait and close writers when process exits
 	go func() {
-		// Wait for completion
-		_ = cmd.Wait()
-		if parentRead != nil {
-			parentRead.Close()
-		}
-		errPr.Close()
-	}()
-
-	// Optionally close provided FDs in parent if not std (fd!=0/1) and closable (semantic: relinquish ownership)
-	if stdinSpecified && stdinFd != 0 {
-		if closer, ok := e.fileDescriptors[stdinFd].(io.Closer); ok {
-			_ = closer.Close()
-			e.markFdClosed(stdinFd)
-		}
-	}
-	if stdoutSpecified && stdoutFd != 1 {
-		if closer, ok := e.fileDescriptors[stdoutFd].(io.Closer); ok {
-			// Do not close if it's same object used by child directly & closing would break; heuristic: skip os.Stdout
-			if closer != os.Stdout {
-				_ = closer.Close()
-				e.markFdClosed(stdoutFd)
+		err := cmd.Wait()
+		// Close write ends so readers see EOF
+		pwOut.Close()
+		pwErr.Close()
+		// stdin reader close (child side) triggers here after process exit; ensure parent writer closed when done externally via close tool.
+		if err != nil {
+			// Write error to stderr pipe if still open
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				// Provide exit code message
+				fmt.Fprintf(pwErr, "process exited with code %d\n", exitErr.ExitCode())
+			} else {
+				fmt.Fprintf(pwErr, "process wait error: %v\n", err)
 			}
 		}
-	}
+	}()
 
-	// Track running command (associate with stdout fd for monitoring)
-	e.createRunningCommand("llmsh", []string{"-c", script}, stdoutFd, stdinFd, stdoutFd, nil, parentRead)
-
-	// Build result
 	result := map[string]interface{}{
-		"success":    true,
-		"stdin_fd":   stdinFd,
-		"stdout_fd":  stdoutFd,
-		"stderr_fd":  stderrFd,
-		"pid":        cmd.Process.Pid,
+		"success":   true,
+		"stdin_fd":  stdinFd,
+		"stdout_fd": stdoutFd,
+		"stderr_fd": stderrFd,
+		"pid":       pid,
 		"script_len": len(script),
 	}
 	return e.spawnSuccess(result)
@@ -1165,14 +992,8 @@ func (e *Engine) executeClose(args map[string]interface{}) (string, error) {
 }
 
 // getSupportedCommands returns a sorted list of supported built-in commands
-func getSupportedCommands() []string {
-	var commands []string
-	for cmd := range builtin.Commands {
-		commands = append(commands, cmd)
-	}
-	sort.Strings(commands)
-	return commands
-}
+// getSupportedCommands legacy helper (unused after refactor)
+// func getSupportedCommands() []string { var cmds []string; for c := range builtin.Commands { cmds = append(cmds, c) }; sort.Strings(cmds); return cmds }
 
 // executeExit implements the exit tool
 func (e *Engine) executeExit(args map[string]interface{}) (string, error) {

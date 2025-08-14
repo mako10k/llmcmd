@@ -56,6 +56,9 @@ type Config struct {
 	// Debug mode
 	Debug bool
 
+	// VFS file descriptor passed from parent (implicit virtual enable)
+	VFSFd int // -1 if not provided
+
 	// FSProxy integration settings (Phase 3.1)
 	EnableFSProxy  bool
 	FSProxyManager interface{} // Should be *app.FSProxyManager, but avoiding circular import
@@ -66,6 +69,9 @@ type Config struct {
 func NewShell(config *Config) (*Shell, error) {
 	if config == nil {
 		config = &Config{}
+	}
+	if config.VFSFd < 0 { // normalize unset
+		config.VFSFd = -1
 	}
 
 	// Create VFS with options (top-level, virtual flag, injected files)
