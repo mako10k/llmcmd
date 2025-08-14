@@ -167,7 +167,7 @@ llmcmd は OpenAI ChatCompletion (Function Calling) を中核に「LLM←→ツ�
 |--------|-------------------|------|----------------------------------|
 | read  | read(fd [,count|lines]) -> data | FD からチャンク / 行読み込みし会話コンテキストへ追加 | fd 範囲 / readable 性 / 上限値 |
 | write | write(fd, data[, newline][, eof]) -> status | FD へ書き込み (パイプ/子 stdin/出力集約) | fd 範囲 / writable 性 / 書き込み失敗 |
-| spawn | spawn(script) -> {stdin_fd, stdout_fd, stderr_fd} | llmsh 経由で安全ビルトインパイプライン開始 (外部コマンド禁止) | スクリプト検証 / 上限プロセス数 |
+| spawn | spawn(script[, stdin_fd, stdout_fd]) -> {stdin_fd, stdout_fd, stderr_fd} | llmsh サブプロセス起動 / 既存 FD 直結 (dup2) / 未指定は新規 pipe | スクリプト検証 / 上限プロセス数 / FD 検証 |
 | close | close(fd) -> status | 明示的クローズ (書き込みパイプ終端や再利用防止) | fd 範囲 / 既に閉鎖済み判定 |
 | exit  | exit(status) -> terminate | ループ終了 (最終結果確定) | 実行中リソースクリーンアップ |
 
@@ -192,6 +192,31 @@ ChatCompletion (LLM 応答: content または function_call)
 3. **Chain Introspection**: write(eof=true) / close() によりパイプライン境界を明示して再帰制御を容易化。  
 4. **Fail-First**: 各ツールで前提違反は即エラー計上 → ChatContext に失敗理由が戻るため LLM が是正行動を学習。  
 5. **再帰可能性**: spawn で起動される llmsh の内側に llmcmd ビルトインが存在し、再帰的に llmcmd を呼びチェーン分解・分析・再集約を行う。  
+
+#### spawn における FD 直結 / 新規生成仕様 (実装準拠)
+`spawn(script[, stdin_fd, stdout_fd])`:
+1. `stdin_fd` 指定: 指定 FD を llmsh 子プロセス stdin に接続 (dup2 相当)。 fd!=0 なら親側はクローズし FD テーブルで closed マーク。
+2. `stdout_fd` 指定: 指定 FD を llmsh 子プロセス stdout に接続。 fd!=1 なら親側で適切に所有権解放 (書込み/読取り方向に応じてクローズ)。
+3. 未指定の場合:
+     - stdin: 親→子 pipe を生成し親書き込み端の新 FD を割当 (戻り `stdin_fd`).
+     - stdout: 子→親 pipe を生成し親読取り端の新 FD を割当 (戻り `stdout_fd`).
+4. stderr: 常に新規 pipe を生成し `stderr_fd` を返す (将来オプション化予定)。
+5. 後方互換: 旧 `in_fd` / `out_fd` は削除 (非互換変更)。
+
+安全 / Fail-First チェック:
+- `stdin_fd` / `stdout_fd` が範囲内かつ nil でないか検証。
+- 指定 FD が期待方向 (Readable / Writable) でない場合エラー。
+- 空 script / 空白のみ script は即エラー。
+- プロセス起動失敗時は統計加算後エラー返却。
+
+観測性:
+- 戻り JSON: `{success, stdin_fd, stdout_fd, stderr_fd, pid, script_len}`。
+- 既存 FD 直結時も `stdin_fd` / `stdout_fd` は再掲され LLM が後続 read/write 戦略を構築可能。
+
+今後の改良候補:
+- stderr の統合 / 分離ポリシー選択フラグ。
+- 使用後自動 close / 明示 close ポリシー切替。
+- 実行中コマンドの状態問い合わせツール追加。
 
 ### 再帰 (llmsh → llmcmd) のパターン
 ```

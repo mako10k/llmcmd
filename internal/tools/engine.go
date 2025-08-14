@@ -876,74 +876,156 @@ func (e *Engine) executeWrite(args map[string]interface{}) (string, error) {
 func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	e.stats.SpawnCalls++
 
-	// Extract script (required)
+	// Required script parameter
 	script, ok := args["script"].(string)
 	if !ok {
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("spawn: script parameter is required")
 	}
-
-	// Validate script is not empty
 	if strings.TrimSpace(script) == "" {
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("spawn: script cannot be empty")
 	}
 
-	// Extract optional parameters
-	var inFd *int
-	var outFd *int
-
-	if inFdFloat, hasInFd := args["in_fd"].(float64); hasInFd {
-		inFdInt := int(inFdFloat)
-		inFd = &inFdInt
+	// New parameter names (no backward compatibility): stdin_fd / stdout_fd
+	var stdinSpecified, stdoutSpecified bool
+	var stdinFd, stdoutFd int
+	if v, ok := args["stdin_fd"].(float64); ok {
+		stdinFd = int(v)
+		stdinSpecified = true
+	}
+	if v, ok := args["stdout_fd"].(float64); ok {
+		stdoutFd = int(v)
+		stdoutSpecified = true
 	}
 
-	if outFdFloat, hasOutFd := args["out_fd"].(float64); hasOutFd {
-		outFdInt := int(outFdFloat)
-		outFd = &outFdInt
+	// Validate provided FDs (if any)
+	validateFd := func(fd int, purpose string) error {
+		if fd < 0 || fd >= len(e.fileDescriptors) || e.fileDescriptors[fd] == nil {
+			return fmt.Errorf("spawn: %s fd %d invalid", purpose, fd)
+		}
+		return nil
+	}
+	if stdinSpecified {
+		if err := validateFd(stdinFd, "stdin"); err != nil {
+			e.stats.ErrorCount++
+			return "", err
+		}
+	}
+	if stdoutSpecified {
+		if err := validateFd(stdoutFd, "stdout"); err != nil {
+			e.stats.ErrorCount++
+			return "", err
+		}
 	}
 
-	// Use shell executor if available
-	if e.shellExecutor == nil {
+	// Prepare command: internal llmsh -c "script"
+	cmd := exec.Command("llmsh", "-c", script)
+
+	// Stdin wiring
+	var parentWrite *io.PipeWriter
+	if stdinSpecified {
+		// Use existing FD as stdin
+		rObj := e.fileDescriptors[stdinFd]
+		reader, ok := rObj.(io.Reader)
+		if !ok {
+			e.stats.ErrorCount++
+			return "", fmt.Errorf("spawn: stdin_fd %d not readable", stdinFd)
+		}
+		cmd.Stdin = reader
+	} else {
+		// Create new pipe for stdin (parent writes)
+		pr, pw := io.Pipe()
+		cmd.Stdin = pr
+		parentWrite = pw
+		// Allocate new fd for parent write end
+		newInFd := e.allocateFd()
+		// Ensure slice size
+		for len(e.fileDescriptors) <= newInFd {
+			e.fileDescriptors = append(e.fileDescriptors, nil)
+		}
+		e.fileDescriptors[newInFd] = parentWrite
+		stdinFd = newInFd
+	}
+
+	// Stdout wiring
+	var parentRead *io.PipeReader
+	if stdoutSpecified {
+		wObj := e.fileDescriptors[stdoutFd]
+		// Accept Writer or ReadWriter
+		if writer, ok := wObj.(io.Writer); ok {
+			cmd.Stdout = writer
+		} else {
+			e.stats.ErrorCount++
+			return "", fmt.Errorf("spawn: stdout_fd %d not writable", stdoutFd)
+		}
+	} else {
+		// Create pipe for child's stdout (parent reads)
+		pr, pw := io.Pipe()
+		cmd.Stdout = pw
+		parentRead = pr
+		newOutFd := e.allocateFd()
+		for len(e.fileDescriptors) <= newOutFd {
+			e.fileDescriptors = append(e.fileDescriptors, nil)
+		}
+		e.fileDescriptors[newOutFd] = parentRead
+		stdoutFd = newOutFd
+	}
+
+	// Stderr: always capture via pipe (optionally could be parameterized later)
+	errPr, errPw := io.Pipe()
+	cmd.Stderr = errPw
+	stderrFd := e.allocateFd()
+	for len(e.fileDescriptors) <= stderrFd {
+		e.fileDescriptors = append(e.fileDescriptors, nil)
+	}
+	e.fileDescriptors[stderrFd] = errPr
+
+	// Start process
+	if err := cmd.Start(); err != nil {
 		e.stats.ErrorCount++
-		return "", fmt.Errorf("shell executor not available")
+		return "", fmt.Errorf("spawn: failed to start llmsh: %w", err)
 	}
 
-	// Execute script using shell executor
-	err := e.shellExecutor.Execute(script)
-	if err != nil {
-		e.stats.ErrorCount++
-		return "", fmt.Errorf("failed to execute script '%s': %w", script, err)
+	// If we created pipes for stdout/stderr, close child-side ends after start when appropriate
+	go func() {
+		// Wait for completion
+		_ = cmd.Wait()
+		if parentRead != nil {
+			parentRead.Close()
+		}
+		errPr.Close()
+	}()
+
+	// Optionally close provided FDs in parent if not std (fd!=0/1) and closable (semantic: relinquish ownership)
+	if stdinSpecified && stdinFd != 0 {
+		if closer, ok := e.fileDescriptors[stdinFd].(io.Closer); ok {
+			_ = closer.Close()
+			e.markFdClosed(stdinFd)
+		}
+	}
+	if stdoutSpecified && stdoutFd != 1 {
+		if closer, ok := e.fileDescriptors[stdoutFd].(io.Closer); ok {
+			// Do not close if it's same object used by child directly & closing would break; heuristic: skip os.Stdout
+			if closer != os.Stdout {
+				_ = closer.Close()
+				e.markFdClosed(stdoutFd)
+			}
+		}
 	}
 
-	// Handle input/output file descriptors if specified
+	// Track running command (associate with stdout fd for monitoring)
+	e.createRunningCommand("llmsh", []string{"-c", script}, stdoutFd, stdinFd, stdoutFd, nil, parentRead)
+
+	// Build result
 	result := map[string]interface{}{
-		"success": true,
+		"success":    true,
+		"stdin_fd":   stdinFd,
+		"stdout_fd":  stdoutFd,
+		"stderr_fd":  stderrFd,
+		"pid":        cmd.Process.Pid,
+		"script_len": len(script),
 	}
-
-	// For now, just return success since shell executor doesn't return output
-	// In the future, we can use ExecuteWithIO for more complex scenarios
-
-	// For compatibility, assign new fds if requested
-	if inFd == nil && outFd == nil {
-		// Create pipe-like behavior for background compatibility
-		inNewFd := e.nextFd
-		e.nextFd++
-		outNewFd := e.nextFd
-		e.nextFd++
-
-		result["in_fd"] = inNewFd
-		result["out_fd"] = outNewFd
-	} else if inFd != nil && outFd == nil {
-		outNewFd := e.nextFd
-		e.nextFd++
-		result["out_fd"] = outNewFd
-	} else if inFd == nil && outFd != nil {
-		inNewFd := e.nextFd
-		e.nextFd++
-		result["in_fd"] = inNewFd
-	}
-
 	return e.spawnSuccess(result)
 }
 
