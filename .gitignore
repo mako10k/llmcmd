@@ -8,6 +8,9 @@ llmcmd.exe
 *.a
 *.so
 
+# Rust build artifacts
+llmsh-rs/target/
+
 # Node.js dependencies and reports
 node_modules/
 npm-debug.log*
