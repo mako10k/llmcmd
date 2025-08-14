@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,27 +142,48 @@ func LoadConfigFile(path string, explicit bool) (*ConfigFile, error) {
 	}
 	defer file.Close()
 
-	// Read first few bytes to detect file format
-	buffer := make([]byte, 10)
-	n, err := file.Read(buffer)
-	if err != nil && err != io.EOF {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+	// Enhanced format detection: allow leading comments / blank lines before JSON '{'
+	isJSON, detectErr := detectJSONFormat(file)
+	if detectErr != nil {
+		return nil, detectErr
 	}
-
-	// Reset file pointer
+	// Reset pointer after detection
 	if _, err := file.Seek(0, 0); err != nil {
 		return nil, fmt.Errorf("failed to reset file pointer: %w", err)
 	}
 
-	// Check if it's JSON format
-	firstChar := strings.TrimSpace(string(buffer[:n]))
-	if strings.HasPrefix(firstChar, "{") {
-		// JSON format - use strict JSON parser
+	if isJSON {
 		return loadJSONConfig(file, config)
 	}
-
-	// Legacy key=value format
 	return loadLegacyConfig(file, config)
+}
+
+// detectJSONFormat scans the file from the start and returns true if the first
+// non-empty, non-comment line begins with '{'. This allows JSON files to start
+// with comment lines ("# ...") for human readability while preserving strict
+// JSON parsing for the body. UTF-8 BOM is also tolerated.
+func detectJSONFormat(f *os.File) (bool, error) {
+	if _, err := f.Seek(0, 0); err != nil {
+		return false, fmt.Errorf("failed to seek for format detection: %w", err)
+	}
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" { // skip blank
+			continue
+		}
+		if strings.HasPrefix(line, "#") { // skip comment
+			continue
+		}
+		// Handle potential BOM (\uFEFF) at line start
+		line = strings.TrimPrefix(line, "\uFEFF")
+		return strings.HasPrefix(line, "{"), nil
+	}
+	if err := scanner.Err(); err != nil {
+		return false, fmt.Errorf("error scanning config for format detection: %w", err)
+	}
+	// Empty file -> treat as legacy (will just yield defaults)
+	return false, nil
 }
 
 // loadJSONConfig loads configuration from JSON format with strict error checking
