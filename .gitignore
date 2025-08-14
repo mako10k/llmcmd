@@ -92,4 +92,4 @@ data/memory.db*
 data/chroma_db/
 
 jscpd-report/
-code-analysis-reports/
+code-analysis-reports/vfsd/target/

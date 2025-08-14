@@ -9,6 +9,7 @@ use nix::unistd::{fork, ForkResult, pipe, dup2, close, execvp};
 use nix::libc;
 use serde_json::json;
 use base64::{engine::general_purpose, Engine as _};
+use regex::Regex;
 
 // -------- Builtins / Parsing ---------
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,7 +22,7 @@ struct RedirSpec { in_file: Option<String>, out_file: Option<(String,bool)> } //
 enum ExecUnit { Builtin { kind: BuiltinKind, args: Vec<String>, redir: RedirSpec }, External { argv: Vec<String>, redir: RedirSpec } }
 
 fn parse_segment(seg: &str) -> Option<ExecUnit> {
-    let mut toks: Vec<String> = seg.split_whitespace().map(|s| s.to_string()).collect();
+    let toks: Vec<String> = seg.split_whitespace().map(|s| s.to_string()).collect();
     if toks.is_empty() { return None; }
     let mut redir = RedirSpec::default();
     let mut out: Vec<String> = Vec::new();
@@ -186,7 +187,7 @@ fn run_builtin_cat(args: &Vec<String>, redir: &RedirSpec, allow_read:&[String], 
 }
 
 // ---- head / tail helpers ----
-fn parse_head_tail_args(kind: BuiltinKind, args:&[String]) -> (usize, Vec<String>) {
+fn parse_head_tail_args(_kind: BuiltinKind, args:&[String]) -> (usize, Vec<String>) {
     let mut n:usize = 10; // default lines
     let mut files:Vec<String>=Vec::new();
     let mut i=0;
@@ -302,10 +303,16 @@ fn run_builtin_wc(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], all
 // ---- grep (simple substring match, no regex yet) ----
 fn run_builtin_grep(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String]) -> i32 {
     if args.is_empty() { eprintln!("grep: missing pattern"); return 2; }
-    let pattern = &args[0];
-    let mut files:Vec<String> = if args.len()>1 { args[1..].to_vec() } else { Vec::new() };
+    // parse options: -i (ignore case), -n (line numbers), -E (regex) default literal, -r alias for -E
+    let mut idx=0; let mut ignore_case=false; let mut show_line=false; let mut use_regex=false;
+    while idx < args.len() && args[idx].starts_with('-') && args[idx] != "-" { for ch in args[idx].chars().skip(1) { match ch { 'i'=>ignore_case=true, 'n'=>show_line=true, 'E'|'r'=>use_regex=true, _=>{} } } idx+=1; }
+    if idx>=args.len() { eprintln!("grep: missing pattern"); return 2; }
+    let pattern_raw=&args[idx]; idx+=1;
+    let mut files:Vec<String> = if idx < args.len() { args[idx..].to_vec() } else { Vec::new() };
     if files.is_empty() { if let Some(f)=&redir.in_file { files.push(f.clone()); } }
     if files.is_empty() { return 0; }
+    let regex_opt = if use_regex { let pat = if ignore_case { format!("(?i){}", pattern_raw) } else { pattern_raw.to_string() }; match Regex::new(&pat) { Ok(r)=>Some(r), Err(e)=>{ eprintln!("grep: invalid regex: {e}"); return 2; } } } else { None };
+    let needle = if !use_regex { if ignore_case { pattern_raw.to_lowercase() } else { pattern_raw.clone() } } else { String::new() };
     let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
     let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
     let mut stdout_handle = std::io::stdout();
@@ -314,9 +321,15 @@ fn run_builtin_grep(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], a
     for p in files.iter() {
         let h = match client.open_read(p) { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open_read {} error: {:?}", p, code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open_read {p} error: {e}"); return 6; } };
         let mut buf_acc:Vec<u8>=Vec::new();
-        loop { match client.read_chunk(h, 4096) { Ok(Ok((data,eof)))=>{ if data.is_empty() && eof { break; } buf_acc.extend_from_slice(&data); // process full lines
-                let mut start=0; let mut i=0; while i < buf_acc.len() { if buf_acc[i]==b'\n' { let line=&buf_acc[start..i]; if line.windows(pattern.len()).any(|w| w==pattern.as_bytes()) { any_match=true; if multi { let _=write!(stdout_handle, "{}:", p); } let _=stdout_handle.write_all(line); let _=stdout_handle.write_all(b"\n"); } start=i+1; } i+=1; }
-                if start>0 { buf_acc.drain(0..start); } if eof { if !buf_acc.is_empty() { let line=&buf_acc[..]; if line.windows(pattern.len()).any(|w| w==pattern.as_bytes()) { any_match=true; if multi { let _=write!(stdout_handle, "{}:", p); } let _=stdout_handle.write_all(line); let _=stdout_handle.write_all(b"\n"); } buf_acc.clear(); } break; }
+        let mut line_no:usize=0;
+        loop { match client.read_chunk(h, 4096) { Ok(Ok((data,eof)))=>{ if data.is_empty() && eof { break; } buf_acc.extend_from_slice(&data);
+                let mut start=0; let mut i=0; while i < buf_acc.len() { if buf_acc[i]==b'\n' { line_no+=1; let line_slice=&buf_acc[start..i]; let mut is_match=false; if use_regex { if let Some(re)=&regex_opt { if let Ok(s)=std::str::from_utf8(line_slice) { if re.is_match(s) { is_match=true; } } } } else { if let Ok(s)=std::str::from_utf8(line_slice) { let s_cmp = if ignore_case { s.to_lowercase() } else { s.to_string() }; if !needle.is_empty() && s_cmp.contains(&needle) { is_match=true; } } }
+                        if is_match { any_match=true; if multi { let _=write!(stdout_handle, "{}:", p); } if show_line { let _=write!(stdout_handle, "{}:", line_no); } let _=stdout_handle.write_all(line_slice); let _=stdout_handle.write_all(b"\n"); }
+                        start=i+1; }
+                    i+=1; }
+                if start>0 { buf_acc.drain(0..start); }
+                if eof { if !buf_acc.is_empty() { line_no+=1; let line_slice=&buf_acc[..]; let mut is_match=false; if use_regex { if let Some(re)=&regex_opt { if let Ok(s)=std::str::from_utf8(line_slice) { if re.is_match(s) { is_match=true; } } } } else { if let Ok(s)=std::str::from_utf8(line_slice) { let s_cmp = if ignore_case { s.to_lowercase() } else { s.to_string() }; if !needle.is_empty() && s_cmp.contains(&needle) { is_match=true; } } } if is_match { any_match=true; if multi { let _=write!(stdout_handle, "{}:", p); } if show_line { let _=write!(stdout_handle, "{}:", line_no); } let _=stdout_handle.write_all(line_slice); let _=stdout_handle.write_all(b"\n"); } buf_acc.clear(); }
+                    break; }
             }, Ok(Err(code))=>{ eprintln!("read error {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol read error: {e}"); return 6; } } }
         let _ = client.close(h);
     }
@@ -402,12 +415,12 @@ fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], al
     }
     if parts.len()!=2 { eprintln!("sed: bad script"); return 2; }
     let pattern = parts[0].replace(&format!("\\{}",delim), &delim.to_string());
-    let mut repl = parts[1].replace(&format!("\\{}",delim), &delim.to_string());
+    let repl = parts[1].replace(&format!("\\{}",delim), &delim.to_string());
     // collect replacement flags after second delimiter until delimiter again
     // we already broke after replacement delimiter; gather flags rest of script
     let mut flags=String::new(); while i < chars.len() { flags.push(chars[i]); i+=1; }
     let global = flags.contains('g');
-    // Note: no & backreference expansion; literal only.
+    let use_regex = flags.contains('r') || flags.contains('E'); // extended regex flags
     let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
     let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
     let mut out_handle: Option<u32> = None;
@@ -427,11 +440,12 @@ fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], al
                             let line_bytes=&buf_acc[start..idx];
                             let mut line = String::from_utf8_lossy(line_bytes).to_string();
                             if !pattern.is_empty() {
-                                if global {
-                                    let mut out_line=String::new(); let mut pos=0;
-                                    while let Some(pos2)=line[pos..].find(&pattern) { out_line.push_str(&line[pos..pos+pos2]); out_line.push_str(&repl); pos += pos2 + pattern.len(); }
-                                    out_line.push_str(&line[pos..]); line=out_line;
-                                } else if let Some(pos2)=line.find(&pattern) { line = format!("{}{}{}", &line[..pos2], repl, &line[pos2+pattern.len()..]); }
+                                if use_regex {
+                                    let pat = match Regex::new(&pattern) { Ok(r)=>r, Err(e)=> { eprintln!("sed: invalid regex: {e}"); return 2; } };
+                                    if global { line = pat.replace_all(&line, repl.as_str()).to_string(); } else { line = pat.replace(&line, repl.as_str()).to_string(); }
+                                } else {
+                                    if global { let mut out_line=String::new(); let mut pos=0; while let Some(pos2)=line[pos..].find(&pattern) { out_line.push_str(&line[pos..pos+pos2]); out_line.push_str(&repl); pos += pos2 + pattern.len(); } out_line.push_str(&line[pos..]); line=out_line; } else if let Some(pos2)=line.find(&pattern) { line = format!("{}{}{}", &line[..pos2], repl, &line[pos2+pattern.len()..]); }
+                                }
                             }
                             let mut out_line = line.into_bytes(); out_line.push(b'\n');
                             if let Some(hout)=out_handle { match client.write_chunk(hout, &out_line) { Ok(Ok(_))=>{}, Ok(Err(code))=>{ eprintln!("write error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol write error: {e}"); return 6; } } }
@@ -442,7 +456,7 @@ fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], al
                     }
                     if start>0 { buf_acc.drain(0..start); }
                     if eof { // flush last partial line
-                        if !buf_acc.is_empty() { let mut line = String::from_utf8_lossy(&buf_acc).to_string(); if !pattern.is_empty() { if global { let mut out_line=String::new(); let mut pos=0; while let Some(pos2)=line[pos..].find(&pattern) { out_line.push_str(&line[pos..pos+pos2]); out_line.push_str(&repl); pos+=pos2+pattern.len(); } out_line.push_str(&line[pos..]); line=out_line; } else if let Some(pos2)=line.find(&pattern) { line = format!("{}{}{}", &line[..pos2], repl, &line[pos2+pattern.len()..]); } } let out_line = line.into_bytes(); if let Some(hout)=out_handle { match client.write_chunk(hout, &out_line) { Ok(Ok(_))=>{}, Ok(Err(code))=>{ eprintln!("write error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol write error: {e}"); return 6; } } } else if let Err(e)=stdout_handle.write_all(&out_line) { eprintln!("stdout write error: {e}"); return 7; } buf_acc.clear(); }
+                        if !buf_acc.is_empty() { let mut line = String::from_utf8_lossy(&buf_acc).to_string(); if !pattern.is_empty() { if use_regex { let pat = match Regex::new(&pattern) { Ok(r)=>r, Err(e)=>{ eprintln!("sed: invalid regex: {e}"); return 2; } }; if global { line = pat.replace_all(&line, repl.as_str()).to_string(); } else { line = pat.replace(&line, repl.as_str()).to_string(); } } else { if global { let mut out_line=String::new(); let mut pos=0; while let Some(pos2)=line[pos..].find(&pattern) { out_line.push_str(&line[pos..pos+pos2]); out_line.push_str(&repl); pos+=pos2+pattern.len(); } out_line.push_str(&line[pos..]); line=out_line; } else if let Some(pos2)=line.find(&pattern) { line = format!("{}{}{}", &line[..pos2], repl, &line[pos2+pattern.len()..]); } } } let out_line = line.into_bytes(); if let Some(hout)=out_handle { match client.write_chunk(hout, &out_line) { Ok(Ok(_))=>{}, Ok(Err(code))=>{ eprintln!("write error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol write error: {e}"); return 6; } } } else if let Err(e)=stdout_handle.write_all(&out_line) { eprintln!("stdout write error: {e}"); return 7; } buf_acc.clear(); }
                         break; }
                 }
                 Ok(Err(code)) => { eprintln!("read error: {:?}", code); return map_exit(&code); }
@@ -463,9 +477,9 @@ static HELP_ENTRIES:&[HelpEntry] = &[
     HelpEntry { name:"head", usage:"head [-n lines] [file...]", desc:"output the first part of files", options:&[("-n N","output first N lines")], examples:&[("head -10 file.txt","Show first 10 lines")], related:&["tail","cat"] },
     HelpEntry { name:"tail", usage:"tail [-n lines] [file...]", desc:"output the last part of files", options:&[("-n N","output last N lines")], examples:&[("tail -20 file.txt","Show last 20 lines")], related:&["head","cat"] },
     HelpEntry { name:"wc", usage:"wc [options] [file...]", desc:"print line, word, byte counts", options:&[("-l","lines only"),("-w","words only"),("-c","bytes only")], examples:&[("wc file.txt","Show all counts")], related:&["grep","cat"] },
-    HelpEntry { name:"grep", usage:"grep pattern [file...]", desc:"search for literal substring pattern", options:&[], examples:&[("grep foo file","Find foo"),("cat f | grep bar","Pipe example")], related:&["sed","wc"] },
+    HelpEntry { name:"grep", usage:"grep [-i] [-n] [-E] pattern [file...]", desc:"search lines matching pattern (literal default, -E regex)", options:&[("-i","ignore case"),("-n","show line numbers"),("-E","regex pattern")], examples:&[("grep foo file","Find foo"),("grep -i -E 'foo|bar' file","Regex OR match"),("cat f | grep -n bar","Pipe with line numbers")], related:&["sed","wc"] },
     HelpEntry { name:"tr", usage:"tr [-d] set1 [set2]", desc:"translate or delete characters (1:1 literal)", options:&[("-d","delete characters in set1")], examples:&[("tr abc xyz < in","Map a->x b->y c->z"),("tr -d 0-9 < in","Delete digits (range not yet supported)")], related:&["sed"] },
-    HelpEntry { name:"sed", usage:"sed s/pat/repl/[g] [file...]", desc:"stream substitution (literal, single 's' command)", options:&[("g","global replace flag")], examples:&[("sed s/foo/bar/ file","Replace first foo"),("sed s/foo/bar/g file","Replace all foo")], related:&["grep","tr"] },
+    HelpEntry { name:"sed", usage:"sed s/pat/repl/[gE] [file...]", desc:"stream substitution (literal by default, E enables regex)", options:&[("g","global replace"),("E","enable regex (alias r)")], examples:&[("sed s/foo/bar/ file","Replace first foo"),("sed s/foo/bar/g file","Replace all foo"),("sed 's/fo*/X/E' file","Regex replace")], related:&["grep","tr"] },
     HelpEntry { name:"help", usage:"help [command]", desc:"list commands or show detailed help", options:&[], examples:&[("help","List commands"),("help grep","Show grep help")], related:&[] },
 ];
 
