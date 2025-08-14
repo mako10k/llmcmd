@@ -344,22 +344,35 @@ type VirtualFileSystem interface {
 ### 15.11 まとめ (VFS)
 VFS は「安全境界 (allow-list/サイズ/バイナリ)」「再現性 (決定的可視領域)」「コスト制御 (Text-Only / Streaming)」を同時達成する基盤。抽象インターフェース + fsproxy 統合により段階的高度化を可能にし、Fail-First で黙殺を防ぐ。これにより LLM は “信頼できる I/O 基盤” を前提に高レベル計画へ集中できる。
 
-### 15.12 実ファイル注入セマンティクス (バイナリ実行レベル)
-| 実行形態 | 参照/生成ファイル扱い | 新規ファイル生成 | isTopLevelCmd 遷移 | 備考 |
-|----------|-----------------------|------------------|----------------------|------|
-| `llmcmd -i file -o file` | `-i`/`-o` 指定ファイルを起動時に VFS 許可リストへ“実ファイル”として注入 | `-o` で指定された出力 (存在しない場合は作成) のみ | N/A (単発) | 追加の任意パス open は拒否 |
-| `llmsh --virtual -i file -o file` | virtual モード: 指定ファイルを “仮想ビュー” に注入 (実ファイル分類は親起動時の許可に従う) | `-o` のみ | 初期 true (virtual) | real FS 直接追加不可 (参照は既存実 or 仮想) |
-| `llmsh` (非 virtual, トップレベル) | 指定 `-i`/`-o` は実ファイル。トップレベルで新規 open した許可ファイルも実ファイルとして追加 | 可能 (制約: サイズ/バイナリ検証) | 起動時 isTopLevelCmd = true | “real” 追加許可唯一フェーズ |
-| `llmsh` 内部再帰: `llmcmd` 呼び出し後 | 既存許可実ファイル/仮想ファイル集合をそのまま継承 (分類は保持) | 不可 (CreateTemp 等は仮想) | `isTopLevelCmd` → false | 以後 real 新規注入禁止 (再利用のみ可) |
+### 15.12 実ファイル注入セマンティクス (バイナリ実行レベル / virtual モード再定義)
 
-セマンティクス詳細:
-1. 注入点: バイナリ起動レベルの `-i/-o` が “初期実ファイル集合” を形成。トップレベル非 virtual llmsh では明示 open で追加可能。再帰段階では拡張不可。  
-2. isTopLevelCmd フラグ: トップレベル llmsh 実行中のみ true。内部で llmcmd を一度でも呼び出す (再帰) と false に遷移し以降そのセッションでの **新規実ファイル open** を禁止 (既存 FD 利用は可)。  
-3. 継承: 一度注入/分類されたファイル (実 or 仮想) は内部 llmcmd / llmsh 呼び出しでも「同じ分類のまま」利用可能。`llmcmd -i file -o file` を内部で再度指定した場合も file の分類は変化しない (新規 real 承認にはならない)。  
-4. 保護理由: 再帰過程で LLM が過剰な新規パス投入や推測を行い攻撃面やコストを増やすリスクを遮断。  
-5. 新規 real 追加拒否: false 遷移後に未許可パスを `-i` や open で要求すると “virtual-only context” エラー (Fail-First)。  
-6. 書込制御: top-level で生成された real 出力は終了時点で確定。再帰層は既存 real を read/append(*) 制限下で参照 (※ append 許容はポリシ判定; 現状禁止想定)。  
-7. 監査: isTopLevelCmd 遷移・内部 llmcmd 呼び出し境界・再利用された real ファイル列をイベントログ化し後追い検証可能。  
+バイナリ起動時に `-i/-o` で指定したパスを **injected real set** と呼ぶ。VFS 初期化では:
+```
+VFSWithOptions(isTopLevel, virtualMode, injected[])
+     allowedRealFiles ← injected
+     injectedReal     ← injected (virtual モード gating 用)
+```
+
+| 実行形態 | real 扱い (read/write) | 非注入パス open | 新規 real 追加 | isTopLevelCmd | 備考 |
+|----------|------------------------|-----------------|---------------|---------------|------|
+| `llmcmd -i/-o` 単発 | -i/-o 指定のみ real | 拒否 (Fail-First) | なし | N/A | シンプル実行 |
+| `llmsh --virtual` | -i/-o 指定のみ real | virtual (OS open しない) | 不可 | true (virtualMode) | 副作用最小化 |
+| `llmsh` (非 virtual) | -i/-o + 任意 open real | 任意パス real (制約検証後) | 可能 (即 allow-list 追加) | true | 拡張唯一フェーズ |
+| 再帰 `llmcmd` / spawn 内部 | allow-list 内のみ real | 未許可 real: エラー | 不可 | false | Fail-First 保護 |
+
+ポリシ詳細:
+1. 初期注入 (injected set): バイナリ引数の -i/-o。virtualMode では **この集合以外は real へ昇格しない**。  
+2. Top-level 非 virtual: 新規 open 成功時に allow-list へ追加し real 化。  
+3. Top-level virtual: 非注入 real パスは OS を開かず空 virtual として割当て (副作用ゼロ)。  
+4. Internal: 非注入 real パスはエラーではなく同様に virtual 化 (root と同じ規則を継承)。  
+5. 分類保持: 注入済み real は root/child どちらでも real として扱われる。  
+6. Open API 変更: 旧 `OpenFileWithContext(..., isInternal)` は廃止。`OpenFileSession(name, flag, perm)` が VFS 内部状態 (isTopLevel / virtualMode / allow-list) に基づき判定。  
+7. 監査(将来): SessionInit / SpawnSession / OpenDenied / RealAdd イベントを JSON line で出力予定 (未実装)。  
+
+境界意図:
+- virtual モードは “指定 I/O 以外は非副作用的” を保証 (OS open を抑止)。
+- internal も同一ポリシーで非注入 real を単純 virtual 化し副作用を統一。
+- Fail-First は注入集合外 real を開こうとしたときには発生せず（静かな仮想化）。
 
 擬似フロー:
 ```

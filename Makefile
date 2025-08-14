@@ -60,6 +60,11 @@ clean: ## Clean build artifacts
 test: ## Run tests
 	$(GOTEST) -v ./...
 
+test-integration: build
+	@chmod +x test_integration/virtual_mode_llmsh_test.sh
+	@./test_integration/virtual_mode_llmsh_test.sh
+
+.PHONY: test-integration
 test-coverage: ## Run tests with coverage
 	$(GOTEST) -v -coverprofile=coverage.out ./...
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
