@@ -29,6 +29,7 @@ type Config struct {
 	ShowStats   bool     // --stats: Show detailed statistics
 	ConfigFile  string   // -c: Configuration file path
 	NoStdin     bool     // --no-stdin: Skip reading from stdin
+	Virtual     bool     // --virtual: Restrict real file access to injected (-i/-o) only
 
 	// Positional arguments
 	Instructions string // Remaining arguments as instructions
@@ -73,6 +74,8 @@ func ParseArgs(args []string) (*Config, error) {
 
 	fs.BoolVar(&config.NoStdin, "n", false, "Skip reading from stdin")
 	fs.BoolVar(&config.NoStdin, "no-stdin", false, "Skip reading from stdin")
+
+	fs.BoolVar(&config.Virtual, "virtual", false, "Virtual mode: only -i/-o injected files are real; other opens are virtual")
 
 	// Handle help and version flags
 	var showHelp, showVersion, installSystem bool

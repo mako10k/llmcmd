@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -13,7 +14,7 @@ import (
 
 // VFS interface for file operations
 type VFS interface {
-	OpenFileWithContext(name string, flag int, perm os.FileMode, isInternal bool) (io.ReadWriteCloser, error)
+	OpenFileSession(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error)
 }
 
 var currentVFS VFS
@@ -32,8 +33,13 @@ func openFileForReading(filename string) (io.ReadCloser, error) {
 	// Debug print
 	fmt.Fprintf(os.Stderr, "DEBUG: Opening file for reading: %s\n", filename)
 
+	// Normalize path to help injection gating
+	if filename != "" && filename != "-" && filename[0] != '<' {
+		if abs, err := filepath.Abs(filename); err == nil { filename = abs }
+	}
+
 	// Use external context (isInternal=false) to properly handle real files
-	return currentVFS.OpenFileWithContext(filename, os.O_RDONLY, 0644, false)
+	return currentVFS.OpenFileSession(filename, os.O_RDONLY, 0644)
 }
 
 // openFileForWriting opens a file for writing, using VFS if available
@@ -46,7 +52,7 @@ func openFileForWriting(filename string) (io.WriteCloser, error) {
 	fmt.Fprintf(os.Stderr, "DEBUG: Opening file for writing: %s\n", filename)
 
 	// Use external context (isInternal=false) to properly handle real files
-	return currentVFS.OpenFileWithContext(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644, false)
+	return currentVFS.OpenFileSession(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 }
 
 // processInput processes either stdin or files based on args

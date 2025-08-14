@@ -156,20 +156,10 @@ func (a *App) initializeToolEngine() error {
 
 	// Use the isTopLevel from the App instance
 	isTopLevel := a.isTopLevel
-
-	virtualFS := VFSWithLevel(isTopLevel)
-
-	// Allow input/output files for real file access if top-level
-	if isTopLevel {
-		for _, inputFile := range a.config.InputFiles {
-			virtualFS.AllowRealFile(inputFile)
-		}
-		for _, outputFile := range a.config.OutputFiles {
-			if outputFile != "" {
-				virtualFS.AllowRealFile(outputFile)
-			}
-		}
-	}
+	virtualMode := a.config.Virtual
+	injected := append([]string{}, a.config.InputFiles...)
+	injected = append(injected, a.config.OutputFiles...)
+	virtualFS := VFSWithOptions(isTopLevel, virtualMode, injected)
 
 	// Configure shell executor with VFS for redirect support
 	shellExecutor.SetVFS(virtualFS)
