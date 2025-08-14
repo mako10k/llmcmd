@@ -1,4 +1,8 @@
 use std::io::{Read, Write, Seek, SeekFrom};
+use std::env;
+use std::sync::Arc;
+use std::thread;
+use std::os::unix::io::RawFd;
 use std::fs::{File, OpenOptions};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -56,6 +60,50 @@ fn read_frame(stdin: &mut impl Read) -> Result<Option<Vec<u8>>> {
         off += n;
     }
     Ok(Some(buf))
+}
+
+// Proxy mode: when started with --vfs-fd <fd>, act as a transparent byte proxy
+// between stdin/stdout and the given file descriptor (duplex). This is a simple
+// pass-through; framing responsibilities lie on the other side of the FD.
+fn run_proxy(fd: RawFd) -> Result<()> {
+    // Safety: we assume caller supplied a valid open fd for read/write
+    let file = unsafe { File::from_raw_fd(fd) };
+    let to_backend = file.try_clone()?; // for stdin -> backend
+    let from_backend = file;            // for backend -> stdout
+    let to_backend = Arc::new(to_backend);
+    let from_backend = Arc::new(from_backend);
+
+    let writer_clone = to_backend.clone();
+    let t_stdin = thread::spawn(move || -> Result<()> {
+        let mut stdin = std::io::stdin();
+        let mut w = writer_clone;
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = stdin.read(&mut buf)?;
+            if n == 0 { break; }
+            w.write_all(&buf[..n])?;
+            w.flush()?;
+        }
+        Ok(())
+    });
+
+    let reader_clone = from_backend.clone();
+    let t_stdout = thread::spawn(move || -> Result<()> {
+        let mut stdout = std::io::stdout();
+        let mut r = reader_clone;
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = r.read(&mut buf)?;
+            if n == 0 { break; }
+            stdout.write_all(&buf[..n])?;
+            stdout.flush()?;
+        }
+        Ok(())
+    });
+
+    let _ = t_stdin.join().unwrap_or(Ok(()));
+    let _ = t_stdout.join().unwrap_or(Ok(()));
+    Ok(())
 }
 
 fn write_frame(stdout: &mut impl Write, data: &[u8]) -> Result<()> {
@@ -201,6 +249,22 @@ fn handle(state: &mut State, req: Request) -> Response {
 }
 
 fn main() -> Result<()> {
+    // Argument parse for proxy mode
+    let mut args = env::args().skip(1);
+    let mut proxy_fd: Option<i32> = None;
+    while let Some(a) = args.next() {
+        if a == "--vfs-fd" {
+            let v = args.next().ok_or_else(|| anyhow::anyhow!("--vfs-fd requires value"))?;
+            let fd: i32 = v.parse().map_err(|_| anyhow::anyhow!("invalid fd"))?;
+            proxy_fd = Some(fd);
+        } else if a == "--help" || a == "-h" {
+            eprintln!("usage: vfsd [--vfs-fd <fd>]  # when provided acts as transparent proxy");
+            return Ok(());
+        } else {
+            bail!("unknown arg: {}", a);
+        }
+    }
+    if let Some(fd) = proxy_fd { return run_proxy(fd); }
     // Parse simple CLI: -i file (repeat), -o file (repeat)
     let mut args = std::env::args().skip(1);
     let mut ins: Vec<String> = Vec::new();
