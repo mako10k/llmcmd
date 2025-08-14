@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -16,19 +17,23 @@ import (
 type FileType int
 
 const (
-	FileTypeRealFile FileType = iota // Real filesystem file
-	FileTypeTempFile                 // Temporary file (O_TMPFILE)
-	FileTypeVirtual                  // Virtual in-memory file (fallback)
+	FileTypeRealFile FileType = iota
+	FileTypeTempFile
+	FileTypeVirtual
+	FileTypeVirtualAnon
 )
 
-// StdFile wraps standard file descriptors to implement File interface
+// File interface abstracts required file operations (subset of os.File)
+// StdFile wraps *os.File for uniform naming
 type StdFile struct {
 	*os.File
 	name string
 }
 
-func (sf *StdFile) Name() string { return sf.name }
-
+func (s *StdFile) Name() string { return s.name }
+// Stat and Sync forwarded when needed
+func (s *StdFile) Stat() (os.FileInfo, error) { return s.File.Stat() }
+func (s *StdFile) Sync() error { return s.File.Sync() }
 type virtualFileInfo struct {
 	name string
 	size int64
@@ -53,6 +58,59 @@ type VirtualFile struct {
 	closed bool
 }
 
+// AccessModeFile wraps a File to enforce logical read / write permissions independent of underlying OS open flags.
+type AccessModeFile struct {
+	base       File
+	allowRead  bool
+	allowWrite bool
+	name       string
+}
+
+func (a *AccessModeFile) Name() string { return a.name }
+
+func (a *AccessModeFile) Read(p []byte) (int, error) {
+	if !a.allowRead {
+		return 0, fmt.Errorf("read not permitted on handle %s", a.name)
+	}
+	if r, ok := a.base.(interface{ Read([]byte) (int, error) }); ok {
+		return r.Read(p)
+	}
+	return 0, fmt.Errorf("underlying file not readable: %s", a.name)
+}
+
+func (a *AccessModeFile) Write(p []byte) (int, error) {
+	if !a.allowWrite {
+		return 0, fmt.Errorf("write not permitted on handle %s", a.name)
+	}
+	if w, ok := a.base.(interface{ Write([]byte) (int, error) }); ok {
+		return w.Write(p)
+	}
+	return 0, fmt.Errorf("underlying file not writable: %s", a.name)
+}
+
+func (a *AccessModeFile) Close() error {
+	if c, ok := a.base.(interface{ Close() error }); ok { return c.Close() }
+	return nil
+}
+
+func (a *AccessModeFile) Seek(offset int64, whence int) (int64, error) {
+	if s, ok := a.base.(interface{ Seek(int64, int) (int64, error) }); ok {
+		return s.Seek(offset, whence)
+	}
+	return 0, fmt.Errorf("seek not supported: %s", a.name)
+}
+
+func (a *AccessModeFile) Sync() error {
+	if s, ok := a.base.(interface{ Sync() error }); ok { return s.Sync() }
+	return nil
+}
+
+func (a *AccessModeFile) Stat() (os.FileInfo, error) {
+	if s, ok := a.base.(interface{ Stat() (os.FileInfo, error) }); ok {
+		return s.Stat()
+	}
+	return nil, fmt.Errorf("stat not supported: %s", a.name)
+}
 // Name returns the name of the file (implements File interface)
 func (f *VirtualFile) Name() string {
 	return f.name
@@ -186,11 +244,11 @@ func (f *VirtualFile) Clone(flag int, perm os.FileMode) *VirtualFile {
 
 // VFSEntry represents an entry in the virtual file system
 type VFSEntry struct {
-	Name     string   // File name or path
-	FD       int      // File descriptor number
-	Type     FileType // File type (real file or pipe)
-	File     File     // Actual file handle implementing File interface
-	Consumed bool     // Whether file has been consumed (for pipes)
+	Name     string            // File name or path
+	FD       int               // File descriptor number
+	Type     FileType          // File type (real file or pipe)
+	File     io.ReadWriteCloser // Actual file handle
+	Consumed bool              // Whether file has been consumed (for pipes)
 }
 
 // VirtualFS provides name <-> FD bidirectional mapping with file type awareness
@@ -203,16 +261,21 @@ type VirtualFS struct {
 	tempFiles        []int             // List of temporary file FDs for cleanup
 	isTopLevel       bool              // Whether this VFS belongs to top-level llmcmd execution
 	allowedRealFiles map[string]bool   // Real files allowed by top-level -i/-o
+	virtualMode      bool              // Virtual mode flag: only injected (-i/-o) real files permitted as real
+	injectedReal     map[string]bool   // Set of injected real file names (for virtual mode gating)
 	mutex            sync.RWMutex
 }
 
 // NewVFS creates a new enhanced VFS with standard FD initialization
-func NewVFS() *VirtualFS {
-	return VFSWithLevel(true) // Default to top-level
-}
 
-// VFSWithLevel creates a new enhanced VFS with specified top-level status
-func VFSWithLevel(isTopLevel bool) *VirtualFS {
+// NewVFS creates a new VFS (top-level, non-virtual) - legacy helper
+func NewVFS() *VirtualFS { return VFSWithOptions(true, false, nil) }
+
+// VFSWithLevel legacy wrapper (kept for transitional compatibility)
+func VFSWithLevel(isTopLevel bool) *VirtualFS { return VFSWithOptions(isTopLevel, false, nil) }
+
+// VFSWithOptions creates a VFS with top-level flag, virtual mode, and injected real files
+func VFSWithOptions(isTopLevel bool, virtualMode bool, injected []string) *VirtualFS {
 	vfs := &VirtualFS{
 		nameToFD:         make(map[string]int),
 		fdToName:         make(map[int]string),
@@ -220,7 +283,20 @@ func VFSWithLevel(isTopLevel bool) *VirtualFS {
 		tempFiles:        make([]int, 0),
 		isTopLevel:       isTopLevel,
 		allowedRealFiles: make(map[string]bool),
+		virtualMode:      virtualMode,
+		injectedReal:     make(map[string]bool),
 		nextFD:           3, // Start from 3 (after stdin, stdout, stderr)
+	}
+
+	for _, f := range injected {
+		if f == "" { continue }
+		clean := filepath.Clean(f)
+		abs := clean
+		if a, err := filepath.Abs(clean); err == nil { abs = a }
+		vfs.allowedRealFiles[clean] = true
+		vfs.allowedRealFiles[abs] = true
+		vfs.injectedReal[clean] = true
+		vfs.injectedReal[abs] = true
 	}
 
 	// Initialize standard file descriptors with real names from /proc/fd/
@@ -293,13 +369,7 @@ func (vfs *VirtualFS) RegisterFile(name string, rawFile io.ReadWriteCloser, file
 	}
 
 	// Convert io.ReadWriteCloser to File interface
-	var file File
-	if osFile, ok := rawFile.(*os.File); ok {
-		file = osFile // os.File already implements File interface
-	} else {
-		// Must be VirtualFile which already implements File interface
-		file = rawFile.(File)
-	}
+	var file io.ReadWriteCloser = rawFile
 
 	// Assign new FD
 	fd := vfs.nextFD
@@ -359,7 +429,7 @@ func (vfs *VirtualFS) OpenFile(name string, flag int, perm os.FileMode) (io.Read
 }
 
 // openFile is the internal implementation that returns File interface
-func (vfs *VirtualFS) openFile(name string, flag int, perm os.FileMode) (File, error) {
+func (vfs *VirtualFS) openFile(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
 	vfs.mutex.Lock()
 	defer vfs.mutex.Unlock()
 
@@ -367,59 +437,64 @@ func (vfs *VirtualFS) openFile(name string, flag int, perm os.FileMode) (File, e
 	if fd, exists := vfs.nameToFD[name]; exists {
 		entry := vfs.entries[fd]
 
-		// For temp files, check if already consumed
-		if entry.Type == FileTypeTempFile && entry.Consumed && (flag&os.O_RDONLY != 0 || flag&os.O_RDWR != 0) {
-			return nil, fmt.Errorf("temp file '%s' already consumed", name)
-		}
-
-		// For real files, always create a new file handle (real files can be reopened)
-		if entry.Type == FileTypeRealFile {
-			// Check if it's a real filesystem path and reopen it
-			if filepath.IsAbs(name) || name[0] != '<' {
-				rawFile, err := os.OpenFile(name, flag, perm)
-				if err != nil {
-					return nil, err
-				}
-				// Update the entry with new file handle
-				entry.File = rawFile
-				vfs.entries[fd] = entry
-				return rawFile, nil
+		// Behavior varies by type
+		switch entry.Type {
+		case FileTypeTempFile:
+			if entry.Consumed && (flag&os.O_RDONLY != 0 || flag&os.O_RDWR != 0) {
+				return nil, fmt.Errorf("temp file '%s' already consumed", name)
 			}
-		}
-
-		// For virtual files and temp files, create a new handle with appropriate flags
-		if entry.Type == FileTypeVirtual {
+			return entry.File, nil
+		case FileTypeRealFile:
+			// Reopen underlying real file for a fresh handle
+			rawFile, err := os.OpenFile(name, flag, perm)
+			if err != nil { return nil, err }
+			entry.File = rawFile
+			vfs.entries[fd] = entry
+			return rawFile, nil
+		case FileTypeVirtual:
 			if vf, ok := entry.File.(*VirtualFile); ok {
-				// Create a cloned virtual file with the new flag/perm settings
 				clonedFile := vf.Clone(flag, perm)
 				return clonedFile, nil
 			}
+			return entry.File, nil
+		case FileTypeVirtualAnon:
+			// Duplicate base FD (anonymous O_TMPFILE)
+			if osf, ok := entry.File.(*os.File); ok {
+				dupFD, err := syscall.Dup(int(osf.Fd()))
+				if err != nil { return nil, fmt.Errorf("dup virtual anon fd: %w", err) }
+				return os.NewFile(uintptr(dupFD), name), nil
+			}
+			return nil, fmt.Errorf("invalid anon virtual file entry type for %s", name)
+		default:
+			return entry.File, nil
 		}
-		
-		// For temp files, return existing entry (they should not be duplicated)
-		return entry.File, nil
 	}
 
-	// Determine file type and create appropriate file
-	var file File
+	var file io.ReadWriteCloser
 	var fileType FileType
 
-	// Check if it's a real filesystem path
-	if filepath.IsAbs(name) || name[0] != '<' {
-		// Real file system file
-		rawFile, err := os.OpenFile(name, flag, perm)
-		if err != nil {
-			return nil, err
-		}
-		file = rawFile // os.File already implements File interface
-		// For top-level, default to real file; for internal, default to virtual
-		if vfs.isTopLevel {
+	// Identify "real path" semantics (absolute path OR not an internal pipe marker '<')
+	isRealPath := name != "" && (filepath.IsAbs(name) || name[0] != '<')
+
+	if isRealPath {
+		// Determine if this path is allowed to be real
+		allowReal := (vfs.allowedRealFiles[name] && vfs.injectedReal[name]) || (!vfs.virtualMode && vfs.isTopLevel) || (vfs.allowedRealFiles[name] && !vfs.virtualMode)
+		if allowReal {
+			rawFile, err := os.OpenFile(name, flag, perm)
+			if err != nil { return nil, err }
+			file = rawFile
 			fileType = FileTypeRealFile
 		} else {
-			fileType = FileTypeVirtual
+			// Virtualize non-injected real path using anonymous O_TMPFILE (fail-fast if unsupported)
+			base, err := os.OpenFile("/tmp", 0x410000|os.O_RDWR, 0600) // O_TMPFILE|RDWR
+			if err != nil {
+				return nil, fmt.Errorf("virtual anon create failed for %s: %w", name, err)
+			}
+			file = base
+			fileType = FileTypeVirtualAnon
 		}
 	} else {
-		// Internal pipe (names starting with '<' are treated as pipes)
+		// Pipe / logical virtual file
 		file = &VirtualFile{
 			name: name,
 			data: []byte{},
@@ -428,7 +503,6 @@ func (vfs *VirtualFS) openFile(name string, flag int, perm os.FileMode) (File, e
 		}
 		fileType = FileTypeVirtual
 	}
-
 	// Register in VFS
 	fd := vfs.nextFD
 	vfs.nextFD++
@@ -449,18 +523,50 @@ func (vfs *VirtualFS) openFile(name string, flag int, perm os.FileMode) (File, e
 }
 
 // OpenFileWithContext opens a file with context awareness (required by tools.VirtualFileSystem interface)
-func (vfs *VirtualFS) OpenFileWithContext(name string, flag int, perm os.FileMode, isInternal bool) (io.ReadWriteCloser, error) {
-	if isInternal {
-		// Internal access: use virtual files or temp files
-		return vfs.OpenFile(name, flag, perm)
-	} else {
-		// External access: allow real files if configured
-		if vfs.isTopLevel || vfs.IsRealFileAllowed(name) {
-			return vfs.RegisterRealFile(name, flag, perm)
+// OpenFileSession replaces prior context-based open; now decision relies solely on VFS internal policy.
+// Behavior:
+// - Top-level: real file (RegisterRealFile) unless policy denies (size/binary checks would be elsewhere)
+// - Non top-level: only allowedRealFiles become real; others -> error (Fail-First) or virtual depending on prior logic.
+//   Current policy (post-hardening): deny + error for unallowed real paths (enforced in openFile).
+func (vfs *VirtualFS) OpenFileSession(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
+	// Special handling BEFORE normalization: standard streams
+	if name == "stdin" || name == "stdout" || name == "stderr" {
+		vfs.mutex.RLock()
+		defer vfs.mutex.RUnlock()
+		if fd, ok := vfs.nameToFD[name]; ok && fd <= 2 {
+			if entry, exists := vfs.entries[fd]; exists {
+				if f, ok2 := entry.File.(io.ReadWriteCloser); ok2 { return f, nil }
+				if osf, isOS := entry.File.(*os.File); isOS { return osf, nil }
+			}
 		}
-		// Fallback to virtual file
-		return vfs.OpenFile(name, flag, perm)
 	}
+	if name != "" && name != "-" && name[0] != '<' && name != "stdin" && name != "stdout" && name != "stderr" {
+		clean := filepath.Clean(name)
+		if abs, err := filepath.Abs(clean); err == nil { name = abs } else { name = clean }
+	}
+	raw, err := vfs.OpenFile(name, flag, perm)
+	if err != nil { return nil, err }
+	// Logical access derivation
+	allowRead := true
+	allowWrite := false
+	if flag&os.O_WRONLY != 0 { allowRead = false; allowWrite = true } else if flag&os.O_RDWR != 0 { allowRead = true; allowWrite = true }
+	// Determine base File
+	// raw is io.ReadWriteCloser; wrap if needed for restriction
+	if !(allowRead && allowWrite) {
+		var base File
+		switch v := raw.(type) {
+		case *VirtualFile:
+			base = v
+		case *os.File:
+			base = &StdFile{File: v, name: name}
+		case File:
+			base = v
+		default:
+			return nil, fmt.Errorf("unsupported type for restriction: %T", raw)
+		}
+		return &AccessModeFile{base: base, allowRead: allowRead, allowWrite: allowWrite, name: name}, nil
+	}
+	return raw, nil
 }
 
 // RegisterInputOutput registers input/output files based on execution level
@@ -508,7 +614,6 @@ func (vfs *VirtualFS) IsRealFileAllowed(name string) bool {
 	defer vfs.mutex.RUnlock()
 
 	allowed := vfs.allowedRealFiles[name]
-	fmt.Fprintf(os.Stderr, "DEBUG VFS: Checking if real file is allowed: %s = %v\n", name, allowed)
 	return allowed
 }
 
@@ -535,6 +640,7 @@ func (vfs *VirtualFS) RegisterRealFile(name string, flag int, perm os.FileMode) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to open real file %s: %w", name, err)
 	}
+	// (debug logging removed)
 
 	// Register in VFS as real file
 	fd := vfs.nextFD
@@ -776,28 +882,18 @@ func (vfs *VirtualFS) ListFiles() []string {
 
 // OpenForRead opens a file for reading
 func (vfs *VirtualFS) OpenForRead(name string, allowReal bool) (interface{}, error) {
-	// Use openFile internally to get a File
-	file, err := vfs.openFile(name, os.O_RDONLY, 0)
-	if err != nil {
-		return nil, err
-	}
+	// Use OpenFileSession so virtualMode + injection rules are enforced uniformly
+	file, err := vfs.OpenFileSession(name, os.O_RDONLY, 0)
+	if err != nil { return nil, err }
 	return file, nil
 }
 
 // OpenForWrite opens a file for writing
 func (vfs *VirtualFS) OpenForWrite(name string, append bool, allowReal bool) (interface{}, error) {
 	flag := os.O_WRONLY | os.O_CREATE
-	if append {
-		flag |= os.O_APPEND
-	} else {
-		flag |= os.O_TRUNC
-	}
-
-	// Use openFile internally to get a File
-	file, err := vfs.openFile(name, flag, 0644)
-	if err != nil {
-		return nil, err
-	}
+	if append { flag |= os.O_APPEND } else { flag |= os.O_TRUNC }
+	file, err := vfs.OpenFileSession(name, flag, 0644)
+	if err != nil { return nil, err }
 	return file, nil
 }
 
@@ -870,7 +966,7 @@ func NewVFSClientWithProxy(server *VirtualFS, isInternal bool, proxyPipe io.Read
 
 // OpenFile provides OS-compatible file opening interface
 func (c *VFSClient) OpenFile(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
-	return c.server.OpenFileWithContext(name, flag, perm, c.isInternal)
+	return c.server.OpenFileSession(name, flag, perm)
 }
 
 // Create creates or truncates the named file

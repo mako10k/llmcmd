@@ -170,12 +170,9 @@ func (s *Shell) interactiveWithReadline() error {
 	historyFile := os.ExpandEnv("$HOME/.llmsh_history")
 
 	defer func() {
-		// Save history manually before closing
-		fmt.Printf("DEBUG: Saving %d commands to history\n", len(historyCommands))
+		// Save history manually before closing (silent on success)
 		if err := saveHistoryToFile(historyFile, historyCommands); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: Failed to save history: %v\n", err)
-		} else {
-			fmt.Printf("DEBUG: History saved successfully to %s\n", historyFile)
 		}
 		rl.Close()
 	}()
@@ -199,9 +196,7 @@ func (s *Shell) interactiveWithReadline() error {
 		// Handle special commands
 		switch input {
 		case "exit", "quit":
-			// Track exit command for history before exiting
 			if input != "" {
-				fmt.Printf("DEBUG: Adding command to history: %s\n", input)
 				historyCommands = append(historyCommands, input)
 				rl.SaveHistory(input)
 			}
@@ -209,9 +204,7 @@ func (s *Shell) interactiveWithReadline() error {
 		case "":
 			continue // Empty line, continue
 		case "help":
-			// Track help command for history
 			if input != "" {
-				fmt.Printf("DEBUG: Adding command to history: %s\n", input)
 				historyCommands = append(historyCommands, input)
 				rl.SaveHistory(input)
 			}
@@ -219,9 +212,7 @@ func (s *Shell) interactiveWithReadline() error {
 			continue
 		}
 
-		// Track command for history saving
 		if input != "" {
-			fmt.Printf("DEBUG: Adding command to history: %s\n", input)
 			historyCommands = append(historyCommands, input)
 			rl.SaveHistory(input)
 		}
