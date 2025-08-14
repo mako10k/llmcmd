@@ -344,6 +344,38 @@ type VirtualFileSystem interface {
 ### 15.11 まとめ (VFS)
 VFS は「安全境界 (allow-list/サイズ/バイナリ)」「再現性 (決定的可視領域)」「コスト制御 (Text-Only / Streaming)」を同時達成する基盤。抽象インターフェース + fsproxy 統合により段階的高度化を可能にし、Fail-First で黙殺を防ぐ。これにより LLM は “信頼できる I/O 基盤” を前提に高レベル計画へ集中できる。
 
+### 15.12 実ファイル注入セマンティクス (バイナリ実行レベル)
+| 実行形態 | 参照/生成ファイル扱い | 新規ファイル生成 | isTopLevelCmd 遷移 | 備考 |
+|----------|-----------------------|------------------|----------------------|------|
+| `llmcmd -i file -o file` | `-i`/`-o` 指定ファイルを起動時に VFS 許可リストへ“実ファイル”として注入 | `-o` で指定された出力 (存在しない場合は作成) のみ | N/A (単発) | 追加の任意パス open は拒否 |
+| `llmsh --virtual -i file -o file` | llmcmd と同一 (virtual モード) | `-o` のみ | 初期 true (virtual) | real FS 透過アクセス不可 |
+| `llmsh` (非 virtual, トップレベル) | 指定 `-i`/`-o` は実ファイル。さらにトップレベルで明示 open された許可ファイルは実ファイルとして許可リストに追加 | 可能 (制約: サイズ/バイナリ検証) | 起動時 isTopLevelCmd = true | “real” アクセスを許可する唯一のフェーズ |
+| `llmsh` 内部再帰: `llmcmd` 呼び出し後 | 既存許可集合を子へ継承 (新規実ファイル許可しない) | 不可 (CreateTemp 等は仮想空間) | `isTopLevelCmd` → false | セキュリティ境界を狭め以後は virtual 相当 |
+
+セマンティクス詳細:
+1. 注入点: バイナリ起動レベルの `-i/-o` が唯一 “実ファイル” セットを拡張するエントリポイント。再帰段階では拡張不可。  
+2. isTopLevelCmd フラグ: トップレベル llmsh 実行中のみ true。内部で llmcmd を一度でも呼び出す (再帰) と false に遷移し以降そのセッションでの **新規実ファイル open** を禁止 (既存 FD 利用は可)。  
+3. 保護理由: 再帰過程で LLM が過剰なファイル列挙/探索を行い攻撃面やコストを増やすリスクを遮断。  
+4. 継承モデル: false 遷移後に新たな real path を要求すると “virtual-only context” エラー (Fail-First) を返却。  
+5. 書込制御: top-level で生成された出力はバイナリ終了時点で確定。再帰層での上書きは原則禁止 (差分パッチ適用戦略は仮想ファイル + 最終 commit 手順で実現予定)。  
+6. 監査: isTopLevelCmd フラグ遷移と各 real open はイベントログ (将来: structured JSON) へ記録し再帰境界を後追い検証可能。  
+
+擬似フロー:
+```
+start llmsh (isTopLevelCmd=true)
+     |- open real file A (allowed)
+     |- spawn pipeline
+     |- call llmcmd (internal)
+                    -> isTopLevelCmd=false (propagated)
+                              |- attempt open real file B  -> FAIL (virtual-only)
+                              |- read existing A (inherited virtual handle OK)
+```
+
+将来検討:
+- “一時的昇格 (capability token)” により特定再帰ステップで限定 real open を再度許可する設計 (厳格証跡 + 事前宣言要)。
+- real→virtual 差分マージ機構 (仮想編集結果を安全に実ファイルへ反映) の標準ワークフロー化。
+
+
 ## 16. まとめ
 llmcmd / llmsh は「LLM が安全・一貫・監査可能な形で自己拡張的処理を行う」ための二形態 UI であり、設計核心は以下に凝縮される:
 - 小さく信頼できるビルトインプリミティブ
