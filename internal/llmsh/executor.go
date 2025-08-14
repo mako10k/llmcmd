@@ -382,13 +382,19 @@ func (c *Commands) Execute(name string, args []string, stdin io.ReadWriteCloser,
 // executeHelp executes help command
 func (c *Commands) executeHelp(args []string, stdout io.ReadWriteCloser) error {
 	if len(args) == 0 {
-		// List all commands
+		// List all commands; defensively init help system if nil
+		if c.help == nil {
+			c.help = NewHelpSystem()
+		}
 		output := c.help.FormatCommandList()
 		_, err := stdout.Write([]byte(output))
 		return err
 	}
 
 	// Get help for specific command
+	if c.help == nil {
+		c.help = NewHelpSystem()
+	}
 	helpText, err := c.help.FormatHelp(args[0])
 	if err != nil {
 		return err

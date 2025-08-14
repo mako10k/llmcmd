@@ -68,30 +68,21 @@ func NewShell(config *Config) (*Shell, error) {
 		config = &Config{}
 	}
 
-	// Create VFS using unified app.VFS
-	// llmsh is always top-level command
-	vfs := app.VFSWithLevel(true)
-
-	// Allow input/output files for real file access
-	for _, inputFile := range config.InputFiles {
-		vfs.AllowRealFile(inputFile)
-	}
-	for _, outputFile := range config.OutputFiles {
-		if outputFile != "" {
-			vfs.AllowRealFile(outputFile)
-		}
-	}
+	// Create VFS with options (top-level, virtual flag, injected files)
+	allInjected := append([]string{}, config.InputFiles...)
+	allInjected = append(allInjected, config.OutputFiles...)
+	vfs := app.VFSWithOptions(true, config.VirtualMode, allInjected)
 
 	// Initialize other components
 	parserInstance := parser.NewParser()
-	executor := NewExecutor(vfs, nil, config.QuotaManager)
-
+	helpSys := NewHelpSystem()
+	executor := NewExecutor(vfs, helpSys, config.QuotaManager)
 	return &Shell{
 		config:   config,
 		vfs:      vfs,
 		executor: executor,
 		parser:   parserInstance,
-		help:     nil,
+		help:     helpSys,
 	}, nil
 }
 
@@ -141,8 +132,8 @@ func (s *Shell) Interactive() error {
 		}
 
 		if line == "help" {
-			fmt.Println("Available commands: exit, quit, help")
-			fmt.Println("Or enter any shell command or pipeline")
+			if s.help == nil { s.help = NewHelpSystem() }
+			fmt.Print(s.help.FormatCommandList())
 			continue
 		}
 
