@@ -25,7 +25,7 @@ func TestSpawnDeprecatedParams(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for deprecated in_fd, got nil")
 	}
-	if !strings.Contains(err.Error(), "deprecated parameter 'in_fd'") {
+	if !strings.Contains(err.Error(), "deprecated / forbidden parameter 'in_fd'") {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 }

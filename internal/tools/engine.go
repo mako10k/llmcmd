@@ -25,6 +25,63 @@ type ShellExecutor interface {
 	SetVFS(vfs VirtualFileSystem)
 }
 
+// ToolSpec defines contract for a tool's accepted / required / forbidden parameters
+type ToolSpec struct {
+	Required  []string
+	Optional  []string
+	Forbidden []string
+	// AllowUnknown if true suppresses error on unknown keys (legacy);
+	// we keep false for strict fail-first.
+	AllowUnknown bool
+}
+
+var toolSpecs = map[string]ToolSpec{
+	"read":  {Required: []string{"fd"}, Optional: []string{"count", "lines"}},
+	"write": {Required: []string{"fd", "data"}, Optional: []string{"newline", "eof"}},
+	"spawn": {Required: []string{"script"}, Optional: []string{"stdin_fd", "stdout_fd"}, Forbidden: []string{"in_fd", "out_fd"}},
+	"close": {Required: []string{"fd"}},
+	"exit":  {Required: []string{"code"}, Optional: []string{"message"}},
+	"open":  {Required: []string{"path"}, Optional: []string{"mode"}},
+	"help":  {Optional: []string{"keys"}},
+}
+
+// validateArgs enforces the ToolSpec for a tool before execution.
+func validateArgs(toolName string, args map[string]interface{}) error {
+	spec, ok := toolSpecs[toolName]
+	if !ok {
+		// Unknown tool spec: treat as internal error to avoid silent acceptance
+		return fmt.Errorf("validation: no spec for tool %s", toolName)
+	}
+	// Required check
+	for _, r := range spec.Required {
+		if _, present := args[r]; !present {
+			return fmt.Errorf("%s: missing required parameter '%s'", toolName, r)
+		}
+	}
+	// Forbidden check
+	for _, f := range spec.Forbidden {
+		if _, present := args[f]; present {
+			return fmt.Errorf("%s: deprecated / forbidden parameter '%s'", toolName, f)
+		}
+	}
+	// Unknown detection (strict mode)
+	if !spec.AllowUnknown {
+		allowed := make(map[string]struct{})
+		for _, r := range spec.Required {
+			allowed[r] = struct{}{}
+		}
+		for _, o := range spec.Optional {
+			allowed[o] = struct{}{}
+		}
+		for k := range args {
+			if _, ok := allowed[k]; !ok {
+				return fmt.Errorf("%s: unknown parameter '%s'", toolName, k)
+			}
+		}
+	}
+	return nil
+}
+
 // VirtualFileSystem interface for managing virtual files
 type VirtualFileSystem interface {
 	OpenFile(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error)
@@ -659,6 +716,12 @@ func (e *Engine) ExecuteToolCall(toolCall map[string]interface{}) (string, error
 		return "", fmt.Errorf("invalid tool call arguments: %w", err)
 	}
 
+	// Pre-validate arguments using common spec (fail-first)
+	if err := validateArgs(functionName, args); err != nil {
+		e.stats.ErrorCount++
+		return "", err
+	}
+
 	// Execute the appropriate function
 	switch functionName {
 	case "read":
@@ -885,6 +948,16 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	if strings.TrimSpace(script) == "" {
 		e.stats.ErrorCount++
 		return "", fmt.Errorf("spawn: script cannot be empty")
+	}
+
+	// Reject deprecated legacy parameter names (no backward compatibility per spec)
+	if _, hasOld := args["in_fd"]; hasOld {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("spawn: deprecated parameter 'in_fd' (use 'stdin_fd')")
+	}
+	if _, hasOld := args["out_fd"]; hasOld {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("spawn: deprecated parameter 'out_fd' (use 'stdout_fd')")
 	}
 
 	// New parameter names (no backward compatibility): stdin_fd / stdout_fd
