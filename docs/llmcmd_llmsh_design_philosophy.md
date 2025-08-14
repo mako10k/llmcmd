@@ -244,7 +244,107 @@ llmsh pipeline: cat data | grep ERROR | llmcmd "要約" | llmcmd "改善策抽�
 - **help** ツール (既存) の高度化: LLM が利用可能プリミティブ一覧と残 quota を 1 コールで取得。  
 - **batch** 仮想ツール: 複数 write / read を 1 関数呼び出しに圧縮し API 往復削減 (要安全検証)。  
 
-## 15. まとめ
+## 15. VFS (Virtual File System) 設計思想
+VFS は llmcmd / llmsh の **安全・再現性・最小権限** を保証する中核抽象であり、外部 OS ファイルシステム差異・権限・潜在的な高コスト I/O を LLM 視点で統一/制御するレイヤである。
+
+### 15.1 目的
+1. セキュリティ境界: 許可されたファイル/サイズ/モード以外を即ブロック (Fail-First)。
+2. コスト制御: 大容量/バイナリ誤読によるトークン浪費を事前遮断。
+3. 冪等性/再現性: セッション内でのファイル可視集合を確定化し “隠れ入力” を排除。
+4. 観測性: すべてのファイルアクセスをイベント/統計に反映させ後追い分析を可能化。
+5. 拡張性: 物理 FS → fsproxy → リモート/VFS サーバ への段階的移行経路を提供。
+
+### 15.2 レイヤ構造
+```
+LLM / Orchestrator
+     ↓ (tools: read/write/spawn/close)
+Engine FD Table (論理 FD -> Stream 抽象)
+     ↓
+VFS インターフェース (OpenFile / CreateTemp / Remove / List)
+     ↓
+FS Proxy Adapter (ポリシ & 許可リスト検査, 実ファイル制限)
+     ↓
+ホスト FileSystem (制限付き)
+```
+
+### 15.3 コア設計原則
+| 原則 | 説明 | 具体例 |
+|------|------|--------|
+| Least Privilege | 明示許可されたファイル以外へアクセス禁止 | allow-list 外アクセスで即エラー |
+| Text-Only Bias | バイナリを積極検出し拒否 | 512B スニッファ + 拡張子フィルタ |
+| Deterministic View | セッション開始時の許可集合固定 (継承時は merge) | 再帰 llmsh が親集合を引き継ぐ |
+| Fail-First Validation | サイズ/モード/存在/許可を最初に検証 | open → 失敗時即終了 |
+| Stream Orientation | 巨大ファイルを分割 read | read(fd, count) チャンク駆動 |
+| Extensible Backend | fsproxy → リモートストレージ差替余地 | VirtualFileSystem interface |
+| Auditability | すべての open/close をメトリクス/ログに反映 | BytesRead, OpenCalls |
+
+### 15.4 FD ライフサイクル
+1. 割当: Engine 初期化 (0 stdin / 1 stdout / 2 stderr) + 入力ファイル列挙で拡張。  
+2. 利用: read/write でストリーム操作 (ReadCalls/WriteCalls カウント)。  
+3. 終端: write(eof=true) または close(fd) でチェイントラバース → exit code 収集。  
+4. 再利用防止: closedFds マークで再操作阻止 (二重 close はエラー計上)。  
+5. 監査: traverseChainOnEOF で最終結果メッセージ化。  
+
+### 15.5 セキュリティポリシ (fsproxy 統合観点)
+| 項目 | 方針 | 例 |
+|------|------|----|
+| アクセス制御 | 実行モード (llmcmd / llmsh-virtual / llmsh-real) 毎に許可判定 | real モードのみ限定的実 FS 許可 |
+| サイズ上限 | 10MB 超は open 前に拒否 | 巨大ログの accidental 読込抑止 |
+| バイナリ拒否 | Null/高非印字率閾値 >30% で拒否 | 画像/PDF 等を早期遮断 |
+| Temp 管理 | CreateTemp は VFS 管理領域のみ | 任意 OS パス生成禁止 |
+| 削除操作 | 明示 RemoveFile のみ | write 上書きでの暗黙削除禁止 |
+| 権限モード | write 要求時は allow-list+モード検査 | w+, a モードの無制限拡張防止 |
+
+### 15.6 代表インターフェース設計 (抽象)
+```
+type VirtualFileSystem interface {
+     OpenFile(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error)
+     CreateTemp(pattern string) (io.ReadWriteCloser, string, error)
+     RemoveFile(name string) error
+     ListFiles() []string
+}
+```
+実装はポリシ層 (FileAccessController) と結合し “存在しても許可されなければ開かない” を保証。
+
+### 15.7 不変条件 (Invariants)
+| ID | 不変条件 | 理由 | 破れた場合 |
+|----|----------|------|------------|
+| V1 | fileDescriptors[i] == nil ↔ fd 未使用 | ゴミ FD 誤参照防止 | panic/予期せぬ型アサート失敗 |
+| V2 | 閉鎖済 FD へ read/write 不可 | データ競合/不正 I/O 避止 | Fail-First で即エラー |
+| V3 | すべての open は BytesRead/Write カウンタと整合 | 監査/コスト追跡整合 | コスト表示ずれ |
+| V4 | バイナリ検出後に read へ進まない | トークン浪費/汚染防止 | 高額無駄コスト |
+| V5 | 再帰セッションで親許可集合 ⊆ 子許可集合 | Least Privilege 維持 | 子が広すぎる権限獲得 |
+
+### 15.8 エラーモデル (VFS 特化)
+| 分類 | 例 | 対応 |
+|------|----|------|
+| Permission | allow-list 外 | 即エラー & 統計 ErrorCount++ |
+| Size | >10MB | open 前拒否 |
+| Binary | ヒューリスティック一致 | open 拒否 (テキスト変換要求促す) |
+| Closed FD | read/write/close on closed | “already closed” エラー |
+| Unknown FD | 範囲外 index | “invalid file descriptor” |
+
+### 15.9 将来拡張
+| アイデア | 概要 | 期待効果 |
+|---------|------|----------|
+| Lazy Open | 初回 read 要求まで遅延 open | 無駄 file handle 削減 |
+| Read-Ahead Cache | 小チャンク逐次 read をまとめる | API 往復回数削減 |
+| Content Hashing | 読込テキストの重複検知 | 再生成コスト抑制 |
+| Policy Profiles | “strict”, “lenient” プロファイル切替 | 実験 vs 本番 最適化 |
+| Remote VFS | gRPC/Unix Socket 経由で隔離 | サンドボックス強化 |
+| Fine-grained Quota | ファイル別最大行/バイト制限 | ホットスポット暴走防止 |
+
+### 15.10 非ゴール / 制約
+| 項目 | 非ゴール | 理由 |
+|------|---------|------|
+| 任意バイナリ補助変換 | Base64 自動化など | LLM の推論領域外/安全境界曖昧 |
+| 階層全探索 API | 再帰ディレクトリ漫遊 | トークン/時間コスト膨張 |
+| 透過巨大ストリーム (>GB) | ストリーム透過 | LLM 文脈サイズと乖離 |
+
+### 15.11 まとめ (VFS)
+VFS は「安全境界 (allow-list/サイズ/バイナリ)」「再現性 (決定的可視領域)」「コスト制御 (Text-Only / Streaming)」を同時達成する基盤。抽象インターフェース + fsproxy 統合により段階的高度化を可能にし、Fail-First で黙殺を防ぐ。これにより LLM は “信頼できる I/O 基盤” を前提に高レベル計画へ集中できる。
+
+## 16. まとめ
 llmcmd / llmsh は「LLM が安全・一貫・監査可能な形で自己拡張的処理を行う」ための二形態 UI であり、設計核心は以下に凝縮される:
 - 小さく信頼できるビルトインプリミティブ
 - Fail-First + 明示的 Quota によるコスト境界
