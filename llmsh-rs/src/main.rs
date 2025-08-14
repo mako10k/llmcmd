@@ -57,11 +57,14 @@ struct VfsClient { stdin: std::process::ChildStdin, stdout: BufReader<std::proce
 enum VfsErrorCode { EArg, ENoEnt, EPerm, EIO, EClosed, EUnsupported, Other(String) }
 
 impl VfsClient {
-    fn spawn(vfsd_path:&str, allow_read:&[String], allow_write:&[String]) -> Result<Self> {
+    fn spawn(vfsd_path:&str, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> Result<Self> {
         let mut cmd = Command::new(vfsd_path);
         for p in allow_read { cmd.arg("-i").arg(p); }
         for p in allow_write { cmd.arg("-o").arg(p); }
+        if let Some(fd) = pass_fd { cmd.arg("--vfs-fd").arg(fd.to_string()); // close our copy after spawn below
+        }
         let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn()?;
+        if let Some(fd)=pass_fd { let _ = nix::unistd::close(fd); }
         let stdin = child.stdin.take().expect("child stdin");
         let stdout = child.stdout.take().expect("child stdout");
         Ok(VfsClient { stdin, stdout: BufReader::new(stdout), seq:0 })
@@ -91,7 +94,7 @@ impl VfsClient {
     fn close(&mut self,h:u32)->Result<Result<(),VfsErrorCode>>{ let (ok,_)=self.send("close", json!({"h":h}))?; if ok { Ok(Ok(())) } else { Ok(Err(VfsErrorCode::EClosed)) } }
 }
 
-fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]) -> Result<i32> {
+fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> Result<i32> {
     if units.is_empty() { return Ok(0); }
     let mut fds: Vec<(RawFd, RawFd)> = Vec::new();
     for _ in 0..units.len().saturating_sub(1) {
@@ -107,15 +110,15 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
                 if i < units.len()-1 { let (_pr,pw)=fds[i]; dup2(pw,1)?; }
                 for (r,w) in &fds { let _=close(*r); let _=close(*w); }
                 match unit {
-                    ExecUnit::Builtin { kind, args, redir } => { 
+            ExecUnit::Builtin { kind, args, redir } => { 
                         let code = match kind {
-                            BuiltinKind::Cat => run_builtin_cat(args, redir, allow_read, allow_write),
-                            BuiltinKind::Head => run_builtin_head(args, redir, allow_read, allow_write),
-                            BuiltinKind::Tail => run_builtin_tail(args, redir, allow_read, allow_write),
-                            BuiltinKind::Wc => run_builtin_wc(args, redir, allow_read, allow_write),
-                            BuiltinKind::Grep => run_builtin_grep(args, redir, allow_read, allow_write),
-                            BuiltinKind::Tr => run_builtin_tr(args, redir, allow_read, allow_write),
-                            BuiltinKind::Sed => run_builtin_sed(args, redir, allow_read, allow_write),
+                BuiltinKind::Cat => run_builtin_cat(args, redir, allow_read, allow_write, pass_fd),
+                BuiltinKind::Head => run_builtin_head(args, redir, allow_read, allow_write, pass_fd),
+                BuiltinKind::Tail => run_builtin_tail(args, redir, allow_read, allow_write, pass_fd),
+                BuiltinKind::Wc => run_builtin_wc(args, redir, allow_read, allow_write, pass_fd),
+                BuiltinKind::Grep => run_builtin_grep(args, redir, allow_read, allow_write, pass_fd),
+                BuiltinKind::Tr => run_builtin_tr(args, redir, allow_read, allow_write, pass_fd),
+                BuiltinKind::Sed => run_builtin_sed(args, redir, allow_read, allow_write, pass_fd),
                             BuiltinKind::Help => run_builtin_help(args),
                         }; 
                         std::process::exit(code); 
@@ -142,25 +145,27 @@ fn main() -> Result<()> {
     let mut script: Option<String> = None;
     let mut allow_read: Vec<String> = Vec::new();
     let mut allow_write: Vec<String> = Vec::new();
+    let mut pass_fd: Option<i32> = None;
     while let Some(a) = args.next() {
         match a.as_str() {
             "-c" => { script = Some(args.next().ok_or_else(|| anyhow::anyhow!("missing script after -c"))?); }
             "-i" | "--input" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after -i"))?; allow_read.push(v); }
             "-o" | "--output" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after -o"))?; allow_write.push(v); }
+        "--vfs-fd" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after --vfs-fd"))?; let fd: i32 = v.parse().map_err(|_| anyhow::anyhow!("invalid fd"))?; pass_fd = Some(fd); }
             other => { eprintln!("unknown arg: {other}"); }
         }
     }
     let s = script.unwrap_or_else(|| "".to_string());
     let units = parse_pipeline(&s);
-    let code = spawn_pipeline(&units, &allow_read, &allow_write)?;
+    let code = spawn_pipeline(&units, &allow_read, &allow_write, pass_fd)?;
     std::process::exit(code);
 }
 
-fn run_builtin_cat(args: &Vec<String>, redir: &RedirSpec, allow_read:&[String], allow_write:&[String]) -> i32 {
+fn run_builtin_cat(args: &Vec<String>, redir: &RedirSpec, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> i32 {
     let inputs: Vec<String> = if !args.is_empty() { args.clone() } else if let Some(f)= &redir.in_file { vec![f.clone()] } else { Vec::new() };
     if inputs.is_empty() { return 0; }
     let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
+    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
     let mut out_handle: Option<u32> = None;
     if let Some((path, append)) = &redir.out_file { match client.open_write(path, *append) { Ok(Ok(h))=> out_handle=Some(h), Ok(Err(code))=> { eprintln!("open_write error: {:?}", code); return map_exit(&code); }, Err(e)=> { eprintln!("protocol open_write error: {e}"); return 6; } } }
     let mut stdout_handle = std::io::stdout();
@@ -198,13 +203,13 @@ fn parse_head_tail_args(_kind: BuiltinKind, args:&[String]) -> (usize, Vec<Strin
     (n, files)
 }
 
-fn run_builtin_head(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String]) -> i32 {
+fn run_builtin_head(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> i32 {
     let (limit, mut files) = parse_head_tail_args(BuiltinKind::Head, args);
     if files.is_empty() {
         if let Some(f)=&redir.in_file { files.push(f.clone()); } else { return 0; }
     }
     let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
+    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
     let mut stdout_handle = std::io::stdout();
     let mut remaining = limit;
     for p in files.iter() {
@@ -235,11 +240,11 @@ fn run_builtin_head(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], a
     0
 }
 
-fn run_builtin_tail(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String]) -> i32 {
+fn run_builtin_tail(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> i32 {
     let (limit, mut files) = parse_head_tail_args(BuiltinKind::Tail, args);
     if files.is_empty() { if let Some(f)=&redir.in_file { files.push(f.clone()); } else { return 0; } }
     let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
+    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
     let mut stdout_handle = std::io::stdout();
     for (fi,p) in files.iter().enumerate() {
         let h = match client.open_read(p) { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open_read {} error: {:?}", p, code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open_read {p} error: {e}"); return 6; } };
@@ -273,7 +278,7 @@ fn run_builtin_tail(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], a
 
 fn map_exit(code:&VfsErrorCode) -> i32 { match code { VfsErrorCode::ENoEnt=>1, VfsErrorCode::EPerm|VfsErrorCode::EArg=>2, VfsErrorCode::EIO=>3, VfsErrorCode::EClosed=>4, VfsErrorCode::EUnsupported=>5, VfsErrorCode::Other(_)=>6 } }
 // ---- wc ----
-fn run_builtin_wc(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String]) -> i32 {
+fn run_builtin_wc(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> i32 {
     // Options (subset): support -l (lines), -w (words), -c (bytes), default all three like POSIX.
     let mut show_l=true; let mut show_w=true; let mut show_b=true;
     let mut files:Vec<String>=Vec::new();
@@ -283,7 +288,7 @@ fn run_builtin_wc(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], all
     if files.is_empty() { if let Some(f)=&redir.in_file { files.push(f.clone()); } }
     if files.is_empty() { return 0; }
     let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
+    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
     let mut stdout_handle = std::io::stdout();
     let mut total_l=0usize; let mut total_w=0usize; let mut total_b=0usize;
     let multi = files.len()>1;
@@ -301,7 +306,7 @@ fn run_builtin_wc(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], all
 }
 
 // ---- grep (simple substring match, no regex yet) ----
-fn run_builtin_grep(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String]) -> i32 {
+fn run_builtin_grep(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> i32 {
     if args.is_empty() { eprintln!("grep: missing pattern"); return 2; }
     // parse options: -i (ignore case), -n (line numbers), -E (regex) default literal, -r alias for -E
     let mut idx=0; let mut ignore_case=false; let mut show_line=false; let mut use_regex=false;
@@ -314,7 +319,7 @@ fn run_builtin_grep(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], a
     let regex_opt = if use_regex { let pat = if ignore_case { format!("(?i){}", pattern_raw) } else { pattern_raw.to_string() }; match Regex::new(&pat) { Ok(r)=>Some(r), Err(e)=>{ eprintln!("grep: invalid regex: {e}"); return 2; } } } else { None };
     let needle = if !use_regex { if ignore_case { pattern_raw.to_lowercase() } else { pattern_raw.clone() } } else { String::new() };
     let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
+    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
     let mut stdout_handle = std::io::stdout();
     let multi = files.len()>1;
     let mut any_match=false;
@@ -338,7 +343,7 @@ fn run_builtin_grep(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], a
 }
 
 // ---- tr (simple 1:1 mapping, optional -d delete) ----
-fn run_builtin_tr(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String]) -> i32 {
+fn run_builtin_tr(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> i32 {
     if args.is_empty() { eprintln!("tr: missing args"); return 2; }
     let mut delete_mode=false; let mut sets:Vec<String>=Vec::new();
     for a in args { if a=="-d" { delete_mode=true; } else { sets.push(a.clone()); } }
@@ -355,7 +360,7 @@ fn run_builtin_tr(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], all
     // if user passed files after sets (not implemented) - future
     if files.is_empty() { return 0; }
     let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
+    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
     let mut out_handle: Option<u32> = None; // vfs handle if writing to file
     let mut stdout_handle = std::io::stdout();
     // build table
@@ -395,7 +400,7 @@ fn run_builtin_tr(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], all
 }
 
 // ---- sed (subset: only single substitution expression s<delim>pat<delim>repl<delim>[flags], literal match (no regex), flags: g) ----
-fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String]) -> i32 {
+fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> i32 {
     if args.is_empty() { eprintln!("sed: missing script"); return 2; }
     let script = &args[0];
     let mut files:Vec<String> = if args.len()>1 { args[1..].to_vec() } else { Vec::new() };
@@ -422,7 +427,7 @@ fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], al
     let global = flags.contains('g');
     let use_regex = flags.contains('r') || flags.contains('E'); // extended regex flags
     let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
+    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
     let mut out_handle: Option<u32> = None;
     if let Some((path, append))=&redir.out_file { match client.open_write(path, *append) { Ok(Ok(h))=>out_handle=Some(h), Ok(Err(code))=>{ eprintln!("open_write error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open_write error: {e}"); return 6; } } }
     let mut stdout_handle = std::io::stdout();
