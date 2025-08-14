@@ -160,7 +160,66 @@ fsproxy / VFS 統合は「(a) 仮想 FD 管理」「(b) プロトコルレベル
 - LLM 行動メトリクス (retry 分布 / 温度差異) 収集分析。  
 
 ---
-## 14. まとめ
+## 14. ChatCompletion ループとツールプリミティブ
+llmcmd は OpenAI ChatCompletion (Function Calling) を中核に「LLM←→ツール実行エンジン」間の反復ループを形成する。LLM 側は逐次的に計画 / 観察 / 変換を行い、以下の最小プリミティブのみを呼び出す:
+
+| ツール | シグネチャ (論理) | 役割 | 主要エラーチェック (Fail-First) |
+|--------|-------------------|------|----------------------------------|
+| read  | read(fd [,count|lines]) -> data | FD からチャンク / 行読み込みし会話コンテキストへ追加 | fd 範囲 / readable 性 / 上限値 |
+| write | write(fd, data[, newline][, eof]) -> status | FD へ書き込み (パイプ/子 stdin/出力集約) | fd 範囲 / writable 性 / 書き込み失敗 |
+| spawn | spawn(script) -> {stdin_fd, stdout_fd, stderr_fd} | llmsh 経由で安全ビルトインパイプライン開始 (外部コマンド禁止) | スクリプト検証 / 上限プロセス数 |
+| close | close(fd) -> status | 明示的クローズ (書き込みパイプ終端や再利用防止) | fd 範囲 / 既に閉鎖済み判定 |
+| exit  | exit(status) -> terminate | ループ終了 (最終結果確定) | 実行中リソースクリーンアップ |
+
+### ループの概念的フロー
+```
+User Prompt / 初期コンテキスト
+     ↓
+ChatCompletion (LLM 応答: content または function_call)
+     ├─ content: 途中説明/推論を会話へ追加し次ターン
+     └─ function_call: {name, arguments(JSON)} を Engine へ渡す
+               ↓
+          Engine: ExecuteToolCall -> executeRead/Write/Spawn/Close/Exit
+               ↓ 成功/失敗結果を function 呼び出し結果メッセージとして LLM へ返却
+     (Quota/Timeout/Call Limit 検査)
+     ↓ 収束条件 (exit/status, コール上限, タイムアウト)
+終了 / 出力確定
+```
+
+### デザイン意図
+1. **最小集合**: read/write/spawn/close/exit に絞ることで LLM の探索空間を制御し安全性と推論安定性を確保。  
+2. **明示的 I/O**: すべて fd 指向でストリーミング可能 (大きなファイルでも段階 read)。  
+3. **Chain Introspection**: write(eof=true) / close() によりパイプライン境界を明示して再帰制御を容易化。  
+4. **Fail-First**: 各ツールで前提違反は即エラー計上 → ChatContext に失敗理由が戻るため LLM が是正行動を学習。  
+5. **再帰可能性**: spawn で起動される llmsh の内側に llmcmd ビルトインが存在し、再帰的に llmcmd を呼びチェーン分解・分析・再集約を行う。  
+
+### 再帰 (llmsh → llmcmd) のパターン
+```
+llmsh pipeline: cat data | grep ERROR | llmcmd "要約" | llmcmd "改善策抽出"
+                                          ▲ (llmsh の builtin llmcmd 呼び出し)
+```
+- llmsh は軽量テキスト整形 / 抽出でノイズ除去 → llmcmd が高レベル要約 / 推論を実行。  
+- Quota は継承され、深い再帰がコスト暴走しないよう上限で統制。  
+- 失敗 (例: fd 不正) は中間段階で表面化し、上位再帰ステップが代替戦略 (追加フィルタ / chunk 再分割) を生成。  
+
+### ツール実装とコード参照 (抜粋)
+| 機能 | 実装関数例 | 主な内部指標更新 |
+|------|------------|------------------|
+| read  | engine.go: executeRead | ReadCalls / BytesRead / ErrorCount |
+| write | engine.go: executeWrite | WriteCalls / BytesWritten / ErrorCount |
+| spawn | engine.go: executeSpawn | SpawnCalls / runningCommands map |
+| close | engine.go: executeClose | CloseCalls / FD 状態マーク |
+| exit  | engine.go: executeExit | ExitCalls / 終了フラグ |
+
+### エラーハンドリング方針の一貫性
+- すべての executeXxx 関数は: 入力検証 → 状態確認 → 実処理 → メトリクス更新 → 明示的エラー or 正常戻り文字列。  
+- io.EOF は read において「正常終端イベント」として文言を返却し LLM が次アクション判断 (追加 read 不要 / 別 fd へ移行) をしやすい形に整形。  
+
+### 将来拡張余地
+- **help** ツール (既存) の高度化: LLM が利用可能プリミティブ一覧と残 quota を 1 コールで取得。  
+- **batch** 仮想ツール: 複数 write / read を 1 関数呼び出しに圧縮し API 往復削減 (要安全検証)。  
+
+## 15. まとめ
 llmcmd / llmsh は「LLM が安全・一貫・監査可能な形で自己拡張的処理を行う」ための二形態 UI であり、設計核心は以下に凝縮される:
 - 小さく信頼できるビルトインプリミティブ
 - Fail-First + 明示的 Quota によるコスト境界
