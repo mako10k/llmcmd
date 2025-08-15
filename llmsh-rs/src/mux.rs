@@ -30,7 +30,26 @@ impl ChildMux {
     pub fn open_read(&mut self,path:&str)->Result<Result<u32,VfsErrorCode>>{ let (ok,res)=self.send("open_read", json!({"path":path}))?; if ok { Ok(Ok(res.get("handle").and_then(|h|h.as_u64()).unwrap_or(0) as u32)) } else { Ok(Err(map_code(res.get("code").and_then(|c|c.as_str()).unwrap_or("?")))) } }
     pub fn open_write(&mut self,path:&str,append:bool)->Result<Result<u32,VfsErrorCode>>{ let (ok,res)=self.send("open_write", json!({"path":path,"append":append}))?; if ok { Ok(Ok(res.get("handle").and_then(|h|h.as_u64()).unwrap_or(0) as u32)) } else { Ok(Err(map_code(res.get("code").and_then(|c|c.as_str()).unwrap_or("?")))) } }
     pub fn read_chunk(&mut self,h:u32,max:u32)->Result<Result<(Vec<u8>,bool),VfsErrorCode>>{ let (ok,res)=self.send("read", json!({"h":h,"max":max}))?; if ok { let b64=res.get("data").and_then(|d|d.as_str()).unwrap_or(""); let mut data=Vec::new(); if !b64.is_empty(){ data=general_purpose::STANDARD.decode(b64).unwrap_or_default(); } let eof=res.get("eof").and_then(|e|e.as_bool()).unwrap_or(false); Ok(Ok((data,eof))) } else { Ok(Err(map_code(res.get("code").and_then(|c|c.as_str()).unwrap_or("?")))) } }
-    pub fn write_chunk(&mut self,h:u32,data:&[u8])->Result<Result<usize,VfsErrorCode>>{ let b64=general_purpose::STANDARD.encode(data); let (ok,res)=self.send("write", json!({"h":h,"data":b64}))?; if ok { Ok(Ok(res.get("written").and_then(|n|n.as_u64()).unwrap_or(0) as usize)) } else { Ok(Err(map_code(res.get("code").and_then(|c|c.as_str()).unwrap_or("?")))) } }
+    pub fn write_chunk(&mut self,h:u32,data:&[u8])->Result<Result<usize,VfsErrorCode>>{
+        // Implement partial write semantics: upstream may write fewer bytes than requested.
+        // Loop until all data written or an error occurs.
+        let mut total_written = 0usize;
+        while total_written < data.len() {
+            let remaining = &data[total_written..];
+            let b64 = general_purpose::STANDARD.encode(remaining);
+            let (ok,res)= self.send("write", json!({"h":h,"data": b64}))?;
+            if !ok {
+                return Ok(Err(map_code(res.get("code").and_then(|c|c.as_str()).unwrap_or("?"))));
+            }
+            let w = res.get("written").and_then(|n| n.as_u64()).unwrap_or(0) as usize;
+            if w==0 { // Prevent infinite loop; treat as IO error
+                return Ok(Err(VfsErrorCode::EIO));
+            }
+            total_written += w;
+            if w > remaining.len() { break; } // protocol violation guard
+        }
+        Ok(Ok(total_written))
+    }
     pub fn close(&mut self,h:u32)->Result<Result<(),VfsErrorCode>>{ let (ok,_)=self.send("close", json!({"h":h}))?; if ok { Ok(Ok(())) } else { Ok(Err(VfsErrorCode::EClosed)) } }
 }
 
