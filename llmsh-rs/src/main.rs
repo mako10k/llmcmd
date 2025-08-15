@@ -2,17 +2,18 @@ use anyhow::Result;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::PermissionsExt; // for mode()
-use std::os::unix::io::{RawFd, FromRawFd};
+use std::os::unix::io::RawFd;
 use std::os::fd::IntoRawFd; // needed for into_raw_fd on OwnedFd
 use std::ffi::CString;
-use std::io::{BufReader, Read, Write};
-use std::process::{Command, Stdio};
-use nix::unistd::{fork, ForkResult, pipe, dup2, close, execvp, dup, read as nread};
+use std::io::Write;
+use std::process::Command;
+use nix::unistd::{fork, ForkResult, pipe, dup2, close, execvp};
 use nix::fcntl::{fcntl, FcntlArg, FdFlag, OFlag};
 use nix::sys::socket::{socketpair, AddressFamily, SockType, SockFlag};
 use nix::libc;
-use serde_json::json;
-use base64::{engine::general_purpose, Engine as _};
+// extracted multiplexer & VFS client implementation moved to mux.rs
+mod mux;
+use mux::{child_mux, init_child_mux, VfsErrorCode};
 use regex::Regex;
 
 // -------- Builtins / Parsing ---------
@@ -54,77 +55,12 @@ fn parse_segment(seg: &str) -> Option<ExecUnit> {
 
 fn parse_pipeline(input:&str)->Vec<ExecUnit>{ input.split('|').filter_map(|s| parse_segment(s.trim())).collect() }
 
-// -------- VFS Client --------
-enum VfsConnKind {
-    Process { stdin: std::process::ChildStdin, stdout: BufReader<std::process::ChildStdout> },
-    Mux { write: std::fs::File, read: BufReader<std::fs::File> },
-}
-
-struct VfsClient { conn: VfsConnKind, seq: u64 }
-
-#[derive(Debug)]
-enum VfsErrorCode { EArg, ENoEnt, EPerm, EIO, EClosed, EUnsupported, Other(String) }
-
-impl VfsClient {
-    fn spawn(vfsd_path:&str, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> Result<Self> {
-        // MUX mode detection: if LLMSH_MUX_FD is set we treat that FD as a bidirectional socket
-        if let Ok(fd_str) = env::var("LLMSH_MUX_FD") {
-            let fd: i32 = fd_str.parse().map_err(|_| anyhow::anyhow!("invalid LLMSH_MUX_FD"))?;
-            // Safety: take ownership; duplicate for independent read/write handle
-            let read_dup = dup(fd)?;
-            let write_file = unsafe { std::fs::File::from_raw_fd(fd) };
-            let read_file = unsafe { std::fs::File::from_raw_fd(read_dup) };
-            return Ok(VfsClient { conn: VfsConnKind::Mux { write: write_file, read: BufReader::new(read_file) }, seq:0 });
-        }
-        // New protocol: always create a socketpair and pass one end as --client-vfs-fd to vfsd.
-    let (cli_fd_owned, parent_fd_owned) = socketpair(AddressFamily::Unix, SockType::Stream, None, SockFlag::empty())?;
-    let cli_fd = cli_fd_owned.into_raw_fd();
-    let parent_fd = parent_fd_owned.into_raw_fd();
-        let mut cmd = Command::new(vfsd_path);
-        cmd.arg("--client-vfs-fd").arg(cli_fd.to_string());
-        if let Some(up_fd) = pass_fd { // bridge mode
-            cmd.arg("--vfs-fd").arg(up_fd.to_string());
-        } else {
-            // origin mode: include allow lists
-            for p in allow_read { cmd.arg("-i").arg(p); }
-            for p in allow_write { cmd.arg("-o").arg(p); }
-        }
-        // We don't need stdin/stdout pipes now; vfsd speaks over the passed fd
-        let status = cmd.stderr(Stdio::inherit()).spawn();
-        // Parent no longer needs the client end
-    let _ = close(cli_fd);
-        if let Some(up_fd)=pass_fd { let _ = close(up_fd); }
-        let _child = status?; // we intentionally detach handle; rely on fd for comms
-        // Wrap parent_fd into read/write handles
-    let read_dup = dup(parent_fd)?; // duplicate for independent read & write
-    let write_file = unsafe { std::fs::File::from_raw_fd(parent_fd) };
-        let read_file = unsafe { std::fs::File::from_raw_fd(read_dup) };
-        Ok(VfsClient { conn: VfsConnKind::Mux { write: write_file, read: BufReader::new(read_file) }, seq:0 })
-    }
-    fn next_id(&mut self)->String { self.seq +=1; self.seq.to_string() }
-    fn send(&mut self, op:&str, params: serde_json::Value) -> Result<(bool, serde_json::Value)> {
-        let id = self.next_id();
-        let obj = json!({"id": id, "op": op, "params": params});
-        let data = serde_json::to_vec(&obj)?;
-        let len = (data.len() as u32).to_be_bytes();
-        match &mut self.conn {
-            VfsConnKind::Process { stdin, stdout } => { stdin.write_all(&len)?; stdin.write_all(&data)?; stdin.flush()?; let mut len_buf=[0u8;4]; stdout.read_exact(&mut len_buf)?; let resp_len = u32::from_be_bytes(len_buf) as usize; let mut buf=vec![0u8;resp_len]; stdout.read_exact(&mut buf)?; let v: serde_json::Value = serde_json::from_slice(&buf)?; let ok = v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false); if !ok { let code = v.get("error").and_then(|e| e.get("code").and_then(|c| c.as_str())).unwrap_or("?").to_string(); return Ok((false, json!({"code": code}))); } return Ok((true, v.get("result").cloned().unwrap_or(json!({})))); }
-            VfsConnKind::Mux { write, read } => { write.write_all(&len)?; write.write_all(&data)?; write.flush()?; let mut len_buf=[0u8;4]; read.read_exact(&mut len_buf)?; let resp_len = u32::from_be_bytes(len_buf) as usize; let mut buf=vec![0u8;resp_len]; read.read_exact(&mut buf)?; let v: serde_json::Value = serde_json::from_slice(&buf)?; let ok = v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false); if !ok { let code = v.get("error").and_then(|e| e.get("code").and_then(|c| c.as_str())).unwrap_or("?").to_string(); return Ok((false, json!({"code": code}))); } return Ok((true, v.get("result").cloned().unwrap_or(json!({})))); }
-        }
-    }
-    fn map_code(c:&str)->VfsErrorCode { match c {"E_ARG"=>VfsErrorCode::EArg,"E_NOENT"=>VfsErrorCode::ENoEnt,"E_PERM"=>VfsErrorCode::EPerm,"E_IO"=>VfsErrorCode::EIO,"E_CLOSED"=>VfsErrorCode::EClosed,"E_UNSUPPORTED"=>VfsErrorCode::EUnsupported, other=>VfsErrorCode::Other(other.to_string())} }
-    fn open_read(&mut self,path:&str)->Result<Result<u32,VfsErrorCode>>{ let (ok,res)=self.send("open_read", json!({"path":path}))?; if ok { Ok(Ok(res.get("handle").and_then(|h|h.as_u64()).unwrap_or(0) as u32)) } else { Ok(Err(Self::map_code(res.get("code").and_then(|c|c.as_str()).unwrap_or("?")))) } }
-    fn open_write(&mut self,path:&str,append:bool)->Result<Result<u32,VfsErrorCode>>{ let (ok,res)=self.send("open_write", json!({"path":path,"append":append}))?; if ok { Ok(Ok(res.get("handle").and_then(|h|h.as_u64()).unwrap_or(0) as u32)) } else { Ok(Err(Self::map_code(res.get("code").and_then(|c|c.as_str()).unwrap_or("?")))) } }
-    fn read_chunk(&mut self,h:u32,max:u32)->Result<Result<(Vec<u8>,bool),VfsErrorCode>>{ let (ok,res)=self.send("read", json!({"h":h,"max":max}))?; if ok { let b64=res.get("data").and_then(|d|d.as_str()).unwrap_or(""); let mut data=Vec::new(); if !b64.is_empty(){ data=general_purpose::STANDARD.decode(b64).unwrap_or_default(); } let eof=res.get("eof").and_then(|e|e.as_bool()).unwrap_or(false); Ok(Ok((data,eof))) } else { Ok(Err(Self::map_code(res.get("code").and_then(|c|c.as_str()).unwrap_or("?")))) } }
-    fn write_chunk(&mut self,h:u32,data:&[u8])->Result<Result<usize,VfsErrorCode>>{ let b64=general_purpose::STANDARD.encode(data); let (ok,res)=self.send("write", json!({"h":h,"data":b64}))?; if ok { Ok(Ok(res.get("written").and_then(|n|n.as_u64()).unwrap_or(0) as usize)) } else { Ok(Err(Self::map_code(res.get("code").and_then(|c|c.as_str()).unwrap_or("?")))) } }
-    fn close(&mut self,h:u32)->Result<Result<(),VfsErrorCode>>{ let (ok,_)=self.send("close", json!({"h":h}))?; if ok { Ok(Ok(())) } else { Ok(Err(VfsErrorCode::EClosed)) } }
-}
-
 fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> Result<i32> {
     if units.is_empty() { return Ok(0); }
     // Helper: set FD_CLOEXEC; optionally set O_NONBLOCK (used for MUX sockets so poll loop is safe)
     fn set_cloexec(fd: RawFd) { let _ = fcntl(fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC)); }
     fn set_nonblock(fd: RawFd) { if let Ok(flags) = fcntl(fd, FcntlArg::F_GETFL) { let mut oflags = OFlag::from_bits_truncate(flags); oflags.insert(OFlag::O_NONBLOCK); let _ = fcntl(fd, FcntlArg::F_SETFL(oflags)); } }
+    fn clear_nonblock(fd: RawFd) { if let Ok(flags) = fcntl(fd, FcntlArg::F_GETFL) { let mut oflags = OFlag::from_bits_truncate(flags); oflags.remove(OFlag::O_NONBLOCK); let _ = fcntl(fd, FcntlArg::F_SETFL(oflags)); } }
     fn clear_cloexec(fd: RawFd) { if let Ok(flags) = fcntl(fd, FcntlArg::F_GETFD) { let mut f = FdFlag::from_bits_truncate(flags); f.remove(FdFlag::FD_CLOEXEC); let _ = fcntl(fd, FcntlArg::F_SETFD(f)); } }
     let mut fds: Vec<(RawFd, RawFd)> = Vec::new();
     for _ in 0..units.len().saturating_sub(1) {
@@ -160,11 +96,9 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
                 // Ensure stdio not CLOEXEC for exec'd external commands
                 clear_cloexec(0); clear_cloexec(1); clear_cloexec(2);
                 for (r,w) in &fds { let _=close(*r); let _=close(*w); }
-                if mux_mode { if let Some((child_fd,parent_fd)) = mux_child_fds[i] { let _=close(parent_fd); // set env var for this child
-                        env::set_var("LLMSH_MUX_FD", child_fd.to_string()); }
-                }
+                if mux_mode { if let Some((child_fd,parent_fd)) = mux_child_fds[i] { let _=close(parent_fd); clear_nonblock(child_fd); init_child_mux(child_fd); } }
                 match unit {
-            ExecUnit::Builtin { kind, args, redir } => { 
+                    ExecUnit::Builtin { kind, args, redir } => {
                         let code = match kind {
                 BuiltinKind::Cat => run_builtin_cat(args, redir, allow_read, allow_write, pass_fd),
                 BuiltinKind::Head => run_builtin_head(args, redir, allow_read, allow_write, pass_fd),
@@ -178,8 +112,30 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
                         }; 
                         std::process::exit(code); 
                     }
-                    ExecUnit::External { argv, .. } => {
+                    ExecUnit::External { argv, redir } => {
+                        // Apply simple allowlist-based redirections (local FS) BEFORE exec.
+                        // Security: only permit paths explicitly listed in allow_read/allow_write.
+                        // NOTE: Future enhancement could route through VFS daemon for stricter control.
+                        let check_allowed = |p: &str, allow: &[String]| -> bool { allow.iter().any(|a| a == p) };
+                        if let Some(in_path) = &redir.in_file {
+                            if !check_allowed(in_path, allow_read) {
+                                eprintln!("redir input not allowed: {in_path}");
+                                std::process::exit(13);
+                            }
+                            match std::fs::File::open(in_path) { Ok(f)=> { let fd = f.into_raw_fd(); dup2(fd, 0)?; }, Err(e)=> { eprintln!("failed to open input {in_path}: {e}"); std::process::exit(14); } }
+                        }
+                        if let Some((out_path, append)) = &redir.out_file {
+                            if !check_allowed(out_path, allow_write) {
+                                eprintln!("redir output not allowed: {out_path}");
+                                std::process::exit(15);
+                            }
+                            let mut opts = std::fs::OpenOptions::new();
+                            opts.create(true).write(true);
+                            if *append { opts.append(true); } else { opts.truncate(true); }
+                            match opts.open(out_path) { Ok(f)=> { let fd = f.into_raw_fd(); dup2(fd, 1)?; }, Err(e)=> { eprintln!("failed to open output {out_path}: {e}"); std::process::exit(16); } }
+                        }
                         let cstrs: Vec<CString> = argv.iter().map(|s| CString::new(s.as_str()).unwrap()).collect();
+                        if cstrs.is_empty() { std::process::exit(127); }
                         let argv_refs: Vec<&CString> = cstrs.iter().collect();
                         let prog = argv_refs[0];
                         execvp(prog, &argv_refs)?; unreachable!();
@@ -191,59 +147,9 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
     }
     for (r,w) in &fds { let _=close(*r); let _=close(*w); }
     if mux_mode {
-        // Collect parent ends into state objects
-        struct MuxChild { fd: RawFd, alive: bool, buf: Vec<u8> }
-        let mut children: Vec<MuxChild> = Vec::new();
-        for pair in mux_child_fds.into_iter() { if let Some((child_fd,parent_fd))=pair { let _=close(child_fd); children.push(MuxChild { fd: parent_fd, alive: true, buf: Vec::new() }); } }
-        // Lazy upstream connection (spawn vfsd on first child request)
-        let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-        let mut upstream_opt: Option<VfsClient> = None;
-        let mux_debug = env::var("LLMSH_DEBUG_MUX").is_ok();
-        if mux_debug { eprintln!("[mux] start: children={} fds={:?}", children.len(), children.iter().map(|c| c.fd).collect::<Vec<_>>()); }
-        while children.iter().any(|c| c.alive) {
-            let mut pfds: Vec<libc::pollfd> = children.iter().filter(|c| c.alive)
-                .map(|c| libc::pollfd { fd: c.fd, events: (libc::POLLIN | libc::POLLHUP | libc::POLLERR) as i16, revents: 0 }).collect();
-            if pfds.is_empty() { break; }
-            let rc = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, 250) }; // 250ms
-            if rc < 0 { eprintln!("mux poll error: {}", std::io::Error::last_os_error()); break; }
-            if rc == 0 { continue; }
-            for pfd in &pfds { if pfd.revents == 0 { continue; }
-                if let Some(child) = children.iter_mut().find(|c| c.fd == pfd.fd && c.alive) {
-                    if mux_debug { eprintln!("[mux] event fd={} revents=0x{:x}", pfd.fd, pfd.revents); }
-                    if (pfd.revents & (libc::POLLHUP | libc::POLLERR)) != 0 { let mut tmp=[0u8;1024]; let _=nread(child.fd,&mut tmp); child.alive=false; continue; }
-                    if (pfd.revents & libc::POLLIN) != 0 { loop { let mut tmp=[0u8;4096]; match nread(child.fd,&mut tmp) { Ok(0)=>{ child.alive=false; break; }, Ok(n)=>{ child.buf.extend_from_slice(&tmp[..n]); if n < tmp.len() { break; } }, Err(e)=>{ if e==nix::errno::Errno::EAGAIN { break; } child.alive=false; break; } } } }
-                    loop { if child.buf.len()<4 { break; } let len = u32::from_be_bytes([child.buf[0],child.buf[1],child.buf[2],child.buf[3]]) as usize; if child.buf.len() < 4+len { break; }
-                        let frame = child.buf[4..4+len].to_vec(); child.buf.drain(0..4+len);
-                        let v: serde_json::Value = match serde_json::from_slice(&frame) { Ok(v)=>v, Err(_)=> { eprintln!("mux: bad json from child"); continue; } };
-                        let op = v.get("op").and_then(|o| o.as_str()).unwrap_or("");
-                        let params = v.get("params").cloned().unwrap_or(json!({}));
-                        let id = v.get("id").cloned().unwrap_or(json!("?"));
-                        if upstream_opt.is_none() {
-                            match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=> upstream_opt = Some(c), Err(e)=> { eprintln!("parent mux: vfsd lazy spawn failed: {e}");
-                                    let resp = json!({"id": id, "ok": false, "error": {"code":"E_IO","message":"upstream spawn failed"}});
-                                    let resp_bytes = serde_json::to_vec(&resp).unwrap_or_else(|_| b"{}".to_vec());
-                                    let len_bytes = (resp_bytes.len() as u32).to_be_bytes();
-                                    unsafe { let _ = libc::write(child.fd, len_bytes.as_ptr() as *const _, 4); let _ = libc::write(child.fd, resp_bytes.as_ptr() as *const _, resp_bytes.len()); }
-                                    continue; }
-                            }
-                            if mux_debug { eprintln!("[mux] upstream spawned path={} fd_child={} buffer_len={}", vfsd_path, child.fd, child.buf.len()); }
-                        }
-                        let upstream = upstream_opt.as_mut().unwrap();
-                        if mux_debug { eprintln!("[mux] forward op={} id={}", op, id); }
-                        let (ok,res) = match upstream.send(op, params) { Ok(r)=>r, Err(e)=> { eprintln!("mux upstream send error: {e}"); (false, json!({"code":"E_IO"})) } };
-                        let resp = if ok { json!({"id": id, "ok": true, "result": res}) } else { json!({"id": id, "ok": false, "error": {"code": res.get("code").and_then(|c|c.as_str()).unwrap_or("E_IO"), "message":"mux upstream error"}}) };
-                        let resp_bytes = serde_json::to_vec(&resp).unwrap_or_else(|_| b"{}".to_vec());
-                        let len_bytes = (resp_bytes.len() as u32).to_be_bytes();
-                        unsafe { let _ = libc::write(child.fd, len_bytes.as_ptr() as *const _, 4); let _ = libc::write(child.fd, resp_bytes.as_ptr() as *const _, resp_bytes.len()); }
-                        if mux_debug { eprintln!("[mux] reply sent id={} ok={}", id, ok); }
-                    }
-                }
-            }
-            if mux_debug { let alive_cnt = children.iter().filter(|c| c.alive).count(); eprintln!("[mux] loop end alive={} ", alive_cnt); }
-        }
-        // Close all remaining fds
-        for c in children { let _ = close(c.fd); }
-        if mux_debug { eprintln!("[mux] exit loop"); }
+        let mut parent_fds: Vec<RawFd> = Vec::new();
+        for pair in mux_child_fds.into_iter() { if let Some((child_fd,parent_fd))=pair { let _=close(child_fd); parent_fds.push(parent_fd); } }
+        mux::run_mux(parent_fds, allow_read, allow_write, pass_fd)?;
     }
     let mut status_code = 0;
     for _ in 0..units.len() { let mut status: i32 = 0; unsafe { libc::wait(&mut status); if libc::WIFEXITED(status){ status_code = libc::WEXITSTATUS(status);} } }
@@ -295,16 +201,15 @@ fn main() -> Result<()> {
     std::process::exit(code);
 }
 
-fn run_builtin_cat(args: &Vec<String>, redir: &RedirSpec, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> i32 {
+fn run_builtin_cat(args: &Vec<String>, redir: &RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fd:Option<i32>) -> i32 {
     let inputs: Vec<String> = if !args.is_empty() { args.clone() } else if let Some(f)= &redir.in_file { vec![f.clone()] } else { Vec::new() };
     if inputs.is_empty() { return 0; }
-    let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
+    let client = child_mux();
     let mut out_handle: Option<u32> = None;
     if let Some((path, append)) = &redir.out_file { match client.open_write(path, *append) { Ok(Ok(h))=> out_handle=Some(h), Ok(Err(code))=> { eprintln!("open_write error: {:?}", code); return map_exit(&code); }, Err(e)=> { eprintln!("protocol open_write error: {e}"); return 6; } } }
     let mut stdout_handle = std::io::stdout();
     for p in inputs.iter() {
-        let h = match client.open_read(p) { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open_read {} error: {:?}", p, code); return map_exit(&code); }, Err(e)=> { eprintln!("protocol open_read {p} error: {e}"); return 6; } };
+    let h = match client.open_read(p) { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open_read {} error: {:?}", p, code); return map_exit(&code); }, Err(e)=> { eprintln!("protocol open_read {p} error: {e}"); return 6; } };
         loop {
             match client.read_chunk(h, 4096) {
                 Ok(Ok((data, eof))) => {
@@ -337,13 +242,12 @@ fn parse_head_tail_args(_kind: BuiltinKind, args:&[String]) -> (usize, Vec<Strin
     (n, files)
 }
 
-fn run_builtin_head(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> i32 {
+fn run_builtin_head(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fd:Option<i32>) -> i32 {
     let (limit, mut files) = parse_head_tail_args(BuiltinKind::Head, args);
     if files.is_empty() {
         if let Some(f)=&redir.in_file { files.push(f.clone()); } else { return 0; }
     }
-    let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
+    let client = child_mux();
     let mut stdout_handle = std::io::stdout();
     let mut remaining = limit;
     for p in files.iter() {
@@ -374,11 +278,10 @@ fn run_builtin_head(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], a
     0
 }
 
-fn run_builtin_tail(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> i32 {
+fn run_builtin_tail(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fd:Option<i32>) -> i32 {
     let (limit, mut files) = parse_head_tail_args(BuiltinKind::Tail, args);
     if files.is_empty() { if let Some(f)=&redir.in_file { files.push(f.clone()); } else { return 0; } }
-    let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
+    let client = child_mux();
     let mut stdout_handle = std::io::stdout();
     for (fi,p) in files.iter().enumerate() {
         let h = match client.open_read(p) { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open_read {} error: {:?}", p, code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open_read {p} error: {e}"); return 6; } };
@@ -412,7 +315,7 @@ fn run_builtin_tail(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], a
 
 fn map_exit(code:&VfsErrorCode) -> i32 { match code { VfsErrorCode::ENoEnt=>1, VfsErrorCode::EPerm|VfsErrorCode::EArg=>2, VfsErrorCode::EIO=>3, VfsErrorCode::EClosed=>4, VfsErrorCode::EUnsupported=>5, VfsErrorCode::Other(_)=>6 } }
 // ---- wc ----
-fn run_builtin_wc(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> i32 {
+fn run_builtin_wc(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fd:Option<i32>) -> i32 {
     // Options (subset): support -l (lines), -w (words), -c (bytes), default all three like POSIX.
     let mut show_l=true; let mut show_w=true; let mut show_b=true;
     let mut files:Vec<String>=Vec::new();
@@ -421,8 +324,7 @@ fn run_builtin_wc(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], all
     }
     if files.is_empty() { if let Some(f)=&redir.in_file { files.push(f.clone()); } }
     if files.is_empty() { return 0; }
-    let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
+    let client = child_mux();
     let mut stdout_handle = std::io::stdout();
     let mut total_l=0usize; let mut total_w=0usize; let mut total_b=0usize;
     let multi = files.len()>1;
@@ -440,7 +342,7 @@ fn run_builtin_wc(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], all
 }
 
 // ---- grep (simple substring match, no regex yet) ----
-fn run_builtin_grep(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> i32 {
+fn run_builtin_grep(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fd:Option<i32>) -> i32 {
     if args.is_empty() { eprintln!("grep: missing pattern"); return 2; }
     // parse options: -i (ignore case), -n (line numbers), -E (regex) default literal, -r alias for -E
     let mut idx=0; let mut ignore_case=false; let mut show_line=false; let mut use_regex=false;
@@ -452,8 +354,7 @@ fn run_builtin_grep(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], a
     if files.is_empty() { return 0; }
     let regex_opt = if use_regex { let pat = if ignore_case { format!("(?i){}", pattern_raw) } else { pattern_raw.to_string() }; match Regex::new(&pat) { Ok(r)=>Some(r), Err(e)=>{ eprintln!("grep: invalid regex: {e}"); return 2; } } } else { None };
     let needle = if !use_regex { if ignore_case { pattern_raw.to_lowercase() } else { pattern_raw.clone() } } else { String::new() };
-    let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
+    let client = child_mux();
     let mut stdout_handle = std::io::stdout();
     let multi = files.len()>1;
     let mut any_match=false;
@@ -477,7 +378,7 @@ fn run_builtin_grep(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], a
 }
 
 // ---- tr (simple 1:1 mapping, optional -d delete) ----
-fn run_builtin_tr(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> i32 {
+fn run_builtin_tr(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fd:Option<i32>) -> i32 {
     if args.is_empty() { eprintln!("tr: missing args"); return 2; }
     let mut delete_mode=false; let mut sets:Vec<String>=Vec::new();
     for a in args { if a=="-d" { delete_mode=true; } else { sets.push(a.clone()); } }
@@ -493,8 +394,7 @@ fn run_builtin_tr(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], all
     if let Some(f)=&redir.in_file { files.push(f.clone()); }
     // if user passed files after sets (not implemented) - future
     if files.is_empty() { return 0; }
-    let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
+    let client = child_mux();
     let mut out_handle: Option<u32> = None; // vfs handle if writing to file
     let mut stdout_handle = std::io::stdout();
     // build table
@@ -534,7 +434,7 @@ fn run_builtin_tr(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], all
 }
 
 // ---- sed (subset: only single substitution expression s<delim>pat<delim>repl<delim>[flags], literal match (no regex), flags: g) ----
-fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> i32 {
+fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fd:Option<i32>) -> i32 {
     if args.is_empty() { eprintln!("sed: missing script"); return 2; }
     let script = &args[0];
     let mut files:Vec<String> = if args.len()>1 { args[1..].to_vec() } else { Vec::new() };
@@ -560,8 +460,7 @@ fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], al
     let mut flags=String::new(); while i < chars.len() { flags.push(chars[i]); i+=1; }
     let global = flags.contains('g');
     let use_regex = flags.contains('r') || flags.contains('E'); // extended regex flags
-    let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-    let mut client = match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=>c, Err(e)=> { eprintln!("vfsd spawn failed: {e}"); return 5; } };
+    let client = child_mux();
     let mut out_handle: Option<u32> = None;
     if let Some((path, append))=&redir.out_file { match client.open_write(path, *append) { Ok(Ok(h))=>out_handle=Some(h), Ok(Err(code))=>{ eprintln!("open_write error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open_write error: {e}"); return 6; } } }
     let mut stdout_handle = std::io::stdout();
