@@ -2,6 +2,8 @@ use std::io::{Read, Write, Seek, SeekFrom};
 use std::env;
 use std::sync::Arc;
 use std::thread;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::net::Shutdown;
 use std::os::unix::io::RawFd;
 use std::fs::{File, OpenOptions};
 use serde::{Deserialize, Serialize};
@@ -42,13 +44,14 @@ struct ErrorBody {
 }
 
 fn read_frame(stdin: &mut impl Read) -> Result<Option<Vec<u8>>> {
+    // Read 4-byte length header; classify partial header EOF distinctly.
     let mut len_buf = [0u8;4];
     let mut read_total = 0;
     while read_total < 4 {
         let n = stdin.read(&mut len_buf[read_total..])?;
         if n == 0 { // EOF
-            if read_total == 0 { return Ok(None); }
-            bail!("unexpected EOF while reading length header");
+            if read_total == 0 { return Ok(None); } // clean EOF on frame boundary
+            bail!("proto:unexpected EOF in length header (read {} of 4)", read_total);
         }
         read_total += n;
     }
@@ -57,7 +60,7 @@ fn read_frame(stdin: &mut impl Read) -> Result<Option<Vec<u8>>> {
     let mut off = 0;
     while off < len {
         let n = stdin.read(&mut buf[off..])?;
-        if n == 0 { bail!("unexpected EOF in frame body"); }
+        if n == 0 { bail!("proto:unexpected EOF in frame body (read {} of {} bytes)", off, len); }
         off += n;
     }
     Ok(Some(buf))
@@ -66,23 +69,71 @@ fn read_frame(stdin: &mut impl Read) -> Result<Option<Vec<u8>>> {
 // Bridge mode: client_fd <-> upstream_fd (both full-duplex sockets)
 fn run_bridge(client_fd: RawFd, upstream_fd: RawFd) -> Result<()> {
     // SAFETY: caller guarantees these are valid socket fds
-    let mut client = unsafe { UnixStream::from_raw_fd(client_fd) };
+    let mut client = unsafe { UnixStream::from_raw_fd(client_fd) }; // read side handle (also used for shutdown)
     let mut upstream = unsafe { UnixStream::from_raw_fd(upstream_fd) };
     client.set_nonblocking(false)?; upstream.set_nonblocking(false)?;
-    let mut client_tx = client.try_clone()?; // for writing back to client
-    let mut upstream_tx = upstream.try_clone()?; // for writing upstream
-    let t_cu = thread::spawn(move || -> Result<()> { // client -> upstream
-        let mut buf=[0u8;8192];
-        loop { let n = client.read(&mut buf)?; if n==0 { break; } upstream_tx.write_all(&buf[..n])?; upstream_tx.flush()?; }
+    let mut client_w = client.try_clone()?; // writer/for shutdown
+    let mut upstream_w = upstream.try_clone()?; // writer/for shutdown
+
+    let terminated = Arc::new(AtomicBool::new(false));
+    let term_c = terminated.clone();
+    let term_u = terminated.clone();
+
+    // client -> upstream
+    let t_cu = thread::spawn(move || -> Result<()> {
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = match client.read(&mut buf) {
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => { continue; },
+                Err(e) => {
+                    eprintln!("[bridge] client->upstream read error: {}", e);
+                    break;
+                }
+            };
+            if n == 0 { // EOF
+                eprintln!("[bridge] client EOF");
+                let _ = upstream_w.shutdown(Shutdown::Write);
+                break;
+            }
+            if let Err(e) = upstream_w.write_all(&buf[..n]) { eprintln!("[bridge] write to upstream failed: {}", e); let _ = upstream_w.shutdown(Shutdown::Write); break; }
+        }
+        term_c.store(true, Ordering::SeqCst);
         Ok(())
     });
-    let t_uc = thread::spawn(move || -> Result<()> { // upstream -> client
-        let mut buf=[0u8;8192];
-        loop { let n = upstream.read(&mut buf)?; if n==0 { break; } client_tx.write_all(&buf[..n])?; client_tx.flush()?; }
+
+    // upstream -> client
+    let t_uc = thread::spawn(move || -> Result<()> {
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = match upstream.read(&mut buf) {
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => { continue; },
+                Err(e) => {
+                    eprintln!("[bridge] upstream->client read error: {}", e);
+                    break;
+                }
+            };
+            if n == 0 { // EOF
+                eprintln!("[bridge] upstream EOF");
+                let _ = client_w.shutdown(Shutdown::Write);
+                break;
+            }
+            if let Err(e) = client_w.write_all(&buf[..n]) { eprintln!("[bridge] write to client failed: {}", e); let _ = client_w.shutdown(Shutdown::Write); break; }
+        }
+        term_u.store(true, Ordering::SeqCst);
         Ok(())
     });
-    let _ = t_cu.join().unwrap_or(Ok(()));
-    let _ = t_uc.join().unwrap_or(Ok(()));
+
+    let r1 = match t_cu.join() {
+        Ok(inner) => match inner { Ok(_) => true, Err(e) => { eprintln!("[bridge] client->upstream thread error: {}", e); false } },
+        Err(_) => { eprintln!("[bridge] client->upstream thread panicked"); false }
+    };
+    let r2 = match t_uc.join() {
+        Ok(inner) => match inner { Ok(_) => true, Err(e) => { eprintln!("[bridge] upstream->client thread error: {}", e); false } },
+        Err(_) => { eprintln!("[bridge] upstream->client thread panicked"); false }
+    };
+    eprintln!("[bridge] terminated: c2u_ok={} u2c_ok={}", r1, r2);
     Ok(())
 }
 
@@ -131,7 +182,7 @@ fn handle(state: &mut State, req: Request) -> Response {
         "ping" => ok(req.id, json!({"pong": true})),
         "init" => ok(req.id, json!({"status":"ready"})), // kept for compatibility; no-op
         "open_read" => {
-            let path = match req.params.get("path").and_then(|v| v.as_str()) { Some(p)=>p, None=> return err(req.id, "E_ARG", "missing path") };
+            let path = if let Some(p) = req.params.get("path").and_then(|v| v.as_str()) { p } else { return err(req.id, "E_ARG", "missing path"); };
             if path_allowed(&state.allow_read, path) || path_allowed(&state.allow_write, path) {
                 match File::open(path) {
                     Ok(f) => {
@@ -143,10 +194,7 @@ fn handle(state: &mut State, req: Request) -> Response {
                 }
             } else {
                 // virtual path must already exist; no implicit creation
-                let ve = match state.virtual_files.get(path) {
-                    Some(v) => v,
-                    None => return err(req.id, "E_NOENT", "virtual not found"),
-                };
+                let ve = if let Some(v) = state.virtual_files.get(path) { v } else { return err(req.id, "E_NOENT", "virtual not found"); };
                 let dup_fd = match fcntl(ve.file.as_raw_fd(), FcntlArg::F_DUPFD(0)) { Ok(fd)=>fd, Err(_)=> return err(req.id, "E_IO", "dup failed") };
                 let mut dup_file = unsafe { File::from_raw_fd(dup_fd) };
                 let _ = dup_file.seek(SeekFrom::Start(0));
@@ -155,7 +203,7 @@ fn handle(state: &mut State, req: Request) -> Response {
             }
         }
         "open_write" => {
-            let path = match req.params.get("path").and_then(|v| v.as_str()) { Some(p)=>p, None=> return err(req.id, "E_ARG", "missing path") };
+            let path = if let Some(p) = req.params.get("path").and_then(|v| v.as_str()) { p } else { return err(req.id, "E_ARG", "missing path"); };
             let append = req.params.get("append").and_then(|v| v.as_bool()).unwrap_or(false);
             if path_allowed(&state.allow_write, path) {
                 let mut opts = OpenOptions::new(); opts.write(true).create(true);
@@ -182,11 +230,25 @@ fn handle(state: &mut State, req: Request) -> Response {
             }
         }
         "read" => {
-            let h = match req.params.get("h").and_then(|v| v.as_u64()) { Some(v)=> v as u32, None=> return err(req.id, "E_ARG", "missing h") };
+            let h = if let Some(v) = req.params.get("h").and_then(|v| v.as_u64()) { v as u32 } else { return err(req.id, "E_ARG", "missing h"); };
             let max_req = req.params.get("max").and_then(|v| v.as_u64()).map(|v| v as usize).unwrap_or(MAX_READ);
             let max = std::cmp::min(max_req, MAX_READ);
             if max == 0 { return err(req.id, "E_ARG", "max must be > 0"); }
-            let readable = match state.handles.get_mut(&h) { Some(e)=>e, None=> return err(req.id, "E_CLOSED", "invalid handle") };
+            // Reserved handle 0 => process stdin (read-only, bypass allow lists / state table)
+            if h == 0 {
+                use std::io::Read as _;
+                let mut buf = vec![0u8; max];
+                match std::io::stdin().read(&mut buf) {
+                    Ok(n) => {
+                        buf.truncate(n);
+                        let b64 = general_purpose::STANDARD.encode(&buf);
+                        let eof = n == 0; // zero read => EOF
+                        return ok(req.id, json!({"eof": eof, "data": b64, "reserved": true}));
+                    }
+                    Err(_) => { return err(req.id, "E_IO", "read failed"); }
+                }
+            }
+            let readable = if let Some(e) = state.handles.get_mut(&h) { e } else { return err(req.id, "E_CLOSED", "invalid handle"); };
             let f = match readable {
                 HandleKind::Read(f) => f,
                 HandleKind::Write(_) => return err(req.id, "E_PERM", "not readable"),
@@ -203,9 +265,16 @@ fn handle(state: &mut State, req: Request) -> Response {
             }
         }
         "write" => {
-            let h = match req.params.get("h").and_then(|v| v.as_u64()) { Some(v)=> v as u32, None=> return err(req.id, "E_ARG", "missing h") };
-            let data_b64 = match req.params.get("data").and_then(|v| v.as_str()) { Some(s)=>s, None=> return err(req.id, "E_ARG", "missing data") };
-            let entry = match state.handles.get_mut(&h) { Some(e)=>e, None=> return err(req.id, "E_CLOSED", "invalid handle") };
+            let h = if let Some(v) = req.params.get("h").and_then(|v| v.as_u64()) { v as u32 } else { return err(req.id, "E_ARG", "missing h"); };
+            let data_b64 = if let Some(s) = req.params.get("data").and_then(|v| v.as_str()) { s } else { return err(req.id, "E_ARG", "missing data"); };
+            // Reserved stdout/stderr handles
+            if h == 1 || h == 2 {
+                let decoded = match general_purpose::STANDARD.decode(data_b64) { Ok(d)=>d, Err(_)=> return err(req.id, "E_ARG", "bad base64") };
+                let n = if h == 1 { match std::io::stdout().write(&decoded) { Ok(n)=>n, Err(_)=> return err(req.id, "E_IO", "write failed") } } else { match std::io::stderr().write(&decoded) { Ok(n)=>n, Err(_)=> return err(req.id, "E_IO", "write failed") } };
+                return ok(req.id, json!({"written": n, "reserved": true}));
+            }
+            if h == 0 { return err(req.id, "E_PERM", "not writable"); }
+            let entry = if let Some(e) = state.handles.get_mut(&h) { e } else { return err(req.id, "E_CLOSED", "invalid handle"); };
             match entry {
                 HandleKind::Write(f) => {
                     let decoded = match general_purpose::STANDARD.decode(data_b64) { Ok(d)=>d, Err(_)=> return err(req.id, "E_ARG", "bad base64") };
@@ -218,7 +287,8 @@ fn handle(state: &mut State, req: Request) -> Response {
             }
         }
         "close" => {
-            let h = match req.params.get("h").and_then(|v| v.as_u64()) { Some(v)=> v as u32, None=> return err(req.id, "E_ARG", "missing h") };
+            let h = if let Some(v) = req.params.get("h").and_then(|v| v.as_u64()) { v as u32 } else { return err(req.id, "E_ARG", "missing h"); };
+            if h <= 2 { return ok(req.id, json!({"closed": true, "reserved": true})); }
             match state.handles.remove(&h) {
                 Some(_) => ok(req.id, json!({"closed": true})),
                 None => err(req.id, "E_CLOSED", "invalid handle"),
@@ -255,11 +325,18 @@ fn main() -> Result<()> {
     let mut state = State::new(ins, outs);
     let mut ctrl = unsafe { File::from_raw_fd(cfd) };
     loop {
-        let opt = read_frame(&mut ctrl)?; if opt.is_none() { break; }
+        let opt = match read_frame(&mut ctrl) {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("[origin] frame read error: {}", e); return Err(e);
+            }
+        };
+        if opt.is_none() { eprintln!("[origin] clean EOF (no more frames)"); break; }
         let frame = opt.unwrap();
         let req: Request = match serde_json::from_slice(&frame) {
             Ok(r) => r,
             Err(_) => {
+                eprintln!("[origin] invalid JSON frame");
                 let resp = Response { id: "?".to_string(), ok: false, result: None, error: Some(ErrorBody{ code:"E_ARG".to_string(), message:"invalid json".to_string()}) };
                 let data = serde_json::to_vec(&resp)?; write_frame(&mut ctrl, &data)?; continue;
             }
@@ -267,6 +344,7 @@ fn main() -> Result<()> {
         let resp = handle(&mut state, req);
         let data = serde_json::to_vec(&resp)?; write_frame(&mut ctrl, &data)?;
     }
+    if !state.handles.is_empty() { eprintln!("[origin] warning: {} unclosed handle(s) at shutdown", state.handles.len()); }
     Ok(())
 }
 
