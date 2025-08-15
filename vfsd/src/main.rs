@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use base64::{engine::general_purpose, Engine as _};
 use nix::fcntl::{fcntl, FcntlArg};
 use std::os::unix::io::{AsRawFd, FromRawFd};
+use std::os::unix::net::UnixStream;
 use tempfile::tempfile;
 
 #[derive(Deserialize)]
@@ -62,47 +63,26 @@ fn read_frame(stdin: &mut impl Read) -> Result<Option<Vec<u8>>> {
     Ok(Some(buf))
 }
 
-// Proxy mode: when started with --vfs-fd <fd>, act as a transparent byte proxy
-// between stdin/stdout and the given file descriptor (duplex). This is a simple
-// pass-through; framing responsibilities lie on the other side of the FD.
-fn run_proxy(fd: RawFd) -> Result<()> {
-    // Safety: we assume caller supplied a valid open fd for read/write
-    let file = unsafe { File::from_raw_fd(fd) };
-    let to_backend = file.try_clone()?; // for stdin -> backend
-    let from_backend = file;            // for backend -> stdout
-    let to_backend = Arc::new(to_backend);
-    let from_backend = Arc::new(from_backend);
-
-    let writer_clone = to_backend.clone();
-    let t_stdin = thread::spawn(move || -> Result<()> {
-        let mut stdin = std::io::stdin();
-        let mut w = writer_clone;
-        let mut buf = [0u8; 8192];
-        loop {
-            let n = stdin.read(&mut buf)?;
-            if n == 0 { break; }
-            w.write_all(&buf[..n])?;
-            w.flush()?;
-        }
+// Bridge mode: client_fd <-> upstream_fd (both full-duplex sockets)
+fn run_bridge(client_fd: RawFd, upstream_fd: RawFd) -> Result<()> {
+    // SAFETY: caller guarantees these are valid socket fds
+    let mut client = unsafe { UnixStream::from_raw_fd(client_fd) };
+    let mut upstream = unsafe { UnixStream::from_raw_fd(upstream_fd) };
+    client.set_nonblocking(false)?; upstream.set_nonblocking(false)?;
+    let mut client_tx = client.try_clone()?; // for writing back to client
+    let mut upstream_tx = upstream.try_clone()?; // for writing upstream
+    let t_cu = thread::spawn(move || -> Result<()> { // client -> upstream
+        let mut buf=[0u8;8192];
+        loop { let n = client.read(&mut buf)?; if n==0 { break; } upstream_tx.write_all(&buf[..n])?; upstream_tx.flush()?; }
         Ok(())
     });
-
-    let reader_clone = from_backend.clone();
-    let t_stdout = thread::spawn(move || -> Result<()> {
-        let mut stdout = std::io::stdout();
-        let mut r = reader_clone;
-        let mut buf = [0u8; 8192];
-        loop {
-            let n = r.read(&mut buf)?;
-            if n == 0 { break; }
-            stdout.write_all(&buf[..n])?;
-            stdout.flush()?;
-        }
+    let t_uc = thread::spawn(move || -> Result<()> { // upstream -> client
+        let mut buf=[0u8;8192];
+        loop { let n = upstream.read(&mut buf)?; if n==0 { break; } client_tx.write_all(&buf[..n])?; client_tx.flush()?; }
         Ok(())
     });
-
-    let _ = t_stdin.join().unwrap_or(Ok(()));
-    let _ = t_stdout.join().unwrap_or(Ok(()));
+    let _ = t_cu.join().unwrap_or(Ok(()));
+    let _ = t_uc.join().unwrap_or(Ok(()));
     Ok(())
 }
 
@@ -249,55 +229,43 @@ fn handle(state: &mut State, req: Request) -> Response {
 }
 
 fn main() -> Result<()> {
-    // Argument parse for proxy mode
+    // Modes:
+    // 1) Origin: vfsd --client-vfs-fd <fd> [-i path ... -o path ...]
+    // 2) Bridge: vfsd --client-vfs-fd <fd> --vfs-fd <upstream-fd>
+    // Legacy stdin/stdout fallback has been removed (fail-fast if omitted).
     let mut args = env::args().skip(1);
-    let mut proxy_fd: Option<i32> = None;
-    while let Some(a) = args.next() {
-        if a == "--vfs-fd" {
-            let v = args.next().ok_or_else(|| anyhow::anyhow!("--vfs-fd requires value"))?;
-            let fd: i32 = v.parse().map_err(|_| anyhow::anyhow!("invalid fd"))?;
-            proxy_fd = Some(fd);
-        } else if a == "--help" || a == "-h" {
-            eprintln!("usage: vfsd [--vfs-fd <fd>]  # when provided acts as transparent proxy");
-            return Ok(());
-        } else {
-            bail!("unknown arg: {}", a);
-        }
-    }
-    if let Some(fd) = proxy_fd { return run_proxy(fd); }
-    // Parse simple CLI: -i file (repeat), -o file (repeat)
-    let mut args = std::env::args().skip(1);
+    let mut client_fd: Option<i32> = None;
+    let mut upstream_fd: Option<i32> = None;
     let mut ins: Vec<String> = Vec::new();
     let mut outs: Vec<String> = Vec::new();
     while let Some(a) = args.next() {
         match a.as_str() {
-            "-i" | "--input" => {
-                let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after -i"))?; ins.push(v); }
-            "-o" | "--output" => {
-                let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after -o"))?; outs.push(v); }
-            _ => {
-                eprintln!("unknown arg: {a}");
-                std::process::exit(2);
-            }
+            "--client-vfs-fd" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("--client-vfs-fd requires value"))?; let fd: i32 = v.parse().map_err(|_| anyhow::anyhow!("invalid fd"))?; client_fd = Some(fd); },
+            "--vfs-fd" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("--vfs-fd requires value"))?; let fd: i32 = v.parse().map_err(|_| anyhow::anyhow!("invalid fd"))?; upstream_fd = Some(fd); },
+            "-i" | "--input" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after -i"))?; ins.push(v); },
+            "-o" | "--output" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after -o"))?; outs.push(v); },
+            "-h" | "--help" => { eprintln!("usage: vfsd --client-vfs-fd <fd> [--vfs-fd <upstream-fd>] [-i path ... -o path ...]\n       --client-vfs-fd is mandatory. Bridge mode disallows -i/-o."); return Ok(()); },
+            other => { bail!("unknown arg: {}", other); }
         }
     }
+    if upstream_fd.is_some() && (!ins.is_empty() || !outs.is_empty()) { bail!("--vfs-fd cannot be combined with -i/-o (origin allow lists)"); }
+    let cfd = client_fd.ok_or_else(|| anyhow::anyhow!("--client-vfs-fd is required (legacy stdin/stdout mode removed)"))?;
+    if let Some(up_fd) = upstream_fd { return run_bridge(cfd, up_fd); }
+    // origin mode over provided socket fd
     let mut state = State::new(ins, outs);
-
-    // Fail-fast example: ensure no duplicates conflicting (omit for now)
-    let mut stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
+    let mut ctrl = unsafe { File::from_raw_fd(cfd) };
     loop {
-        let frame = match read_frame(&mut stdin)? { Some(f)=>f, None=> break };
+        let opt = read_frame(&mut ctrl)?; if opt.is_none() { break; }
+        let frame = opt.unwrap();
         let req: Request = match serde_json::from_slice(&frame) {
             Ok(r) => r,
             Err(_) => {
                 let resp = Response { id: "?".to_string(), ok: false, result: None, error: Some(ErrorBody{ code:"E_ARG".to_string(), message:"invalid json".to_string()}) };
-                let data = serde_json::to_vec(&resp)?; write_frame(&mut stdout, &data)?; continue;
+                let data = serde_json::to_vec(&resp)?; write_frame(&mut ctrl, &data)?; continue;
             }
         };
         let resp = handle(&mut state, req);
-        let data = serde_json::to_vec(&resp)?;
-        write_frame(&mut stdout, &data)?;
+        let data = serde_json::to_vec(&resp)?; write_frame(&mut ctrl, &data)?;
     }
     Ok(())
 }
@@ -305,5 +273,4 @@ fn main() -> Result<()> {
 // Helper constructors
 fn ok(id: String, result: serde_json::Value) -> Response { Response { id, ok: true, result: Some(result), error: None } }
 fn err(id: String, code: &str, msg: &str) -> Response { Response { id, ok: false, result: None, error: Some(ErrorBody{ code: code.to_string(), message: msg.to_string() }) } }
-fn unsupported(id: String) -> Response { err(id, "E_UNSUPPORTED", "not implemented") }
 fn unsupported_with(id: String, op: &str) -> Response { err(id, "E_UNSUPPORTED", op) }

@@ -1,11 +1,12 @@
 use anyhow::Result;
 use std::env;
-use std::os::unix::io::RawFd;
+use std::os::unix::io::{RawFd, FromRawFd};
 use std::os::fd::IntoRawFd; // needed for into_raw_fd on OwnedFd
 use std::ffi::CString;
 use std::io::{BufReader, Read, Write};
 use std::process::{Command, Stdio};
-use nix::unistd::{fork, ForkResult, pipe, dup2, close, execvp};
+use nix::unistd::{fork, ForkResult, pipe, dup2, close, execvp, dup, read as nread};
+use nix::sys::socket::{socketpair, AddressFamily, SockType, SockFlag};
 use nix::libc;
 use serde_json::json;
 use base64::{engine::general_purpose, Engine as _};
@@ -13,7 +14,7 @@ use regex::Regex;
 
 // -------- Builtins / Parsing ---------
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BuiltinKind { Cat, Head, Tail, Wc, Grep, Tr, Sed, Help }
+enum BuiltinKind { Cat, Head, Tail, Wc, Grep, Tr, Sed, Help, Llmsh }
 
 #[derive(Debug, Default, Clone)]
 struct RedirSpec { in_file: Option<String>, out_file: Option<(String,bool)> } // (path, append)
@@ -40,9 +41,9 @@ fn parse_segment(seg: &str) -> Option<ExecUnit> {
     if out.is_empty() { return None; }
     let cmd = &out[0];
     let args = out[1..].to_vec();
-    if ["cat","head","tail","wc","grep","tr","sed","help"].contains(&cmd.as_str()) {
+    if ["cat","head","tail","wc","grep","tr","sed","help","llmsh"].contains(&cmd.as_str()) {
         if !args.is_empty() && cmd == "cat" { redir.in_file = None; }
-        let kind = match cmd.as_str() { "cat"=>BuiltinKind::Cat, "head"=>BuiltinKind::Head, "tail"=>BuiltinKind::Tail, "wc"=>BuiltinKind::Wc, "grep"=>BuiltinKind::Grep, "tr"=>BuiltinKind::Tr, "sed"=>BuiltinKind::Sed, "help"=>BuiltinKind::Help, _=>BuiltinKind::Cat };
+        let kind = match cmd.as_str() { "cat"=>BuiltinKind::Cat, "head"=>BuiltinKind::Head, "tail"=>BuiltinKind::Tail, "wc"=>BuiltinKind::Wc, "grep"=>BuiltinKind::Grep, "tr"=>BuiltinKind::Tr, "sed"=>BuiltinKind::Sed, "help"=>BuiltinKind::Help, "llmsh"=>BuiltinKind::Llmsh, _=>BuiltinKind::Cat };
         return Some(ExecUnit::Builtin { kind, args, redir });
     }
     Some(ExecUnit::External { argv: out, redir })
@@ -51,23 +52,51 @@ fn parse_segment(seg: &str) -> Option<ExecUnit> {
 fn parse_pipeline(input:&str)->Vec<ExecUnit>{ input.split('|').filter_map(|s| parse_segment(s.trim())).collect() }
 
 // -------- VFS Client --------
-struct VfsClient { stdin: std::process::ChildStdin, stdout: BufReader<std::process::ChildStdout>, seq: u64 }
+enum VfsConnKind {
+    Process { stdin: std::process::ChildStdin, stdout: BufReader<std::process::ChildStdout> },
+    Mux { write: std::fs::File, read: BufReader<std::fs::File> },
+}
+
+struct VfsClient { conn: VfsConnKind, seq: u64 }
 
 #[derive(Debug)]
 enum VfsErrorCode { EArg, ENoEnt, EPerm, EIO, EClosed, EUnsupported, Other(String) }
 
 impl VfsClient {
     fn spawn(vfsd_path:&str, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> Result<Self> {
-        let mut cmd = Command::new(vfsd_path);
-        for p in allow_read { cmd.arg("-i").arg(p); }
-        for p in allow_write { cmd.arg("-o").arg(p); }
-        if let Some(fd) = pass_fd { cmd.arg("--vfs-fd").arg(fd.to_string()); // close our copy after spawn below
+        // MUX mode detection: if LLMSH_MUX_FD is set we treat that FD as a bidirectional socket
+        if let Ok(fd_str) = env::var("LLMSH_MUX_FD") {
+            let fd: i32 = fd_str.parse().map_err(|_| anyhow::anyhow!("invalid LLMSH_MUX_FD"))?;
+            // Safety: take ownership; duplicate for independent read/write handle
+            let read_dup = dup(fd)?;
+            let write_file = unsafe { std::fs::File::from_raw_fd(fd) };
+            let read_file = unsafe { std::fs::File::from_raw_fd(read_dup) };
+            return Ok(VfsClient { conn: VfsConnKind::Mux { write: write_file, read: BufReader::new(read_file) }, seq:0 });
         }
-        let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn()?;
-        if let Some(fd)=pass_fd { let _ = nix::unistd::close(fd); }
-        let stdin = child.stdin.take().expect("child stdin");
-        let stdout = child.stdout.take().expect("child stdout");
-        Ok(VfsClient { stdin, stdout: BufReader::new(stdout), seq:0 })
+        // New protocol: always create a socketpair and pass one end as --client-vfs-fd to vfsd.
+    let (cli_fd_owned, parent_fd_owned) = socketpair(AddressFamily::Unix, SockType::Stream, None, SockFlag::empty())?;
+    let cli_fd = cli_fd_owned.into_raw_fd();
+    let parent_fd = parent_fd_owned.into_raw_fd();
+        let mut cmd = Command::new(vfsd_path);
+        cmd.arg("--client-vfs-fd").arg(cli_fd.to_string());
+        if let Some(up_fd) = pass_fd { // bridge mode
+            cmd.arg("--vfs-fd").arg(up_fd.to_string());
+        } else {
+            // origin mode: include allow lists
+            for p in allow_read { cmd.arg("-i").arg(p); }
+            for p in allow_write { cmd.arg("-o").arg(p); }
+        }
+        // We don't need stdin/stdout pipes now; vfsd speaks over the passed fd
+        let status = cmd.stderr(Stdio::inherit()).spawn();
+        // Parent no longer needs the client end
+    let _ = close(cli_fd);
+        if let Some(up_fd)=pass_fd { let _ = close(up_fd); }
+        let _child = status?; // we intentionally detach handle; rely on fd for comms
+        // Wrap parent_fd into read/write handles
+    let read_dup = dup(parent_fd)?; // duplicate for independent read & write
+    let write_file = unsafe { std::fs::File::from_raw_fd(parent_fd) };
+        let read_file = unsafe { std::fs::File::from_raw_fd(read_dup) };
+        Ok(VfsClient { conn: VfsConnKind::Mux { write: write_file, read: BufReader::new(read_file) }, seq:0 })
     }
     fn next_id(&mut self)->String { self.seq +=1; self.seq.to_string() }
     fn send(&mut self, op:&str, params: serde_json::Value) -> Result<(bool, serde_json::Value)> {
@@ -75,16 +104,10 @@ impl VfsClient {
         let obj = json!({"id": id, "op": op, "params": params});
         let data = serde_json::to_vec(&obj)?;
         let len = (data.len() as u32).to_be_bytes();
-        self.stdin.write_all(&len)?; self.stdin.write_all(&data)?; self.stdin.flush()?;
-        let mut len_buf=[0u8;4];
-        self.stdout.read_exact(&mut len_buf)?;
-        let resp_len = u32::from_be_bytes(len_buf) as usize;
-        let mut buf=vec![0u8;resp_len];
-        self.stdout.read_exact(&mut buf)?;
-        let v: serde_json::Value = serde_json::from_slice(&buf)?;
-        let ok = v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false);
-        if !ok { let code = v.get("error").and_then(|e| e.get("code").and_then(|c| c.as_str())).unwrap_or("?").to_string(); return Ok((false, json!({"code": code}))); }
-        Ok((true, v.get("result").cloned().unwrap_or(json!({}))))
+        match &mut self.conn {
+            VfsConnKind::Process { stdin, stdout } => { stdin.write_all(&len)?; stdin.write_all(&data)?; stdin.flush()?; let mut len_buf=[0u8;4]; stdout.read_exact(&mut len_buf)?; let resp_len = u32::from_be_bytes(len_buf) as usize; let mut buf=vec![0u8;resp_len]; stdout.read_exact(&mut buf)?; let v: serde_json::Value = serde_json::from_slice(&buf)?; let ok = v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false); if !ok { let code = v.get("error").and_then(|e| e.get("code").and_then(|c| c.as_str())).unwrap_or("?").to_string(); return Ok((false, json!({"code": code}))); } return Ok((true, v.get("result").cloned().unwrap_or(json!({})))); }
+            VfsConnKind::Mux { write, read } => { write.write_all(&len)?; write.write_all(&data)?; write.flush()?; let mut len_buf=[0u8;4]; read.read_exact(&mut len_buf)?; let resp_len = u32::from_be_bytes(len_buf) as usize; let mut buf=vec![0u8;resp_len]; read.read_exact(&mut buf)?; let v: serde_json::Value = serde_json::from_slice(&buf)?; let ok = v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false); if !ok { let code = v.get("error").and_then(|e| e.get("code").and_then(|c| c.as_str())).unwrap_or("?").to_string(); return Ok((false, json!({"code": code}))); } return Ok((true, v.get("result").cloned().unwrap_or(json!({})))); }
+        }
     }
     fn map_code(c:&str)->VfsErrorCode { match c {"E_ARG"=>VfsErrorCode::EArg,"E_NOENT"=>VfsErrorCode::ENoEnt,"E_PERM"=>VfsErrorCode::EPerm,"E_IO"=>VfsErrorCode::EIO,"E_CLOSED"=>VfsErrorCode::EClosed,"E_UNSUPPORTED"=>VfsErrorCode::EUnsupported, other=>VfsErrorCode::Other(other.to_string())} }
     fn open_read(&mut self,path:&str)->Result<Result<u32,VfsErrorCode>>{ let (ok,res)=self.send("open_read", json!({"path":path}))?; if ok { Ok(Ok(res.get("handle").and_then(|h|h.as_u64()).unwrap_or(0) as u32)) } else { Ok(Err(Self::map_code(res.get("code").and_then(|c|c.as_str()).unwrap_or("?")))) } }
@@ -103,12 +126,29 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
         let wfd = w.into_raw_fd();
         fds.push((rfd,wfd));
     }
+    // MUX mode: if pass_fd is Some, create socketpairs per child needing VFS.
+    let mux_mode = pass_fd.is_some();
+    let mut mux_child_fds: Vec<Option<(RawFd, RawFd)>> = Vec::new(); // (child_end, parent_end)
+    if mux_mode {
+        for _ in 0..units.len() {
+            let (s1,s2) = socketpair(AddressFamily::Unix, SockType::Stream, None, SockFlag::empty())?;
+            // Convert OwnedFd to raw fd integers for our storage
+            let s1_fd = s1.into_raw_fd();
+            let s2_fd = s2.into_raw_fd();
+            mux_child_fds.push(Some((s1_fd,s2_fd)));
+        }
+    }
+    // Parent MUX storage
+    // legacy variable removed (parent_mux_fds) after switching to libc::poll implementation
     for (i, unit) in units.iter().enumerate() {
         match unsafe { fork()? } {
             ForkResult::Child => {
                 if i > 0 { let (pr,_pw)=fds[i-1]; dup2(pr,0)?; }
                 if i < units.len()-1 { let (_pr,pw)=fds[i]; dup2(pw,1)?; }
                 for (r,w) in &fds { let _=close(*r); let _=close(*w); }
+                if mux_mode { if let Some((child_fd,parent_fd)) = mux_child_fds[i] { let _=close(parent_fd); // set env var for this child
+                        env::set_var("LLMSH_MUX_FD", child_fd.to_string()); }
+                }
                 match unit {
             ExecUnit::Builtin { kind, args, redir } => { 
                         let code = match kind {
@@ -120,6 +160,7 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
                 BuiltinKind::Tr => run_builtin_tr(args, redir, allow_read, allow_write, pass_fd),
                 BuiltinKind::Sed => run_builtin_sed(args, redir, allow_read, allow_write, pass_fd),
                             BuiltinKind::Help => run_builtin_help(args),
+                BuiltinKind::Llmsh => run_builtin_llmsh(args, redir, allow_read, allow_write, pass_fd),
                         }; 
                         std::process::exit(code); 
                     }
@@ -135,6 +176,43 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
         }
     }
     for (r,w) in &fds { let _=close(*r); let _=close(*w); }
+    if mux_mode {
+        // Collect parent ends into state objects
+        struct MuxChild { fd: RawFd, alive: bool, buf: Vec<u8> }
+        let mut children: Vec<MuxChild> = Vec::new();
+        for pair in mux_child_fds.into_iter() { if let Some((child_fd,parent_fd))=pair { let _=close(child_fd); children.push(MuxChild { fd: parent_fd, alive: true, buf: Vec::new() }); } }
+        // Single upstream connection
+        let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
+        let mut upstream = match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=>c, Err(e)=> { eprintln!("parent mux: vfsd spawn failed: {e}"); return Ok(5);} };
+        while children.iter().any(|c| c.alive) {
+            let mut pfds: Vec<libc::pollfd> = children.iter().filter(|c| c.alive)
+                .map(|c| libc::pollfd { fd: c.fd, events: (libc::POLLIN | libc::POLLHUP | libc::POLLERR) as i16, revents: 0 }).collect();
+            if pfds.is_empty() { break; }
+            let rc = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, 250) }; // 250ms
+            if rc < 0 { eprintln!("mux poll error: {}", std::io::Error::last_os_error()); break; }
+            if rc == 0 { continue; }
+            for pfd in &pfds { if pfd.revents == 0 { continue; }
+                if let Some(child) = children.iter_mut().find(|c| c.fd == pfd.fd && c.alive) {
+                    if (pfd.revents & (libc::POLLHUP | libc::POLLERR)) != 0 { let mut tmp=[0u8;1024]; let _=nread(child.fd,&mut tmp); child.alive=false; continue; }
+                    if (pfd.revents & libc::POLLIN) != 0 { loop { let mut tmp=[0u8;4096]; match nread(child.fd,&mut tmp) { Ok(0)=>{ child.alive=false; break; }, Ok(n)=>{ child.buf.extend_from_slice(&tmp[..n]); if n < tmp.len() { break; } }, Err(e)=>{ if e==nix::errno::Errno::EAGAIN { break; } child.alive=false; break; } } } }
+                    loop { if child.buf.len()<4 { break; } let len = u32::from_be_bytes([child.buf[0],child.buf[1],child.buf[2],child.buf[3]]) as usize; if child.buf.len() < 4+len { break; }
+                        let frame = child.buf[4..4+len].to_vec(); child.buf.drain(0..4+len);
+                        let v: serde_json::Value = match serde_json::from_slice(&frame) { Ok(v)=>v, Err(_)=> { eprintln!("mux: bad json from child"); continue; } };
+                        let op = v.get("op").and_then(|o| o.as_str()).unwrap_or("");
+                        let params = v.get("params").cloned().unwrap_or(json!({}));
+                        let id = v.get("id").cloned().unwrap_or(json!("?"));
+                        let (ok,res) = match upstream.send(op, params) { Ok(r)=>r, Err(e)=> { eprintln!("mux upstream send error: {e}"); (false, json!({"code":"E_IO"})) } };
+                        let resp = if ok { json!({"id": id, "ok": true, "result": res}) } else { json!({"id": id, "ok": false, "error": {"code": res.get("code").and_then(|c|c.as_str()).unwrap_or("E_IO"), "message":"mux upstream error"}}) };
+                        let resp_bytes = serde_json::to_vec(&resp).unwrap_or_else(|_| b"{}".to_vec());
+                        let len_bytes = (resp_bytes.len() as u32).to_be_bytes();
+                        unsafe { let _ = libc::write(child.fd, len_bytes.as_ptr() as *const _, 4); let _ = libc::write(child.fd, resp_bytes.as_ptr() as *const _, resp_bytes.len()); }
+                    }
+                }
+            }
+        }
+        // Close all remaining fds
+        for c in children { let _ = close(c.fd); }
+    }
     let mut status_code = 0;
     for _ in 0..units.len() { let mut status: i32 = 0; unsafe { libc::wait(&mut status); if libc::WIFEXITED(status){ status_code = libc::WEXITSTATUS(status);} } }
     Ok(status_code)
@@ -154,6 +232,10 @@ fn main() -> Result<()> {
         "--vfs-fd" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after --vfs-fd"))?; let fd: i32 = v.parse().map_err(|_| anyhow::anyhow!("invalid fd"))?; pass_fd = Some(fd); }
             other => { eprintln!("unknown arg: {other}"); }
         }
+    }
+    if pass_fd.is_some() && (!allow_read.is_empty() || !allow_write.is_empty()) {
+        eprintln!("error: --vfs-fd cannot be combined with -i/-o options");
+        std::process::exit(2);
     }
     let s = script.unwrap_or_else(|| "".to_string());
     let units = parse_pipeline(&s);
@@ -474,6 +556,24 @@ fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, allow_read:&[String], al
     0
 }
 
+// ---- llmsh (invoke nested shell) ----
+fn run_builtin_llmsh(args:&Vec<String>, _redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], pass_fd:Option<i32>) -> i32 {
+    // Only supported form: llmsh -c 'script'
+    let mut idx=0; let mut script:Option<String>=None;
+    while idx < args.len() {
+        if args[idx]=="-c" { if idx+1 >= args.len() { eprintln!("llmsh: missing script after -c"); return 2; } script=Some(args[idx+1].clone()); idx+=2; }
+        else { eprintln!("llmsh: unsupported arg {} (only -c allowed)", args[idx]); return 2; }
+    }
+    let script = if let Some(s) = script { s } else { eprintln!("llmsh: -c required"); return 2; };
+    // Determine path to llmsh binary; allow override via LLMSH_BIN else assume 'llmsh'
+    let bin = env::var("LLMSH_BIN").unwrap_or_else(|_| "llmsh".to_string());
+    let mut cmd = Command::new(&bin);
+    cmd.arg("-c").arg(&script);
+    // Nested shell does not need -i / -o propagation (server-managed paths)
+    if let Some(fd)=pass_fd { cmd.arg("--vfs-fd").arg(fd.to_string()); }
+    match cmd.status() { Ok(st)=> st.code().unwrap_or(1), Err(e)=> { eprintln!("llmsh exec failed: {e}"); 5 } }
+}
+
 struct HelpEntry { name:&'static str, usage:&'static str, desc:&'static str,
     options:&'static [(&'static str,&'static str)], examples:&'static [(&'static str,&'static str)], related:&'static [&'static str] }
 
@@ -486,6 +586,7 @@ static HELP_ENTRIES:&[HelpEntry] = &[
     HelpEntry { name:"tr", usage:"tr [-d] set1 [set2]", desc:"translate or delete characters (1:1 literal)", options:&[("-d","delete characters in set1")], examples:&[("tr abc xyz < in","Map a->x b->y c->z"),("tr -d 0-9 < in","Delete digits (range not yet supported)")], related:&["sed"] },
     HelpEntry { name:"sed", usage:"sed s/pat/repl/[gE] [file...]", desc:"stream substitution (literal by default, E enables regex)", options:&[("g","global replace"),("E","enable regex (alias r)")], examples:&[("sed s/foo/bar/ file","Replace first foo"),("sed s/foo/bar/g file","Replace all foo"),("sed 's/fo*/X/E' file","Regex replace")], related:&["grep","tr"] },
     HelpEntry { name:"help", usage:"help [command]", desc:"list commands or show detailed help", options:&[], examples:&[("help","List commands"),("help grep","Show grep help")], related:&[] },
+    HelpEntry { name:"llmsh", usage:"llmsh [-c 'pipeline'] [--vfs-fd N | (-i path ... -o path ...)]", desc:"invoke nested llmsh instance (only -c supported; --vfs-fd is exclusive with -i/-o)", options:&[("-c SCRIPT","execute pipeline SCRIPT"),("--vfs-fd N","reuse parent VFS connection (no -i/-o allowed)")], examples:&[("llmsh -c 'cat file.txt' -i file.txt","Run with allow list"),("llmsh -c 'grep foo a | wc -l' --vfs-fd 3","Nested pipeline sharing VFS FD")], related:&["help"] },
 ];
 
 fn find_help(name:&str)->Option<&'static HelpEntry>{
@@ -518,7 +619,7 @@ fn run_builtin_help(args:&Vec<String>) -> i32 {
         return 0;
     }
     let mut status=0;
-    for name in args { match find_help(name) { Some(e)=> { let txt = format_entry(e); let _=write!(stdout, "{}", txt); }, None=> { let _=writeln!(stdout, "no help for command: {}", name); status=2; } } }
+    for name in args { if let Some(e) = find_help(name) { let txt = format_entry(e); let _=write!(stdout, "{}", txt); } else { let _=writeln!(stdout, "no help for command: {}", name); status=2; } }
     let _=stdout.flush();
     status
 }
