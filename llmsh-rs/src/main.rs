@@ -8,6 +8,7 @@ use std::ffi::CString;
 use std::io::{BufReader, Read, Write};
 use std::process::{Command, Stdio};
 use nix::unistd::{fork, ForkResult, pipe, dup2, close, execvp, dup, read as nread};
+use nix::fcntl::{fcntl, FcntlArg, FdFlag, OFlag};
 use nix::sys::socket::{socketpair, AddressFamily, SockType, SockFlag};
 use nix::libc;
 use serde_json::json;
@@ -121,11 +122,17 @@ impl VfsClient {
 
 fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> Result<i32> {
     if units.is_empty() { return Ok(0); }
+    // Helper: set FD_CLOEXEC; optionally set O_NONBLOCK (used for MUX sockets so poll loop is safe)
+    fn set_cloexec(fd: RawFd) { let _ = fcntl(fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC)); }
+    fn set_nonblock(fd: RawFd) { if let Ok(flags) = fcntl(fd, FcntlArg::F_GETFL) { let mut oflags = OFlag::from_bits_truncate(flags); oflags.insert(OFlag::O_NONBLOCK); let _ = fcntl(fd, FcntlArg::F_SETFL(oflags)); } }
+    fn clear_cloexec(fd: RawFd) { if let Ok(flags) = fcntl(fd, FcntlArg::F_GETFD) { let mut f = FdFlag::from_bits_truncate(flags); f.remove(FdFlag::FD_CLOEXEC); let _ = fcntl(fd, FcntlArg::F_SETFD(f)); } }
     let mut fds: Vec<(RawFd, RawFd)> = Vec::new();
     for _ in 0..units.len().saturating_sub(1) {
         let (r,w)=pipe()?;
         let rfd = r.into_raw_fd();
         let wfd = w.into_raw_fd();
+        // Mark pipeline intermediate FDs CLOEXEC to avoid leaking into exec children (dup2 will create stdio without CLOEXEC later)
+        set_cloexec(rfd); set_cloexec(wfd);
         fds.push((rfd,wfd));
     }
     // New design: always operate in MUX mode with a single lazily spawned upstream vfsd.
@@ -133,10 +140,13 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
     let mut mux_child_fds: Vec<Option<(RawFd, RawFd)>> = Vec::new(); // (child_end, parent_end)
     if mux_mode {
         for _ in 0..units.len() {
-            let (s1,s2) = socketpair(AddressFamily::Unix, SockType::Stream, None, SockFlag::empty())?;
-            // Convert OwnedFd to raw fd integers for our storage
+            let (s1,s2) = socketpair(AddressFamily::Unix, SockType::Stream, None, SockFlag::SOCK_CLOEXEC)?; // CLOEXEC
             let s1_fd = s1.into_raw_fd();
             let s2_fd = s2.into_raw_fd();
+            // Set non-blocking for poll-driven MUX loop
+            set_nonblock(s1_fd); set_nonblock(s2_fd);
+            // (CLOEXEC already via flag) – still explicitly mark for safety in case of older kernels
+            set_cloexec(s1_fd); set_cloexec(s2_fd);
             mux_child_fds.push(Some((s1_fd,s2_fd)));
         }
     }
@@ -147,6 +157,8 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
             ForkResult::Child => {
                 if i > 0 { let (pr,_pw)=fds[i-1]; dup2(pr,0)?; }
                 if i < units.len()-1 { let (_pr,pw)=fds[i]; dup2(pw,1)?; }
+                // Ensure stdio not CLOEXEC for exec'd external commands
+                clear_cloexec(0); clear_cloexec(1); clear_cloexec(2);
                 for (r,w) in &fds { let _=close(*r); let _=close(*w); }
                 if mux_mode { if let Some((child_fd,parent_fd)) = mux_child_fds[i] { let _=close(parent_fd); // set env var for this child
                         env::set_var("LLMSH_MUX_FD", child_fd.to_string()); }
@@ -186,6 +198,8 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
         // Lazy upstream connection (spawn vfsd on first child request)
         let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
         let mut upstream_opt: Option<VfsClient> = None;
+        let mux_debug = env::var("LLMSH_DEBUG_MUX").is_ok();
+        if mux_debug { eprintln!("[mux] start: children={} fds={:?}", children.len(), children.iter().map(|c| c.fd).collect::<Vec<_>>()); }
         while children.iter().any(|c| c.alive) {
             let mut pfds: Vec<libc::pollfd> = children.iter().filter(|c| c.alive)
                 .map(|c| libc::pollfd { fd: c.fd, events: (libc::POLLIN | libc::POLLHUP | libc::POLLERR) as i16, revents: 0 }).collect();
@@ -195,6 +209,7 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
             if rc == 0 { continue; }
             for pfd in &pfds { if pfd.revents == 0 { continue; }
                 if let Some(child) = children.iter_mut().find(|c| c.fd == pfd.fd && c.alive) {
+                    if mux_debug { eprintln!("[mux] event fd={} revents=0x{:x}", pfd.fd, pfd.revents); }
                     if (pfd.revents & (libc::POLLHUP | libc::POLLERR)) != 0 { let mut tmp=[0u8;1024]; let _=nread(child.fd,&mut tmp); child.alive=false; continue; }
                     if (pfd.revents & libc::POLLIN) != 0 { loop { let mut tmp=[0u8;4096]; match nread(child.fd,&mut tmp) { Ok(0)=>{ child.alive=false; break; }, Ok(n)=>{ child.buf.extend_from_slice(&tmp[..n]); if n < tmp.len() { break; } }, Err(e)=>{ if e==nix::errno::Errno::EAGAIN { break; } child.alive=false; break; } } } }
                     loop { if child.buf.len()<4 { break; } let len = u32::from_be_bytes([child.buf[0],child.buf[1],child.buf[2],child.buf[3]]) as usize; if child.buf.len() < 4+len { break; }
@@ -211,19 +226,24 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
                                     unsafe { let _ = libc::write(child.fd, len_bytes.as_ptr() as *const _, 4); let _ = libc::write(child.fd, resp_bytes.as_ptr() as *const _, resp_bytes.len()); }
                                     continue; }
                             }
+                            if mux_debug { eprintln!("[mux] upstream spawned path={} fd_child={} buffer_len={}", vfsd_path, child.fd, child.buf.len()); }
                         }
                         let upstream = upstream_opt.as_mut().unwrap();
+                        if mux_debug { eprintln!("[mux] forward op={} id={}", op, id); }
                         let (ok,res) = match upstream.send(op, params) { Ok(r)=>r, Err(e)=> { eprintln!("mux upstream send error: {e}"); (false, json!({"code":"E_IO"})) } };
                         let resp = if ok { json!({"id": id, "ok": true, "result": res}) } else { json!({"id": id, "ok": false, "error": {"code": res.get("code").and_then(|c|c.as_str()).unwrap_or("E_IO"), "message":"mux upstream error"}}) };
                         let resp_bytes = serde_json::to_vec(&resp).unwrap_or_else(|_| b"{}".to_vec());
                         let len_bytes = (resp_bytes.len() as u32).to_be_bytes();
                         unsafe { let _ = libc::write(child.fd, len_bytes.as_ptr() as *const _, 4); let _ = libc::write(child.fd, resp_bytes.as_ptr() as *const _, resp_bytes.len()); }
+                        if mux_debug { eprintln!("[mux] reply sent id={} ok={}", id, ok); }
                     }
                 }
             }
+            if mux_debug { let alive_cnt = children.iter().filter(|c| c.alive).count(); eprintln!("[mux] loop end alive={} ", alive_cnt); }
         }
         // Close all remaining fds
         for c in children { let _ = close(c.fd); }
+        if mux_debug { eprintln!("[mux] exit loop"); }
     }
     let mut status_code = 0;
     for _ in 0..units.len() { let mut status: i32 = 0; unsafe { libc::wait(&mut status); if libc::WIFEXITED(status){ status_code = libc::WEXITSTATUS(status);} } }
