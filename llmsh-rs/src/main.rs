@@ -1,5 +1,7 @@
 use anyhow::Result;
 use std::env;
+use std::path::{Path, PathBuf};
+use std::os::unix::fs::PermissionsExt; // for mode()
 use std::os::unix::io::{RawFd, FromRawFd};
 use std::os::fd::IntoRawFd; // needed for into_raw_fd on OwnedFd
 use std::ffi::CString;
@@ -126,8 +128,8 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
         let wfd = w.into_raw_fd();
         fds.push((rfd,wfd));
     }
-    // MUX mode: if pass_fd is Some, create socketpairs per child needing VFS.
-    let mux_mode = pass_fd.is_some();
+    // New design: always operate in MUX mode with a single lazily spawned upstream vfsd.
+    let mux_mode = true;
     let mut mux_child_fds: Vec<Option<(RawFd, RawFd)>> = Vec::new(); // (child_end, parent_end)
     if mux_mode {
         for _ in 0..units.len() {
@@ -181,9 +183,9 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
         struct MuxChild { fd: RawFd, alive: bool, buf: Vec<u8> }
         let mut children: Vec<MuxChild> = Vec::new();
         for pair in mux_child_fds.into_iter() { if let Some((child_fd,parent_fd))=pair { let _=close(child_fd); children.push(MuxChild { fd: parent_fd, alive: true, buf: Vec::new() }); } }
-        // Single upstream connection
+        // Lazy upstream connection (spawn vfsd on first child request)
         let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-        let mut upstream = match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=>c, Err(e)=> { eprintln!("parent mux: vfsd spawn failed: {e}"); return Ok(5);} };
+        let mut upstream_opt: Option<VfsClient> = None;
         while children.iter().any(|c| c.alive) {
             let mut pfds: Vec<libc::pollfd> = children.iter().filter(|c| c.alive)
                 .map(|c| libc::pollfd { fd: c.fd, events: (libc::POLLIN | libc::POLLHUP | libc::POLLERR) as i16, revents: 0 }).collect();
@@ -201,6 +203,16 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
                         let op = v.get("op").and_then(|o| o.as_str()).unwrap_or("");
                         let params = v.get("params").cloned().unwrap_or(json!({}));
                         let id = v.get("id").cloned().unwrap_or(json!("?"));
+                        if upstream_opt.is_none() {
+                            match VfsClient::spawn(&vfsd_path, allow_read, allow_write, pass_fd) { Ok(c)=> upstream_opt = Some(c), Err(e)=> { eprintln!("parent mux: vfsd lazy spawn failed: {e}");
+                                    let resp = json!({"id": id, "ok": false, "error": {"code":"E_IO","message":"upstream spawn failed"}});
+                                    let resp_bytes = serde_json::to_vec(&resp).unwrap_or_else(|_| b"{}".to_vec());
+                                    let len_bytes = (resp_bytes.len() as u32).to_be_bytes();
+                                    unsafe { let _ = libc::write(child.fd, len_bytes.as_ptr() as *const _, 4); let _ = libc::write(child.fd, resp_bytes.as_ptr() as *const _, resp_bytes.len()); }
+                                    continue; }
+                            }
+                        }
+                        let upstream = upstream_opt.as_mut().unwrap();
                         let (ok,res) = match upstream.send(op, params) { Ok(r)=>r, Err(e)=> { eprintln!("mux upstream send error: {e}"); (false, json!({"code":"E_IO"})) } };
                         let resp = if ok { json!({"id": id, "ok": true, "result": res}) } else { json!({"id": id, "ok": false, "error": {"code": res.get("code").and_then(|c|c.as_str()).unwrap_or("E_IO"), "message":"mux upstream error"}}) };
                         let resp_bytes = serde_json::to_vec(&resp).unwrap_or_else(|_| b"{}".to_vec());
@@ -224,12 +236,14 @@ fn main() -> Result<()> {
     let mut allow_read: Vec<String> = Vec::new();
     let mut allow_write: Vec<String> = Vec::new();
     let mut pass_fd: Option<i32> = None;
+    let mut vfsd_arg: Option<String> = None; // --vfsd explicit binary path
     while let Some(a) = args.next() {
         match a.as_str() {
             "-c" => { script = Some(args.next().ok_or_else(|| anyhow::anyhow!("missing script after -c"))?); }
             "-i" | "--input" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after -i"))?; allow_read.push(v); }
             "-o" | "--output" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after -o"))?; allow_write.push(v); }
-        "--vfs-fd" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after --vfs-fd"))?; let fd: i32 = v.parse().map_err(|_| anyhow::anyhow!("invalid fd"))?; pass_fd = Some(fd); }
+            "--vfs-fd" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after --vfs-fd"))?; let fd: i32 = v.parse().map_err(|_| anyhow::anyhow!("invalid fd"))?; pass_fd = Some(fd); }
+            "--vfsd" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after --vfsd"))?; vfsd_arg = Some(v); }
             other => { eprintln!("unknown arg: {other}"); }
         }
     }
@@ -237,6 +251,24 @@ fn main() -> Result<()> {
         eprintln!("error: --vfs-fd cannot be combined with -i/-o options");
         std::process::exit(2);
     }
+
+    // Resolve vfsd binary path with precedence:
+    // (1) --vfsd argument
+    // (2) Environment variable LLMSH_VFSD_BIN
+    // (3) Same directory as current executable (llmsh) containing a file named "vfsd"
+    // (4) PATH search
+    // (5) Error out
+    fn is_executable(p: &Path) -> bool { p.is_file() && std::fs::metadata(p).map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false) }
+    fn resolve_vfsd(arg: &Option<String>) -> Result<String> {
+        if let Some(a) = arg { let p = PathBuf::from(a); if is_executable(&p) { return Ok(p.to_string_lossy().to_string()); } else { anyhow::bail!("--vfsd path not executable or not found: {a}"); } }
+        if let Ok(envv) = env::var("LLMSH_VFSD_BIN") { let p = PathBuf::from(&envv); if is_executable(&p) { return Ok(p.to_string_lossy().to_string()); } }
+        if let Ok(exe) = env::current_exe() { if let Some(dir) = exe.parent() { let cand = dir.join("vfsd"); if is_executable(&cand) { return Ok(cand.to_string_lossy().to_string()); } } }
+        if let Some(path_var) = env::var_os("PATH") { for comp in env::split_paths(&path_var) { let cand = comp.join("vfsd"); if is_executable(&cand) { return Ok(cand.to_string_lossy().to_string()); } } }
+        anyhow::bail!("vfsd binary not found: specify --vfsd or set LLMSH_VFSD_BIN or place 'vfsd' alongside llmsh or in PATH")
+    }
+    let resolved_vfsd = match resolve_vfsd(&vfsd_arg) { Ok(p)=>p, Err(e)=> { eprintln!("vfsd resolve error: {e}"); std::process::exit(9); } };
+    // Export resolved path so existing spawn code (which still reads env var) uses it.
+    env::set_var("LLMSH_VFSD_BIN", &resolved_vfsd);
     let s = script.unwrap_or_else(|| "".to_string());
     let units = parse_pipeline(&s);
     let code = spawn_pipeline(&units, &allow_read, &allow_write, pass_fd)?;
