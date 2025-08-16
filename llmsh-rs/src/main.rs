@@ -341,83 +341,291 @@ fn run_builtin_wc(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _a
     0
 }
 
-// ---- grep (simple substring match, no regex yet) ----
+// ---- grep (expanded flags: -i -n -E|-r -v -c -x -w -H/-h -q) ----
 fn run_builtin_grep(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fds:Option<(i32,i32)>) -> i32 {
     if args.is_empty() { eprintln!("grep: missing pattern"); return 2; }
-    // parse options: -i (ignore case), -n (line numbers), -E (regex) default literal, -r alias for -E
-    let mut idx=0; let mut ignore_case=false; let mut show_line=false; let mut use_regex=false;
-    while idx < args.len() && args[idx].starts_with('-') && args[idx] != "-" { for ch in args[idx].chars().skip(1) { match ch { 'i'=>ignore_case=true, 'n'=>show_line=true, 'E'|'r'=>use_regex=true, _=>{} } } idx+=1; }
+    // Options
+    let mut idx=0;
+    let mut ignore_case=false; // -i
+    let mut show_line=false;   // -n
+    let mut use_regex=false;   // -E / -r
+    let mut invert=false;      // -v
+    let mut count_only=false;  // -c
+    let mut whole_line=false;  // -x
+    let mut word_match=false;  // -w
+    let mut force_with_filename:Option<bool>=None; // -H(true)/-h(false)
+    let mut quiet=false;       // -q
+    while idx < args.len() && args[idx].starts_with('-') && args[idx] != "-" {
+        for ch in args[idx].chars().skip(1) {
+            match ch {
+                'i' => ignore_case=true,
+                'n' => show_line=true,
+                'E' | 'r' => use_regex=true,
+                'v' => invert=true,
+                'c' => count_only=true,
+                'x' => whole_line=true,
+                'w' => word_match=true,
+                'H' => force_with_filename=Some(true),
+                'h' => force_with_filename=Some(false),
+                'q' => quiet=true,
+                _ => {}
+            }
+        }
+        idx+=1;
+    }
     if idx>=args.len() { eprintln!("grep: missing pattern"); return 2; }
-    let pattern_raw=&args[idx]; idx+=1;
+    let mut pattern_raw=args[idx].clone(); idx+=1;
     let mut files:Vec<String> = if idx < args.len() { args[idx..].to_vec() } else { Vec::new() };
     if files.is_empty() { if let Some(f)=&redir.in_file { files.push(f.clone()); } }
     if files.is_empty() { return 0; }
-    let regex_opt = if use_regex { let pat = if ignore_case { format!("(?i){}", pattern_raw) } else { pattern_raw.to_string() }; match Regex::new(&pat) { Ok(r)=>Some(r), Err(e)=>{ eprintln!("grep: invalid regex: {e}"); return 2; } } } else { None };
-    let needle = if !use_regex { if ignore_case { pattern_raw.to_lowercase() } else { pattern_raw.clone() } } else { String::new() };
+
+    // Build matcher
+    let mut regex_opt:Option<Regex>=None;
+    let mut needle=String::new();
+    if use_regex {
+        // Apply -w and -x by anchoring/wrapping with word boundaries
+        let mut pat = pattern_raw.clone();
+        if word_match { pat = format!("\\b{}\\b", pat); }
+        if whole_line { pat = format!("^{}$", pat); }
+        if ignore_case { pat = format!("(?i){}", pat); }
+        match Regex::new(&pat) { Ok(r)=>regex_opt=Some(r), Err(e)=>{ eprintln!("grep: invalid regex: {e}"); return 2; } }
+    } else {
+        // Literal
+        if word_match {
+            // For literal -w, construct regex with escaped literal
+            let esc = regex::escape(&pattern_raw);
+            let mut pat = format!("\\b{}\\b", esc);
+            if whole_line { pat = format!("^{}$", pat); }
+            if ignore_case { pat = format!("(?i){}", pat); }
+            match Regex::new(&pat) { Ok(r)=>{ regex_opt=Some(r); use_regex=true; }, Err(e)=>{ eprintln!("grep: internal regex build failed: {e}"); return 2; } }
+        } else if whole_line {
+            // For literal -x, compare equality later; no regex needed
+            needle = if ignore_case { pattern_raw.to_lowercase() } else { pattern_raw.clone() };
+        } else {
+            needle = if ignore_case { pattern_raw.to_lowercase() } else { pattern_raw.clone() };
+        }
+    }
+
     let client = child_mux();
     let mut stdout_handle = std::io::stdout();
-    let multi = files.len()>1;
-    let mut any_match=false;
+    let multi_default = files.len()>1;
+    let with_filename = force_with_filename.unwrap_or(multi_default);
+    let mut any_selected=false;
     for p in files.iter() {
         let h = match client.open(p, "r") { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open {p} r error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open {p} r error: {e}"); return 6; } };
         let mut buf_acc:Vec<u8>=Vec::new();
         let mut line_no:usize=0;
-        loop { match client.read_chunk(h, 4096) { Ok(Ok((data,eof)))=>{ if data.is_empty() && eof { break; } buf_acc.extend_from_slice(&data);
-                let mut start=0; let mut i=0; while i < buf_acc.len() { if buf_acc[i]==b'\n' { line_no+=1; let line_slice=&buf_acc[start..i]; let mut is_match=false; if use_regex { if let Some(re)=&regex_opt { if let Ok(s)=std::str::from_utf8(line_slice) { if re.is_match(s) { is_match=true; } } } } else { if let Ok(s)=std::str::from_utf8(line_slice) { let s_cmp = if ignore_case { s.to_lowercase() } else { s.to_string() }; if !needle.is_empty() && s_cmp.contains(&needle) { is_match=true; } } }
-                        if is_match { any_match=true; if multi { let _=write!(stdout_handle, "{}:", p); } if show_line { let _=write!(stdout_handle, "{}:", line_no); } let _=stdout_handle.write_all(line_slice); let _=stdout_handle.write_all(b"\n"); }
-                        start=i+1; }
-                    i+=1; }
-                if start>0 { buf_acc.drain(0..start); }
-                if eof { if !buf_acc.is_empty() { line_no+=1; let line_slice=&buf_acc[..]; let mut is_match=false; if use_regex { if let Some(re)=&regex_opt { if let Ok(s)=std::str::from_utf8(line_slice) { if re.is_match(s) { is_match=true; } } } } else { if let Ok(s)=std::str::from_utf8(line_slice) { let s_cmp = if ignore_case { s.to_lowercase() } else { s.to_string() }; if !needle.is_empty() && s_cmp.contains(&needle) { is_match=true; } } } if is_match { any_match=true; if multi { let _=write!(stdout_handle, "{}:", p); } if show_line { let _=write!(stdout_handle, "{}:", line_no); } let _=stdout_handle.write_all(line_slice); let _=stdout_handle.write_all(b"\n"); } buf_acc.clear(); }
-                    break; }
-            }, Ok(Err(code))=>{ eprintln!("read error {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol read error: {e}"); return 6; } } }
+        let mut cnt:usize=0;
+        let mut early_exit=false;
+        loop {
+            match client.read_chunk(h, 4096) {
+                Ok(Ok((data,eof))) => {
+                    if data.is_empty() && eof { break; }
+                    buf_acc.extend_from_slice(&data);
+                    let mut start=0; let mut i=0;
+                    while i < buf_acc.len() {
+                        if buf_acc[i]==b'\n' {
+                            line_no+=1; let line_slice=&buf_acc[start..i];
+                            let mut selected=false;
+                            if let Ok(s)=std::str::from_utf8(line_slice) {
+                                if let Some(re)=&regex_opt { if re.is_match(s) { selected=true; } }
+                                else if whole_line {
+                                    let cmp = if ignore_case { s.to_lowercase() } else { s.to_string() };
+                                    selected = cmp==needle;
+                                } else {
+                                    let cmp = if ignore_case { s.to_lowercase() } else { s.to_string() };
+                                    if !needle.is_empty() && cmp.contains(&needle) { selected=true; }
+                                }
+                            }
+                            if invert { selected = !selected; }
+                            if selected {
+                                any_selected=true;
+                                if quiet { early_exit=true; }
+                                if count_only { cnt+=1; } else {
+                                    if with_filename { let _=write!(stdout_handle, "{}:", p); }
+                                    if show_line { let _=write!(stdout_handle, "{}:", line_no); }
+                                    let _=stdout_handle.write_all(line_slice);
+                                    let _=stdout_handle.write_all(b"\n");
+                                }
+                            }
+                            start=i+1;
+                        }
+                        i+=1;
+                    }
+                    if start>0 { buf_acc.drain(0..start); }
+                    if eof {
+                        if !buf_acc.is_empty() {
+                            line_no+=1;
+                            let line_slice=&buf_acc[..];
+                            let mut selected=false;
+                            if let Ok(s)=std::str::from_utf8(line_slice) {
+                                if let Some(re)=&regex_opt { if re.is_match(s) { selected=true; } }
+                                else if whole_line {
+                                    let cmp = if ignore_case { s.to_lowercase() } else { s.to_string() };
+                                    selected = cmp==needle;
+                                } else {
+                                    let cmp = if ignore_case { s.to_lowercase() } else { s.to_string() };
+                                    if !needle.is_empty() && cmp.contains(&needle) { selected=true; }
+                                }
+                            }
+                            if invert { selected=!selected; }
+                            if selected {
+                                any_selected=true;
+                                if quiet { early_exit=true; }
+                                if count_only { cnt+=1; } else {
+                                    if with_filename { let _=write!(stdout_handle, "{}:", p); }
+                                    if show_line { let _=write!(stdout_handle, "{}:", line_no); }
+                                    let _=stdout_handle.write_all(line_slice);
+                                    let _=stdout_handle.write_all(b"\n");
+                                }
+                            }
+                            buf_acc.clear();
+                        }
+                        break;
+                    }
+                    if early_exit { break; }
+                },
+                Ok(Err(code)) => { eprintln!("read error {:?}", code); return map_exit(&code); },
+                Err(e) => { eprintln!("protocol read error: {e}"); return 6; },
+            }
+        }
         let _ = client.close(h);
+        if count_only && !quiet {
+            if with_filename { let _=write!(stdout_handle, "{}:", p); }
+            let _ = writeln!(stdout_handle, "{}", cnt);
+        }
+        if quiet && any_selected { break; }
     }
     let _ = stdout_handle.flush();
-    if any_match { 0 } else { 1 }
+    if any_selected { 0 } else { 1 }
 }
 
 // ---- tr (simple 1:1 mapping, optional -d delete) ----
 fn run_builtin_tr(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fds:Option<(i32,i32)>) -> i32 {
     if args.is_empty() { eprintln!("tr: missing args"); return 2; }
-    let mut delete_mode=false; let mut sets:Vec<String>=Vec::new();
-    for a in args { if a=="-d" { delete_mode=true; } else { sets.push(a.clone()); } }
+    let mut delete_mode=false; let mut complement=false; let mut squeeze=false; let mut sets:Vec<String>=Vec::new();
+    for a in args {
+        if a=="-d" { delete_mode=true; }
+        else if a=="-c" { complement=true; }
+        else if a=="-s" { squeeze=true; }
+        else { sets.push(a.clone()); }
+    }
+    // Helper: expand set syntax (ranges a-z and POSIX classes [:digit:] [:alpha:] [:alnum:] [:lower:] [:upper:] [:space:] [:blank:] [:xdigit:])
+    fn expand_set(spec:&str) -> Vec<u8> {
+        let mut out:Vec<u8>=Vec::new();
+        let bytes=spec.as_bytes();
+        let mut i=0;
+        while i < bytes.len() {
+            if i+1 < bytes.len() && bytes[i]==b'[' && bytes[i+1]==b':' {
+                // class
+                if let Some(end) = spec[i+2..].find(":]") { let name=&spec[i+2..i+2+end];
+                    match name {
+                        "digit" => out.extend(b"0123456789"),
+                        "alpha" => { out.extend(b"ABCDEFGHIJKLMNOPQRSTUVWXYZ"); out.extend(b"abcdefghijklmnopqrstuvwxyz"); },
+                        "alnum" => { out.extend(b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"); },
+                        "lower" => out.extend(b"abcdefghijklmnopqrstuvwxyz"),
+                        "upper" => out.extend(b"ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+                        "space" => out.extend([b' ', b'\t', b'\n', b'\r', 0x0b, 0x0c]),
+                        "blank" => out.extend([b' ', b'\t']),
+                        "xdigit" => out.extend(b"0123456789ABCDEFabcdef"),
+                        _ => {}
+                    }
+                    i += 2 + end + 2; // skip [:name:]
+                    continue;
+                }
+            }
+            if i+2 < bytes.len() && bytes[i+1]==b'-' && bytes[i]!=b'-' && bytes[i+2]!=b'-' {
+                let start=bytes[i]; let end=bytes[i+2];
+                if start <= end { for c in start..=end { out.push(c); } }
+                else { for c in (end..=start).rev() { out.push(c); } }
+                i+=3; continue;
+            }
+            out.push(bytes[i]); i+=1;
+        }
+        out
+    }
+    // Validate sets
     if delete_mode {
         if sets.len()!=1 { eprintln!("tr -d requires 1 set"); return 2; }
-    } else if sets.len()!=2 { eprintln!("tr requires 2 sets"); return 2; }
-    let set_from = sets.get(0).cloned().unwrap_or_default();
-    let set_to = if delete_mode { String::new() } else { sets.get(1).cloned().unwrap_or_default() };
-    if !delete_mode && set_from.len()!=set_to.len() { eprintln!("tr: sets must be same length (no padding implemented)"); return 2; }
-    // gather inputs (stdin path not yet supported => need file or redir)
+    } else {
+        if squeeze && sets.len()==1 {
+            // ok: squeeze only, no translation
+        } else if sets.len()!=2 { eprintln!("tr requires 2 sets unless using -s only"); return 2; }
+    }
+    if !delete_mode && sets.len()==2 && sets[0].len()!=sets[1].len() { eprintln!("tr: sets must be same length (no padding implemented)"); return 2; }
+
+    // Build delete/mapping data
+    let set1_expanded = expand_set(&sets[0]);
+    let set2_expanded = if delete_mode || (squeeze && sets.len()==1) { Vec::new() } else { expand_set(&sets[1]) };
+    if !delete_mode && !set2_expanded.is_empty() && set1_expanded.len()!=set2_expanded.len() { eprintln!("tr: expanded sets must be same length"); return 2; }
+    if complement && !delete_mode && !set2_expanded.is_empty() {
+        eprintln!("tr: -c with translation not supported (only with -d/-s)");
+        return 2;
+    }
+
+    // gather inputs
     let mut files:Vec<String>=Vec::new();
-    // remaining args beyond sets ignored (already parsed)
     if let Some(f)=&redir.in_file { files.push(f.clone()); }
-    // if user passed files after sets (not implemented) - future
     if files.is_empty() { return 0; }
     let client = child_mux();
     let mut out_handle: Option<u32> = None; // vfs handle if writing to file
     let mut stdout_handle = std::io::stdout();
-    // build table
-    let mut map = [0u16;256];
-    for i in 0..256 { map[i]=i as u16; }
+
+    // Build translate map (identity by default)
+    let mut map = [0u16;256]; for i in 0..256 { map[i]=i as u16; }
     if delete_mode {
-        for &b in set_from.as_bytes() { map[b as usize] = 0xFFFF; }
-    } else {
-    for (fb,tb) in set_from.as_bytes().iter().zip(set_to.as_bytes()) { map[*fb as usize] = *tb as u16; }
+        let mut del_mask=[false;256];
+        if complement {
+            for i in 0..256 { del_mask[i]=true; }
+            for &b in &set1_expanded { del_mask[b as usize]=false; }
+        } else {
+            for &b in &set1_expanded { del_mask[b as usize]=true; }
+        }
+        for i in 0..256 { if del_mask[i] { map[i]=0xFFFF; } }
+    } else if !set2_expanded.is_empty() {
+        for (a,b) in set1_expanded.iter().zip(set2_expanded.iter()) { map[*a as usize] = *b as u16; }
+    } // else: squeeze-only, keep identity map
+
+    // Build squeeze set mask
+    let mut squeeze_mask=[false;256];
+    if squeeze {
+        let base = if !delete_mode && !set2_expanded.is_empty() { &set2_expanded } else { &set1_expanded };
+        if complement {
+            for i in 0..256 { squeeze_mask[i]=true; }
+            for &b in base { squeeze_mask[b as usize]=false; }
+        } else {
+            for &b in base { squeeze_mask[b as usize]=true; }
+        }
     }
+
     if let Some((of, append))=&redir.out_file {
         let mode = if *append { "a" } else { "w" };
         match client.open(of, mode) { Ok(Ok(h))=> out_handle=Some(h), Ok(Err(code))=> { eprintln!("open {of} {mode} error: {:?}", code); return map_exit(&code); }, Err(e)=> { eprintln!("protocol open {of} {mode} error: {e}"); return 6; } }
     }
     for p in files.iter() {
-    let h = match client.open(p, "r") { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open {p} r error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open {p} r error: {e}"); return 6; } };
+        let h = match client.open(p, "r") { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open {p} r error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open {p} r error: {e}"); return 6; } };
+        // keep last output byte for squeeze across chunks
+        let mut last_out:Option<u8>=None; let mut last_in_s=false;
         loop {
             match client.read_chunk(h, 8192) {
                 Ok(Ok((data,eof))) => {
                     if data.is_empty() && eof { break; }
                     if !data.is_empty() {
                         let mut out:Vec<u8>=Vec::with_capacity(data.len());
-                        for &b in &data { let m = map[b as usize]; if m==0xFFFF { continue; } if m<256 { out.push(m as u8); } }
+                        for &b in &data {
+                            let m = map[b as usize];
+                            if m==0xFFFF { continue; } // delete
+                            let ob = if m<256 { m as u8 } else { b };
+                            if squeeze {
+                                let in_s = squeeze_mask[ob as usize];
+                                if let Some(prev)=last_out {
+                                    if in_s && last_in_s && prev==ob { /* squeeze duplicate */ }
+                                    else { out.push(ob); last_out=Some(ob); last_in_s=in_s; }
+                                } else { out.push(ob); last_out=Some(ob); last_in_s=in_s; }
+                            } else {
+                                out.push(ob);
+                            }
+                        }
                         if let Some(hout)=out_handle {
                             if let Err(e)=client.write_chunk(hout, &out) { eprintln!("write error: {e}"); return 6; }
                         } else if let Err(e)=stdout_handle.write_all(&out) { eprintln!("stdout write error: {e}"); return 7; }
@@ -461,6 +669,7 @@ fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _
     let mut flags=String::new(); while i < chars.len() { flags.push(chars[i]); i+=1; }
     let global = flags.contains('g');
     let use_regex = flags.contains('r') || flags.contains('E'); // extended regex flags
+    let ignore_case = flags.contains('I'); // custom: case-insensitive regex
     let client = child_mux();
     let mut out_handle: Option<u32> = None;
     if let Some((path, append))=&redir.out_file { let mode = if *append { "a" } else { "w" }; match client.open(path, mode) { Ok(Ok(h))=>out_handle=Some(h), Ok(Err(code))=>{ eprintln!("open {path} {mode} error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open {path} {mode} error: {e}"); return 6; } } }
@@ -480,8 +689,43 @@ fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _
                             let mut line = String::from_utf8_lossy(line_bytes).to_string();
                             if !pattern.is_empty() {
                                 if use_regex {
-                                    let pat = match Regex::new(&pattern) { Ok(r)=>r, Err(e)=> { eprintln!("sed: invalid regex: {e}"); return 2; } };
-                                    if global { line = pat.replace_all(&line, repl.as_str()).to_string(); } else { line = pat.replace(&line, repl.as_str()).to_string(); }
+                                    let pat_src = if ignore_case { format!("(?i){}", pattern) } else { pattern.clone() };
+                                    let pat = match Regex::new(&pat_src) { Ok(r)=>r, Err(e)=> { eprintln!("sed: invalid regex: {e}"); return 2; } };
+                                    // Support & and backrefs in replacement when regex
+                                    let replaced = if global { pat.replace_all(&line, |caps: &regex::Captures| {
+                                        let mut out=String::new();
+                                        let mut chars=repl.chars().peekable();
+                                        while let Some(c)=chars.next() {
+                                            if c=='&' { out.push_str(caps.get(0).map(|m| m.as_str()).unwrap_or("")); }
+                                            else if c=='\\' {
+                                                if let Some(n)=chars.peek().cloned() {
+                                                    if n.is_ascii_digit() {
+                                                        let _=chars.next();
+                                                        let idx=(n as u8 - b'0') as usize;
+                                                        out.push_str(caps.get(idx).map(|m| m.as_str()).unwrap_or(""));
+                                                    } else { out.push(n); let _=chars.next(); }
+                                                }
+                                            } else { out.push(c); }
+                                        }
+                                        out
+                                    }).to_string() } else { pat.replace(&line, |caps: &regex::Captures| {
+                                        let mut out=String::new();
+                                        let mut chars=repl.chars().peekable();
+                                        while let Some(c)=chars.next() {
+                                            if c=='&' { out.push_str(caps.get(0).map(|m| m.as_str()).unwrap_or("")); }
+                                            else if c=='\\' {
+                                                if let Some(n)=chars.peek().cloned() {
+                                                    if n.is_ascii_digit() {
+                                                        let _=chars.next();
+                                                        let idx=(n as u8 - b'0') as usize;
+                                                        out.push_str(caps.get(idx).map(|m| m.as_str()).unwrap_or(""));
+                                                    } else { out.push(n); let _=chars.next(); }
+                                                }
+                                            } else { out.push(c); }
+                                        }
+                                        out
+                                    }).to_string() };
+                                    line = replaced;
                                 } else {
                                     if global { let mut out_line=String::new(); let mut pos=0; while let Some(pos2)=line[pos..].find(&pattern) { out_line.push_str(&line[pos..pos+pos2]); out_line.push_str(&repl); pos += pos2 + pattern.len(); } out_line.push_str(&line[pos..]); line=out_line; } else if let Some(pos2)=line.find(&pattern) { line = format!("{}{}{}", &line[..pos2], repl, &line[pos2+pattern.len()..]); }
                                 }
@@ -495,7 +739,7 @@ fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _
                     }
                     if start>0 { buf_acc.drain(0..start); }
                     if eof { // flush last partial line
-                        if !buf_acc.is_empty() { let mut line = String::from_utf8_lossy(&buf_acc).to_string(); if !pattern.is_empty() { if use_regex { let pat = match Regex::new(&pattern) { Ok(r)=>r, Err(e)=>{ eprintln!("sed: invalid regex: {e}"); return 2; } }; if global { line = pat.replace_all(&line, repl.as_str()).to_string(); } else { line = pat.replace(&line, repl.as_str()).to_string(); } } else { if global { let mut out_line=String::new(); let mut pos=0; while let Some(pos2)=line[pos..].find(&pattern) { out_line.push_str(&line[pos..pos+pos2]); out_line.push_str(&repl); pos+=pos2+pattern.len(); } out_line.push_str(&line[pos..]); line=out_line; } else if let Some(pos2)=line.find(&pattern) { line = format!("{}{}{}", &line[..pos2], repl, &line[pos2+pattern.len()..]); } } } let out_line = line.into_bytes(); if let Some(hout)=out_handle { match client.write_chunk(hout, &out_line) { Ok(Ok(_))=>{}, Ok(Err(code))=>{ eprintln!("write error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol write error: {e}"); return 6; } } } else if let Err(e)=stdout_handle.write_all(&out_line) { eprintln!("stdout write error: {e}"); return 7; } buf_acc.clear(); }
+                        if !buf_acc.is_empty() { let mut line = String::from_utf8_lossy(&buf_acc).to_string(); if !pattern.is_empty() { if use_regex { let pat_src = if ignore_case { format!("(?i){}", pattern) } else { pattern.clone() }; let pat = match Regex::new(&pat_src) { Ok(r)=>r, Err(e)=>{ eprintln!("sed: invalid regex: {e}"); return 2; } }; let replaced = if global { pat.replace_all(&line, |caps: &regex::Captures| { let mut out=String::new(); let mut chars=repl.chars().peekable(); while let Some(c)=chars.next() { if c=='&' { out.push_str(caps.get(0).map(|m| m.as_str()).unwrap_or("")); } else if c=='\\' { if let Some(n)=chars.peek().cloned() { if n.is_ascii_digit() { let _=chars.next(); let idx=(n as u8 - b'0') as usize; out.push_str(caps.get(idx).map(|m| m.as_str()).unwrap_or("")); } else { out.push(n); let _=chars.next(); } } } else { out.push(c); } } out }).to_string() } else { pat.replace(&line, |caps: &regex::Captures| { let mut out=String::new(); let mut chars=repl.chars().peekable(); while let Some(c)=chars.next() { if c=='&' { out.push_str(caps.get(0).map(|m| m.as_str()).unwrap_or("")); } else if c=='\\' { if let Some(n)=chars.peek().cloned() { if n.is_ascii_digit() { let _=chars.next(); let idx=(n as u8 - b'0') as usize; out.push_str(caps.get(idx).map(|m| m.as_str()).unwrap_or("")); } else { out.push(n); let _=chars.next(); } } } else { out.push(c); } } out }).to_string() }; line = replaced; } else { if global { let mut out_line=String::new(); let mut pos=0; while let Some(pos2)=line[pos..].find(&pattern) { out_line.push_str(&line[pos..pos+pos2]); out_line.push_str(&repl); pos+=pos2+pattern.len(); } out_line.push_str(&line[pos..]); line=out_line; } else if let Some(pos2)=line.find(&pattern) { line = format!("{}{}{}", &line[..pos2], repl, &line[pos2+pattern.len()..]); } } } let out_line = line.into_bytes(); if let Some(hout)=out_handle { match client.write_chunk(hout, &out_line) { Ok(Ok(_))=>{}, Ok(Err(code))=>{ eprintln!("write error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol write error: {e}"); return 6; } } } else if let Err(e)=stdout_handle.write_all(&out_line) { eprintln!("stdout write error: {e}"); return 7; } buf_acc.clear(); }
                         break; }
                 }
                 Ok(Err(code)) => { eprintln!("read error: {:?}", code); return map_exit(&code); }
@@ -534,9 +778,9 @@ static HELP_ENTRIES:&[HelpEntry] = &[
     HelpEntry { name:"head", usage:"head [-n lines] [file...]", desc:"output the first part of files", options:&[("-n N","output first N lines")], examples:&[("head -10 file.txt","Show first 10 lines")], related:&["tail","cat"] },
     HelpEntry { name:"tail", usage:"tail [-n lines] [file...]", desc:"output the last part of files", options:&[("-n N","output last N lines")], examples:&[("tail -20 file.txt","Show last 20 lines")], related:&["head","cat"] },
     HelpEntry { name:"wc", usage:"wc [options] [file...]", desc:"print line, word, byte counts", options:&[("-l","lines only"),("-w","words only"),("-c","bytes only")], examples:&[("wc file.txt","Show all counts")], related:&["grep","cat"] },
-    HelpEntry { name:"grep", usage:"grep [-i] [-n] [-E] pattern [file...]", desc:"search lines matching pattern (literal default, -E regex)", options:&[("-i","ignore case"),("-n","show line numbers"),("-E","regex pattern")], examples:&[("grep foo file","Find foo"),("grep -i -E 'foo|bar' file","Regex OR match"),("cat f | grep -n bar","Pipe with line numbers")], related:&["sed","wc"] },
-    HelpEntry { name:"tr", usage:"tr [-d] set1 [set2]", desc:"translate or delete characters (1:1 literal)", options:&[("-d","delete characters in set1")], examples:&[("tr abc xyz < in","Map a->x b->y c->z"),("tr -d 0-9 < in","Delete digits (range not yet supported)")], related:&["sed"] },
-    HelpEntry { name:"sed", usage:"sed s/pat/repl/[gE] [file...]", desc:"stream substitution (literal by default, E enables regex)", options:&[("g","global replace"),("E","enable regex (alias r)")], examples:&[("sed s/foo/bar/ file","Replace first foo"),("sed s/foo/bar/g file","Replace all foo"),("sed 's/fo*/X/E' file","Regex replace")], related:&["grep","tr"] },
+    HelpEntry { name:"grep", usage:"grep [-i] [-n] [-E] [-v] [-c] [-x] [-w] [-H|-h] [-q] pattern [file...]", desc:"search lines matching pattern (literal by default; -E enables regex)", options:&[("-i","ignore case"),("-n","show line numbers"),("-E","regex pattern (alias -r)"),("-v","invert match"),("-c","count matches per file"),("-x","match whole line"),("-w","match word"),("-H","force show filename"),("-h","suppress filename"),("-q","quiet (exit on first match, no output)")], examples:&[("grep foo file","Find foo"),("grep -i -E 'foo|bar' file","Regex OR match"),("cat f | grep -n bar","Pipe with line numbers"),("grep -c pattern a b","Count per file"),("grep -w err log","Word match"),("grep -q pat file && echo found","Quiet check")], related:&["sed","wc"] },
+    HelpEntry { name:"tr", usage:"tr [-d] [-c] [-s] set1 [set2]", desc:"translate or delete characters with ranges/classes; -s squeeze repeats; -c complement for -d/-s", options:&[("-d","delete chars in set1"),("-c","complement set1 (with -d/-s)"),("-s","squeeze repeats of set1/translated set")], examples:&[("tr abc xyz < in","Map a->x b->y c->z"),("tr 'a-z' 'A-Z' < in","Uppercase"),("tr -d '[:digit:]' < in","Delete digits"),("tr -s ' ' < in","Squeeze spaces")], related:&["sed"] },
+    HelpEntry { name:"sed", usage:"sed s/pat/repl/[gEI] [file...]", desc:"stream substitution (literal by default; E enables regex; I ignore-case for regex). Supports & and \\1..\\9 in repl when regex.", options:&[("g","global replace"),("E","enable regex (alias r)"),("I","ignore case (with regex)")], examples:&[("sed s/foo/bar/ file","Replace first foo"),("sed s/foo/bar/g file","Replace all foo"),("sed 's/(foo)(bar)/X\\1Y\\2/E' file","Backrefs replace"),("sed 's/foo/bar/EI' file","Case-insensitive")], related:&["grep","tr"] },
     HelpEntry { name:"help", usage:"help [command]", desc:"list commands or show detailed help", options:&[], examples:&[("help","List commands"),("help grep","Show grep help")], related:&[] },
     HelpEntry { name:"llmsh", usage:"llmsh [-c 'pipeline'] [--vfs-fds R,W | (-i path ... -o path ...)]", desc:"invoke nested llmsh instance (only -c supported; --vfs-fds is exclusive with -i/-o)", options:&[("-c SCRIPT","execute pipeline SCRIPT"),("--vfs-fds R,W","reuse parent VFS pipe fds (no -i/-o allowed)")], examples:&[("llmsh -c 'cat file.txt' -i file.txt","Run with allow list"),("llmsh -c 'grep foo a | wc -l' --vfs-fds 5,6","Nested pipeline sharing VFS pipes")], related:&["help"] },
 ];
