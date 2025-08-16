@@ -1,0 +1,40 @@
+name: Duplicate Code Check (jscpd)
+
+on:
+  push:
+    paths:
+      - '**/*.go'
+      - 'llmsh-rs/src/**/*.rs'
+      - '.github/workflows/jscpd.yml'
+      - '.jscpd.json'
+  pull_request:
+    paths:
+      - '**/*.go'
+      - 'llmsh-rs/src/**/*.rs'
+      - '.github/workflows/jscpd.yml'
+      - '.jscpd.json'
+
+jobs:
+  jscpd:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install jscpd
+        run: npm install -g jscpd@^4.0.5
+
+      - name: Run jscpd
+        run: jscpd --config .jscpd.json --no-blame --fail-on-duplicates
+
+      - name: Upload jscpd report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jscpd-report
+          path: jscpd-report

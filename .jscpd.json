@@ -1,22 +1,28 @@
 {
-  "threshold": 5,
-  "minLines": 5,
+  "threshold": 0,
   "minTokens": 50,
-  "maxLines": 10000,
-  "maxSize": "1000kb",
-  "ignore": [
-    "**/*.test.go",
-    "**/testdata/**",
-    "node_modules/**",
-    "vendor/**",
-    "**/*.pb.go",
-    "docs/**",
-    "examples/**"
+  "reporters": ["console", "json", "html"],
+  "output": "jscpd-report",
+  "include": [
+    "**/*.go",
+    "llmsh-rs/src/**/*.rs"
   ],
-  "blame": false,
-  "gitignore": true,
-  "reporters": ["html", "console", "json"],
-  "output": "./reports/jscpd",
-  "format": ["go", "javascript", "typescript", "markdown"],
-  "verbose": false
+  "exclude": [
+    "vendor/**",
+    "node_modules/**",
+    ".git/**",
+    ".github/**",
+    "docs/**",
+    "logs/**",
+    "release/**",
+    "releases/**",
+    "jscpd-report/**",
+    "coverage/**",
+    "target/**",
+    "llmsh-rs/target/**",
+    "bin/**",
+    "data/**",
+    "test_data/**",
+    "**/*.min.*"
+  ]
 }
