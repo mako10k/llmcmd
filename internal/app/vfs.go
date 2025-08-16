@@ -500,6 +500,10 @@ func (vfs *VirtualFS) openFile(name string, flag int, perm os.FileMode) (io.Read
 			}
 			file = rawFile
 			fileType = FileTypeRealFile
+			// If this VFS is top-level, register this path as allowed for inheritance
+			if vfs.isTopLevel {
+				vfs.allowedRealFiles[name] = true
+			}
 		} else {
 			// Virtualize non-injected real path using anonymous O_TMPFILE (fail-fast if unsupported)
 			base, err := os.OpenFile("/tmp", 0x410000|os.O_RDWR, 0600) // O_TMPFILE|RDWR
