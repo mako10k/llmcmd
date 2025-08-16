@@ -17,6 +17,12 @@ import (
 	"github.com/mako10k/llmcmd/internal/tools/builtin"
 )
 
+// Adapter to satisfy builtin.VFS using a tools.VirtualFileSystem
+type builtinVFSAdapter struct{ vfs tools.VirtualFileSystem }
+func (b builtinVFSAdapter) OpenFileSession(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
+	return b.vfs.OpenFile(name, flag, perm)
+}
+
 // App represents the main application
 type App struct {
 	config         *cli.Config
@@ -154,18 +160,21 @@ func (a *App) initializeOpenAI() error {
 func (a *App) initializeToolEngine() error {
 	shellExecutor := &ShellExecutor{}
 
-	// Use the isTopLevel from the App instance
-	isTopLevel := a.isTopLevel
-	virtualMode := a.config.Virtual
-	injected := append([]string{}, a.config.InputFiles...)
-	injected = append(injected, a.config.OutputFiles...)
-	virtualFS := VFSWithOptions(isTopLevel, virtualMode, injected)
+	// Build allow-lists for vfsd server from -i/-o
+	allowRead := append([]string{}, a.config.InputFiles...)
+	allowWrite := append([]string{}, a.config.OutputFiles...)
+	// Spawn vfsd and create client-backed VFS for tools engine
+	vfsdPath := os.Getenv("LLMSH_VFSD_BIN")
+	virtualFS, errVFSD := newVFSDClient(vfsdPath, allowRead, allowWrite)
+	if errVFSD != nil {
+		return fmt.Errorf("failed to start vfsd client: %w", errVFSD)
+	}
 
 	// Configure shell executor with VFS for redirect support
 	shellExecutor.SetVFS(virtualFS)
 
-	// Configure builtin commands with VFS for file operations
-	builtin.SetVFS(virtualFS)
+	// Configure builtin commands with VFS for file operations: adapt to expected interface
+	builtin.SetVFS(builtinVFSAdapter{vfs: virtualFS})
 
 	config := tools.EngineConfig{
 		InputFiles:    a.config.InputFiles,
@@ -184,8 +193,8 @@ func (a *App) initializeToolEngine() error {
 	}
 
 	if a.config.Verbose {
-		log.Printf("Tool engine initialized with VFS (isTopLevel: %v, input files: %d, buffer size: %d)",
-			isTopLevel, len(a.config.InputFiles), a.fileConfig.ReadBufferSize)
+		log.Printf("Tool engine initialized with vfsd-backed VFS (isTopLevel: %v, input files: %d, buffer size: %d)",
+			a.isTopLevel, len(a.config.InputFiles), a.fileConfig.ReadBufferSize)
 	}
 
 	return nil

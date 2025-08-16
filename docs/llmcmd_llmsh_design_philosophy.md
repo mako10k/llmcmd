@@ -20,7 +20,7 @@
 2. **Fail-First**: 条件違反・設定異常・安全境界逸脱を即時検知・終了。エラーは “静かに無視” しない。  
 3. **Simplicity → Composability**: 機能粒度を小さく (cat, grep, sed, wc 等) 保ち LLM によるパイプライン合成余地を最大化。  
 4. **Deterministic & Auditable**: I/O, quota, API 呼び出し数を明示管理し再現性確保。  
-5. **Extensibility**: ツール追加や VFS / fsproxy 統合を段階展開できる層状アーキテクチャ。  
+5. **Extensibility**: ツール追加や VFS / vfsd 統合を段階展開できる層状アーキテクチャ。  
 6. **Cost Awareness**: Weighted token (Input:1 / Cached:0.25 / Output:4) に基づくリアルタイム残量監視。  
 7. **Unified Abstractions**: llmcmd ↔ llmsh が同一プリミティブ上で動作し、差異は UX と使用文脈のみ。  
 
@@ -42,7 +42,7 @@ User / Orchestrator LLM
    Host Filesystem (制限付き)
 ```
 - **共通ツール群**: read / write / spawn(制限) / exit + テキスト系ビルトイン。  
-- **VFS**: 抽象化されたファイルアクセス制御面。fsproxy プロトコル統合計画により llmsh / llmcmd が統一 API 経由で安全操作。  
+- **VFS**: 抽象化されたファイルアクセス制御面。vfsd（stdio mux, length-prefixed JSON）により llmsh / llmcmd が統一 API 経由で安全操作。  
 - **Quota Manager**: API 呼び出し回数・トークン消費を集約。サブシェル / 再帰で継承。  
 - **Preset Prompt System**: 安全な標準化指示テンプレートで再現性・品質平準化。  
 
@@ -72,7 +72,7 @@ User / Orchestrator LLM
 | ビルトイン限定 | 外部プロセス禁止 (再帰 llmcmd など許可例外最小化) | サンドボックス堅牢化 |
 | パイプライン指向 | cat | grep | sed | llmcmd の連結容易 | LLM による逐次精緻化を想定 |
 | Quota 継承 | 親 llmcmd / 上位 llmsh から残量伝搬 | コスト境界の明示保持 |
-| Virtual FS | fsproxy 統合後は仮想 FD テーブルで追跡 | ファイル逸脱抑止 / 容量課金制御 |
+| Virtual FS | vfsd 統合後は仮想 FD テーブルで追跡 | ファイル逸脱抑止 / 容量課金制御 |
 | エラー即露出 | 曖昧な黙殺 (書き込み失敗など) を避ける共通ハンドラ | 以前の“静かな失敗”撲滅施策 |
 | スクリプト化 | LLM がシェルスクリプトを内部生成し実行 | “計画→操作” 反復効率向上 |
 
@@ -100,7 +100,7 @@ User / Orchestrator LLM
 | Quota 重量付 | Input 1.0 / Cached 0.25 / Output 4.0 |
 | 失敗時動作 | 即時終了 (log.Fatal / error 伝播) |
 
-fsproxy / VFS 統合は「(a) 仮想 FD 管理」「(b) プロトコルレベル許可制」「(c) 監査可能イベントログ」によって最小権限実現を拡張予定。 
+vfsd / VFS 統合は「(a) 仮想 FD 管理」「(b) プロトコルレベル許可制」「(c) 監査可能イベントログ」によって最小権限実現を拡張する。 
 
 ---
 ## 8. エラーモデルと Fail-First 運用
@@ -125,7 +125,7 @@ fsproxy / VFS 統合は「(a) 仮想 FD 管理」「(b) プロトコルレベル
 | フェーズ | 概要 | 価値 |
 |----------|------|------|
 | v3.x 現状 | 統合ヘルプ / Quota / ビルトイン安定化 | 信頼性基盤 |
-| fsproxy 完全統合 | llmsh へ安全 FD 経路 / 監査ログ | セキュリティ強化 |
+| vfsd 完全統合 | llmsh へ安全 FD 経路 / 監査ログ | セキュリティ強化 |
 | Unified VFS Server | 両コンポーネント同一抽象で集中管理 | 重複除去 & 一貫性 |
 | Two-Stage 実行 | 複雑計画→実行分離 | コスト最適化 + 精度 |
 | 高度プリセット/テンプレ | 規範プロンプト自動選択 | 品質 & 組織知共通化 |
@@ -252,7 +252,7 @@ VFS は llmcmd / llmsh の **安全・再現性・最小権限** を保証する
 2. コスト制御: 大容量/バイナリ誤読によるトークン浪費を事前遮断。
 3. 冪等性/再現性: セッション内でのファイル可視集合を確定化し “隠れ入力” を排除。
 4. 観測性: すべてのファイルアクセスをイベント/統計に反映させ後追い分析を可能化。
-5. 拡張性: 物理 FS → fsproxy → リモート/VFS サーバ への段階的移行経路を提供。
+5. 拡張性: 物理 FS → vfsd → リモート/VFS サーバ への段階的移行経路を提供。
 
 ### 15.2 レイヤ構造
 ```
@@ -275,7 +275,7 @@ FS Proxy Adapter (ポリシ & 許可リスト検査, 実ファイル制限)
 | Deterministic View | セッション開始時の許可集合固定 (継承時は merge) | 再帰 llmsh が親集合を引き継ぐ |
 | Fail-First Validation | サイズ/モード/存在/許可を最初に検証 | open → 失敗時即終了 |
 | Stream Orientation | 巨大ファイルを分割 read | read(fd, count) チャンク駆動 |
-| Extensible Backend | fsproxy → リモートストレージ差替余地 | VirtualFileSystem interface |
+| Extensible Backend | vfsd → リモートストレージ差替余地 | VirtualFileSystem interface |
 | Auditability | すべての open/close をメトリクス/ログに反映 | BytesRead, OpenCalls |
 
 ### 15.4 FD ライフサイクル
@@ -285,7 +285,7 @@ FS Proxy Adapter (ポリシ & 許可リスト検査, 実ファイル制限)
 4. 再利用防止: closedFds マークで再操作阻止 (二重 close はエラー計上)。  
 5. 監査: traverseChainOnEOF で最終結果メッセージ化。  
 
-### 15.5 セキュリティポリシ (fsproxy 統合観点)
+### 15.5 セキュリティポリシ (vfsd 統合観点)
 | 項目 | 方針 | 例 |
 |------|------|----|
 | アクセス制御 | 実行モード (llmcmd / llmsh-virtual / llmsh-real) 毎に許可判定 | real モードのみ限定的実 FS 許可 |
@@ -342,7 +342,7 @@ type VirtualFileSystem interface {
 | 透過巨大ストリーム (>GB) | ストリーム透過 | LLM 文脈サイズと乖離 |
 
 ### 15.11 まとめ (VFS)
-VFS は「安全境界 (allow-list/サイズ/バイナリ)」「再現性 (決定的可視領域)」「コスト制御 (Text-Only / Streaming)」を同時達成する基盤。抽象インターフェース + fsproxy 統合により段階的高度化を可能にし、Fail-First で黙殺を防ぐ。これにより LLM は “信頼できる I/O 基盤” を前提に高レベル計画へ集中できる。
+VFS は「安全境界 (allow-list/サイズ/バイナリ)」「再現性 (決定的可視領域)」「コスト制御 (Text-Only / Streaming)」を同時達成する基盤。抽象インターフェース + vfsd 統合により段階的高度化を可能にし、Fail-First で黙殺を防ぐ。これにより LLM は “信頼できる I/O 基盤” を前提に高レベル計画へ集中できる。
 
 ### 15.12 実ファイル注入セマンティクス (バイナリ実行レベル / virtual モード再定義)
 
@@ -395,7 +395,7 @@ llmcmd / llmsh は「LLM が安全・一貫・監査可能な形で自己拡張�
 - 小さく信頼できるビルトインプリミティブ
 - Fail-First + 明示的 Quota によるコスト境界
 - 再帰/段階的実行とパイプライン合成で複雑度制御
-- 共有 VFS / fsproxy で統一 I/O セマンティクス
+- 共有 VFS / vfsd で統一 I/O セマンティクス
 - セキュリティと拡張性のバランスを意図的に最適化
 
 このドキュメントは新規コントリビュータが「どの価値基準で判断すべきか」を最短で把握するためのコンパスである。継続改善時は決定の根拠を本書に追記し知識の腐敗を防ぐこと。

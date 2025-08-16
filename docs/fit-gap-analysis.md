@@ -1,8 +1,8 @@
-# llmcmd Fit & Gap Analysis: Current Implementation vs fsproxy Protocol
+# llmcmd Fit & Gap Analysis: Current Implementation vs vfsd Protocol
 
 **Analysis Date**: 2025年8月4日  
 **Document Version**: 1.0  
-**Scope**: Complete analysis of current llmcmd implementation against fsproxy protocol specification
+**Scope**: Complete analysis of current llmcmd implementation against vfsd protocol specification
 
 ## Executive Summary
 
@@ -28,10 +28,10 @@
 
 ### Current Implementation Discovery
 
-**🎉 Critical Finding**: VFS Server implementation **EXISTS and is ADVANCED**
+**🎉 Critical Finding**: VFS Server/Client implementation **EXISTS and is ADVANCED**
 - Previous assessment: "Non-existent, complete rewrite needed"
 - **Reality**: Complete VFS foundation with O_TMPFILE support
-- **Files**: `internal/app/vfs.go` (525 lines), `internal/app/fsproxy.go` (384 lines)
+- **Files**: `internal/app/vfs.go` (in-memory virtual), `internal/app/vfsd_client.go` (vfsd client), `internal/app/mux_codec.go` (length-prefixed framing)
 
 ### Implementation Maturity Level
 
@@ -39,7 +39,7 @@
 Implementation Quality Assessment:
 ┌─────────────────────────────────────────┐
 │ VFS Server Foundation:     ████████ 95% │ ← Production quality
-│ FS Proxy Communication:   ██████   75% │ ← Basic protocol complete
+│ vfsd Communication:       ███████  85% │ ← stdio mux framing client integrated
 │ Resource Management:      ███      40% │ ← Partial implementation  
 │ LLM Integration:          █        10% │ ← Missing critical commands
 │ Error Handling:           ███████  85% │ ← Comprehensive coverage
@@ -50,30 +50,23 @@ Implementation Quality Assessment:
 
 ## 📋 Detailed Component Analysis
 
-## 1. File System Protocol Implementation
+## 1. File System Protocol Implementation (vfsd)
 
 ### ✅ **FITS - Already Implemented**
 
 #### Basic Commands (Phase 1 - Completed)
 | Command | Current Status | Implementation File | Protocol Compliance |
 |---------|---------------|-------------------|-------------------|
-| **OPEN** | ✅ Complete | `internal/app/fsproxy.go:214-299` | 🟢 Full |
-| **READ** | ✅ Functional | `internal/app/fsproxy.go:307-343` | 🟢 Core features |
-| **WRITE** | ❌ Stub only | `internal/app/fsproxy.go:345-351` | 🔴 Placeholder |
-| **CLOSE** | ❌ Stub only | `internal/app/fsproxy.go:353-359` | 🔴 Placeholder |
+| **OPEN** | ✅ Complete | `internal/app/vfsd_client.go` | 🟢 Full |
+| **READ** | ✅ Functional | `internal/app/vfsd_client.go` | 🟢 Core features |
+| **WRITE** | ✅ Functional | `internal/app/vfsd_client.go` | � Core features |
+| **CLOSE** | ✅ Functional | `internal/app/vfsd_client.go` | � Core features |
 
-#### Protocol Communication
+#### Protocol Communication (length-prefixed JSON via stdio)
 ```go
 // ✅ IMPLEMENTED: Message parsing and response handling
-type FSRequest struct {
-    Command  string // "OPEN", "READ", "WRITE", "CLOSE"
-    Filename string
-    Mode     string  
-    Context  string // "internal", "user"
-    Fileno   int
-    Size     int
-    Data     []byte
-}
+type vfsdRequest struct { ID string; Op string; Params map[string]interface{} }
+type vfsdResponse struct { ID string; OK bool; Result json.RawMessage; Error *struct{ Code, Message string } }
 ```
 
 ### 🟡 **GAPS - Needs Completion**
@@ -146,7 +139,7 @@ func (proxy *FSProxyManager) handleLLMChat(
 
 **✅ Basic Cleanup Exists**:
 ```go
-// internal/app/fsproxy.go:388-401
+// internal/app/vfsd_client.go: open/read/write/close handlers
 func (proxy *FSProxyManager) cleanup() {
     proxy.fdMutex.Lock()
     defer proxy.fdMutex.Unlock()
@@ -450,7 +443,7 @@ Missing Components:
 
 ### Implementation Readiness: **STRONG** 🌟
 
-The current llmcmd implementation provides an **excellent foundation** for fsproxy protocol integration:
+The current llmcmd implementation provides an **excellent foundation** for vfsd protocol integration:
 
 1. **✅ VFS Server Exists**: Advanced implementation with O_TMPFILE support
 2. **✅ OpenAI Integration Ready**: Comprehensive client can be reused

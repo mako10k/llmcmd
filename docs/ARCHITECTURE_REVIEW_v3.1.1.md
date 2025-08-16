@@ -385,7 +385,7 @@ Detailed investigation revealed that VFS Server implementation **ACTUALLY EXISTS
 
 **Found Implementations:**
 - `internal/app/vfs.go` (525 lines) - Complete VFS with O_TMPFILE support
-- `internal/app/fsproxy.go` (384 lines) - FS Proxy Manager with client-server communication
+- `internal/app/vfsd_client.go` - vfsd client communicating over stdio mux (length-prefixed JSON)
 - O_TMPFILE implementation using `0x410000|os.O_RDWR` flag for kernel cleanup
 - 3-layer architecture foundation exists: EnhancedVFS, FSProxyManager, file type awareness
 

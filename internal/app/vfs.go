@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -455,14 +454,11 @@ func (vfs *VirtualFS) openFile(name string, flag int, perm os.FileMode) (io.Read
 			}
 			return entry.File, nil
 		case FileTypeRealFile:
-			// Reopen underlying real file for a fresh handle
-			rawFile, err := os.OpenFile(name, flag, perm)
-			if err != nil {
-				return nil, err
+			// Only standard streams (fd 0/1/2) are permitted as "real"; otherwise reject real FS I/O
+			if fd <= 2 {
+				return entry.File, nil
 			}
-			entry.File = rawFile
-			vfs.entries[fd] = entry
-			return rawFile, nil
+			return nil, fmt.Errorf("real filesystem access disabled for '%s'", name)
 		case FileTypeVirtual:
 			if vf, ok := entry.File.(*VirtualFile); ok {
 				clonedFile := vf.Clone(flag, perm)
@@ -470,15 +466,8 @@ func (vfs *VirtualFS) openFile(name string, flag int, perm os.FileMode) (io.Read
 			}
 			return entry.File, nil
 		case FileTypeVirtualAnon:
-			// Duplicate base FD (anonymous O_TMPFILE)
-			if osf, ok := entry.File.(*os.File); ok {
-				dupFD, err := syscall.Dup(int(osf.Fd()))
-				if err != nil {
-					return nil, fmt.Errorf("dup virtual anon fd: %w", err)
-				}
-				return os.NewFile(uintptr(dupFD), name), nil
-			}
-			return nil, fmt.Errorf("invalid anon virtual file entry type for %s", name)
+			// Treat as pure virtual in-memory; return as-is
+			return entry.File, nil
 		default:
 			return entry.File, nil
 		}
@@ -491,28 +480,8 @@ func (vfs *VirtualFS) openFile(name string, flag int, perm os.FileMode) (io.Read
 	isRealPath := name != "" && (filepath.IsAbs(name) || name[0] != '<')
 
 	if isRealPath {
-		// Determine if this path is allowed to be real
-		allowReal := (vfs.allowedRealFiles[name] && vfs.injectedReal[name]) || (!vfs.virtualMode && vfs.isTopLevel) || (vfs.allowedRealFiles[name] && !vfs.virtualMode)
-		if allowReal {
-			rawFile, err := os.OpenFile(name, flag, perm)
-			if err != nil {
-				return nil, err
-			}
-			file = rawFile
-			fileType = FileTypeRealFile
-			// If this VFS is top-level, register this path as allowed for inheritance
-			if vfs.isTopLevel {
-				vfs.allowedRealFiles[name] = true
-			}
-		} else {
-			// Virtualize non-injected real path using anonymous O_TMPFILE (fail-fast if unsupported)
-			base, err := os.OpenFile("/tmp", 0x410000|os.O_RDWR, 0600) // O_TMPFILE|RDWR
-			if err != nil {
-				return nil, fmt.Errorf("virtual anon create failed for %s: %w", name, err)
-			}
-			file = base
-			fileType = FileTypeVirtualAnon
-		}
+		// Real filesystem access is disabled in Go VFS layer; callers must use vfsd
+		return nil, fmt.Errorf("real filesystem access disabled for '%s' (use vfsd)", name)
 	} else {
 		// Pipe / logical virtual file
 		file = &VirtualFile{
@@ -655,51 +624,8 @@ func (vfs *VirtualFS) IsRealFileAllowed(name string) bool {
 
 // RegisterRealFile registers a real filesystem file (for -i, -o command line options)
 func (vfs *VirtualFS) RegisterRealFile(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
-	vfs.mutex.Lock()
-	defer vfs.mutex.Unlock()
-
-	// For non-top-level, check if file is in allowed list
-	if !vfs.isTopLevel && !vfs.allowedRealFiles[name] {
-		return nil, fmt.Errorf("access denied: real file '%s' not allowed in internal context", name)
-	}
-
-	// Check if file already exists in VFS
-	if fd, exists := vfs.nameToFD[name]; exists {
-		entry := vfs.entries[fd]
-		// Update type to real file if it was previously registered as virtual
-		entry.Type = FileTypeRealFile
-		return entry.File, nil
-	}
-
-	// Open real file
-	rawFile, err := os.OpenFile(name, flag, perm)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open real file %s: %w", name, err)
-	}
-	// (debug logging removed)
-
-	// Register in VFS as real file
-	fd := vfs.nextFD
-	vfs.nextFD++
-
-	entry := &VFSEntry{
-		Name:     name,
-		FD:       fd,
-		Type:     FileTypeRealFile,
-		File:     rawFile, // os.File already implements File interface
-		Consumed: false,
-	}
-
-	vfs.nameToFD[name] = fd
-	vfs.fdToName[fd] = name
-	vfs.entries[fd] = entry
-
-	// Add to allowed list if top-level (for inheritance)
-	if vfs.isTopLevel {
-		vfs.allowedRealFiles[name] = true
-	}
-
-	return rawFile, nil
+	// Real filesystem access is removed from Go VFS layer
+	return nil, fmt.Errorf("RegisterRealFile disabled: real filesystem access removed (use vfsd)")
 }
 
 // IsRealFile checks if a file is registered as a real file
@@ -786,19 +712,14 @@ func (vfs *VirtualFS) CreateTempFile(logicalName string) (io.ReadWriteCloser, er
 	vfs.mutex.Lock()
 	defer vfs.mutex.Unlock()
 
-	// Create temporary file using O_TMPFILE (0x410000 on Linux)
-	file, err := os.OpenFile("/tmp", 0x410000|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file for %s: %w", logicalName, err)
+	// Create in-memory virtual temp file
+	vf := &VirtualFile{
+		name: logicalName,
+		data: []byte{},
+		flag: os.O_RDWR,
+		perm: 0600,
 	}
 
-	// Get file descriptor
-	fd := int(file.Fd())
-
-	// Track for cleanup
-	vfs.tempFiles = append(vfs.tempFiles, fd)
-
-	// Register in VFS with temp file type
 	vfsFD := vfs.nextFD
 	vfs.nextFD++
 
@@ -806,15 +727,15 @@ func (vfs *VirtualFS) CreateTempFile(logicalName string) (io.ReadWriteCloser, er
 		Name:     logicalName,
 		FD:       vfsFD,
 		Type:     FileTypeTempFile,
-		File:     file,
+		File:     vf,
 		Consumed: false,
 	}
 
 	vfs.nameToFD[logicalName] = vfsFD
-	vfs.fdToName[vfsFD] = fmt.Sprintf("/proc/self/fd/%d", fd) // Real FD path for reference
+	vfs.fdToName[vfsFD] = logicalName
 	vfs.entries[vfsFD] = entry
 
-	return file, nil
+	return vf, nil
 }
 
 // ResolvePath resolves a logical name to real filesystem path (for temp files, returns proc path)
