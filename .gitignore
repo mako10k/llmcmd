@@ -10,6 +10,7 @@ llmcmd.exe
 
 # Rust build artifacts
 llmsh-rs/target/
+vfsd/target/
 
 # Node.js dependencies and reports
 node_modules/
