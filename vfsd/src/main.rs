@@ -168,7 +168,8 @@ struct State {
 
 impl State {
     fn new(allow_read: Vec<String>, allow_write: Vec<String>) -> Self {
-        State { next: 1, handles: HashMap::new(), allow_read, allow_write, virtual_files: HashMap::new() }
+    // Reserve 0,1,2 for stdio semantics handled by MUX; vfsd must not allocate them.
+    State { next: 3, handles: HashMap::new(), allow_read, allow_write, virtual_files: HashMap::new() }
     }
     fn alloc(&mut self, kind: HandleKind) -> u32 {
         let h = self.next; self.next += 1; self.handles.insert(h, kind); h
