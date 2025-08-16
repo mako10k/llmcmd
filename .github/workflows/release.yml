@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    name: Build binaries
+    name: Build llmcmd (Go)
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -17,58 +17,41 @@ jobs:
         exclude:
           - goos: windows
             goarch: arm64
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.21'
-        cache: false
-        
-    - name: Initialize Go modules
-      run: |
-        go mod download
-        go mod verify
-        
-    - name: Build binary
-      env:
-        GOOS: ${{ matrix.goos }}
-        GOARCH: ${{ matrix.goarch }}
-      run: |
-        # Debug: show current directory and contents
-        pwd
-        ls -la
-        echo "Go env:"
-        go env GOPATH GOROOT GOCACHE
-        echo "Go version:"
-        go version
-        
-        binary_name="llmcmd"
-        if [[ "${{ matrix.goos }}" == "windows" ]]; then
-          binary_name="${binary_name}.exe"
-        fi
-        
-        output_name="llmcmd-${{ matrix.goos }}-${{ matrix.goarch }}"
-        if [[ "${{ matrix.goos }}" == "windows" ]]; then
-          output_name="${output_name}.exe"
-        fi
-        
-        # Verify the structure
-        echo "Project structure:"
-        find . -name "*.go" -type f | head -10
-        
-        # Try different build approaches
-        echo "Building Go binary..."
-        go build -ldflags="-w -s" -o "$output_name" ./cmd/llmcmd
-        
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: llmcmd-${{ matrix.goos }}-${{ matrix.goarch }}
-        path: llmcmd-*
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+          cache: false
+
+      - name: Initialize Go modules
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          echo "Building Go llmcmd binary for $GOOS/$GOARCH..."
+          output_name="llmcmd-${{ matrix.goos }}-${{ matrix.goarch }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            output_name="${output_name}.exe"
+          fi
+          go version
+          go build -ldflags="-w -s" -o "$output_name" ./cmd/llmcmd
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: llmcmd-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: llmcmd-*
 
   release:
     name: Create release
@@ -77,52 +60,52 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: artifacts
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find artifacts -name "llmcmd-*" -type f -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Generate release notes
+        run: |
+          echo "# Release ${GITHUB_REF##*/}" > release_notes.md
+          echo "" >> release_notes.md
+          echo "## Installation" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### Quick install (Linux/macOS):" >> release_notes.md
+          echo '```bash' >> release_notes.md
+          echo 'curl -sSL https://raw.githubusercontent.com/mako10k/llmcmd/main/install.sh | bash' >> release_notes.md
+          echo '```' >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### Manual installation:" >> release_notes.md
+          echo "1. Download the appropriate binary for your platform" >> release_notes.md
+          echo "2. Make it executable: \`chmod +x llmcmd-*\`" >> release_notes.md
+          echo "3. Move to PATH: \`sudo mv llmcmd-* /usr/local/bin/llmcmd\`" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "## Usage" >> release_notes.md
+          echo '```bash' >> release_notes.md
+          echo 'export OPENAI_API_KEY="your_api_key"' >> release_notes.md
+          echo 'llmcmd "your task description"' >> release_notes.md
+          echo 'echo "data" | llmcmd "process this"' >> release_notes.md
+          echo '```' >> release_notes.md
         
-    - name: Prepare release assets
-      run: |
-        mkdir -p release
-        find artifacts -name "llmcmd-*" -type f -exec cp {} release/ \;
-        ls -la release/
-        
-    - name: Generate release notes
-      run: |
-        echo "# Release $(basename $GITHUB_REF)" > release_notes.md
-        echo "" >> release_notes.md
-        echo "## Installation" >> release_notes.md
-        echo "" >> release_notes.md
-        echo "### Quick install (Linux/macOS):" >> release_notes.md
-        echo '```bash' >> release_notes.md
-        echo 'curl -sSL https://raw.githubusercontent.com/mako10k/llmcmd/main/install.sh | bash' >> release_notes.md
-        echo '```' >> release_notes.md
-        echo "" >> release_notes.md
-        echo "### Manual installation:" >> release_notes.md
-        echo "1. Download the appropriate binary for your platform" >> release_notes.md
-        echo "2. Make it executable: \`chmod +x llmcmd-*\`" >> release_notes.md
-        echo "3. Move to PATH: \`sudo mv llmcmd-* /usr/local/bin/llmcmd\`" >> release_notes.md
-        echo "" >> release_notes.md
-        echo "## Usage" >> release_notes.md
-        echo '```bash' >> release_notes.md
-        echo 'export OPENAI_API_KEY="your_api_key"' >> release_notes.md
-        echo 'llmcmd "your task description"' >> release_notes.md
-        echo 'echo "data" | llmcmd "process this"' >> release_notes.md
-        echo '```' >> release_notes.md
-        
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      with:
-        files: release/*
-        body_path: release_notes.md
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release/*
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   test:
     name: Test installation
@@ -130,17 +113,18 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Download Linux AMD64 artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: llmcmd-linux-amd64
-        path: .
-        
-    - name: Test binary
-      run: |
-        chmod +x llmcmd-linux-amd64
-        ./llmcmd-linux-amd64 --version || echo "Version command not yet implemented"
-        ./llmcmd-linux-amd64 --help || echo "Help command test"
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Linux AMD64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: llmcmd-linux-amd64
+          path: .
+
+      - name: Test binary
+        run: |
+          set -euo pipefail
+          chmod +x llmcmd-linux-amd64 || true
+          ./llmcmd-linux-amd64 --version || echo "Version command not yet implemented"
+          ./llmcmd-linux-amd64 --help || echo "Help command test"
