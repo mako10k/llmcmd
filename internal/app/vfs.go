@@ -1,13 +1,10 @@
 package app
 
 import (
-	"bufio"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -986,25 +983,11 @@ func (vfs *VirtualFS) CreatePipe() (io.ReadCloser, io.WriteCloser, error) {
 type VFSClient struct {
 	server     *VirtualFS
 	isInternal bool
-	proxyPipe  io.ReadWriter // Pipe to communicate with FSProxy manager (optional)
 }
 
 // NewVFSClient creates a new VFS client for LLMSH
 func NewVFSClient(server *VirtualFS, isInternal bool) *VFSClient {
-	return &VFSClient{
-		server:     server,
-		isInternal: isInternal,
-		proxyPipe:  nil, // No proxy pipe by default
-	}
-}
-
-// NewVFSClientWithProxy creates a new VFS client with fsproxy support
-func NewVFSClientWithProxy(server *VirtualFS, isInternal bool, proxyPipe io.ReadWriter) *VFSClient {
-	return &VFSClient{
-		server:     server,
-		isInternal: isInternal,
-		proxyPipe:  proxyPipe,
-	}
+	return &VFSClient{server: server, isInternal: isInternal}
 }
 
 // OpenFile provides OS-compatible file opening interface
@@ -1027,91 +1010,9 @@ func (c *VFSClient) Remove(name string) error {
 	return c.server.Remove(name)
 }
 
-// LLMChat executes LLM via LLM_CHAT command (available when proxyPipe is set)
-func (c *VFSClient) LLMChat(isTopLevel bool, inputFiles []string, prompt string) (map[string]interface{}, error) {
-	if c.proxyPipe == nil {
-		return nil, fmt.Errorf("fsproxy pipe not available - use NewVFSClientWithProxy()")
-	}
+// LLMChat removed with fsproxy
 
-	// Prepare input files text
-	inputFilesText := ""
-	if len(inputFiles) > 0 {
-		inputFilesText = strings.Join(inputFiles, "\n")
-	}
-
-	// Prepare data payload: input_files_text\nprompt_text
-	dataPayload := inputFilesText + "\n" + prompt
-
-	// Send LLM_CHAT command
-	// Format: LLM_CHAT is_top_level stdin_fd stdout_fd stderr_fd input_files_count prompt_length
-	topLevelStr := "false"
-	if isTopLevel {
-		topLevelStr = "true"
-	}
-
-	command := fmt.Sprintf("LLM_CHAT %s 0 1 2 %d %d\n%s",
-		topLevelStr, len(inputFiles), len(prompt), dataPayload)
-
-	if _, err := c.proxyPipe.Write([]byte(command)); err != nil {
-		return nil, fmt.Errorf("failed to send LLM_CHAT command: %w", err)
-	}
-
-	// Read response
-	response, err := c.readProxyResponse()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read LLM_CHAT response: %w", err)
-	}
-
-	if response.Status != "OK" {
-		return nil, fmt.Errorf("LLM_CHAT failed: %s", response.Data)
-	}
-
-	// Parse response data: "response_size quota_status\n[response_json]"
-	parts := strings.SplitN(response.Data, "\n", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid LLM_CHAT response format")
-	}
-
-	// Parse response JSON
-	var result map[string]interface{}
-	if err := json.Unmarshal([]byte(parts[1]), &result); err != nil {
-		return nil, fmt.Errorf("failed to parse LLM response JSON: %w", err)
-	}
-
-	return result, nil
-}
-
-// readProxyResponse reads a response from the fsproxy pipe
-func (c *VFSClient) readProxyResponse() (*ProxyResponse, error) {
-	if c.proxyPipe == nil {
-		return nil, fmt.Errorf("fsproxy pipe not available")
-	}
-
-	// Simple line-based response reading
-	// TODO: Implement proper fsproxy protocol response parsing
-	reader := bufio.NewReader(c.proxyPipe)
-	line, _, err := reader.ReadLine()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response line: %w", err)
-	}
-
-	// Parse response line: "STATUS data"
-	parts := strings.SplitN(string(line), " ", 2)
-	if len(parts) < 1 {
-		return nil, fmt.Errorf("invalid response format")
-	}
-
-	status := parts[0]
-	data := ""
-	if len(parts) > 1 {
-		data = parts[1]
-	}
-
-	return &ProxyResponse{
-		Status: status,
-		Data:   data,
-	}, nil
-}
+// readProxyResponse removed with fsproxy
 
 // LLMCMDVFSClient extends VFSClient with LLM token quota management for LLMCMD
 // This is the VFS Client for LLMCMD in the 4-layer architecture
@@ -1120,40 +1021,10 @@ type LLMCMDVFSClient struct {
 	*VFSClient
 }
 
-// NewLLMCMDVFSClient creates a new VFS client for LLMCMD with fsproxy protocol support
-func NewLLMCMDVFSClient(server *VirtualFS, isInternal bool, proxyPipe io.ReadWriter) *LLMCMDVFSClient {
-	return &LLMCMDVFSClient{
-		VFSClient: NewVFSClientWithProxy(server, isInternal, proxyPipe),
-	}
-}
+// NewLLMCMDVFSClient removed with fsproxy; use VFSClient directly
 
 // LLMQuota gets current LLM token quota status via LLM_QUOTA command
-func (c *LLMCMDVFSClient) LLMQuota() (string, error) {
-	if c.proxyPipe == nil {
-		return "", fmt.Errorf("fsproxy pipe not available")
-	}
-
-	// Send LLM_QUOTA command
-	command := "LLM_QUOTA\n"
-	if _, err := c.proxyPipe.Write([]byte(command)); err != nil {
-		return "", fmt.Errorf("failed to send LLM_QUOTA command: %w", err)
-	}
-
-	// Read response
-	response, err := c.readProxyResponse()
-	if err != nil {
-		return "", fmt.Errorf("failed to read LLM_QUOTA response: %w", err)
-	}
-
-	if response.Status != "OK" {
-		return "", fmt.Errorf("LLM_QUOTA failed: %s", response.Data)
-	}
-
-	return response.Data, nil
-}
+// LLMQuota removed with fsproxy
 
 // ProxyResponse represents a response from fsproxy protocol
-type ProxyResponse struct {
-	Status string
-	Data   string
-}
+// ProxyResponse removed with fsproxy

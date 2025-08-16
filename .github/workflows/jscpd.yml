@@ -30,7 +30,7 @@ jobs:
         run: npm install -g jscpd@^4.0.5
 
       - name: Run jscpd
-        run: jscpd --config .jscpd.json --fail-on-duplicates
+        run: jscpd --config .jscpd.json internal cmd llmsh-rs/src
 
       - name: Upload jscpd report
         if: always()

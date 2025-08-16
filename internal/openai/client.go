@@ -16,6 +16,60 @@ import (
 	"github.com/mako10k/llmcmd/internal/security"
 )
 
+// classifyFileType returns a high-level file_type based on extension and attributes
+func classifyFileType(fileName, ext string, mode os.FileMode) string {
+	if strings.HasSuffix(fileName, ".tar.gz") || strings.HasSuffix(fileName, ".tar.bz2") || strings.HasSuffix(fileName, ".tar.xz") {
+		return "archive"
+	}
+	switch ext {
+	case ".txt", ".md", ".log":
+		return "text"
+	case ".json", ".xml", ".yaml", ".yml":
+		return "structured_text"
+	case ".csv", ".tsv":
+		return "tabular_data"
+	case ".tar", ".tgz", ".zip", ".rar", ".gz", ".bz2", ".xz", ".7z":
+		return "archive"
+	case ".bin", ".exe", ".so", ".dll":
+		return "binary"
+	case ".jpg", ".jpeg", ".png", ".gif", ".bmp":
+		return "image"
+	case ".mp3", ".wav", ".ogg":
+		return "audio"
+	case ".mp4", ".avi", ".mkv":
+		return "video"
+	default:
+		if mode&0111 != 0 {
+			return "executable"
+		}
+		return "unknown"
+	}
+}
+
+// sizeCategory returns a coarse size bucket label
+func sizeCategory(size int64) string {
+	if size < 1024 {
+		return "small"
+	} else if size < 1024*1024 {
+		return "medium"
+	} else if size < 10*1024*1024 {
+		return "large"
+	}
+	return "very_large"
+}
+
+// humanReadableSize formats byte size into bytes/KB/MB/GB with 1 decimal for KB and above
+func humanReadableSize(size int64) string {
+	if size < 1024 {
+		return fmt.Sprintf("%d bytes", size)
+	} else if size < 1024*1024 {
+		return fmt.Sprintf("%.1f KB", float64(size)/1024)
+	} else if size < 1024*1024*1024 {
+		return fmt.Sprintf("%.1f MB", float64(size)/(1024*1024))
+	}
+	return fmt.Sprintf("%.1f GB", float64(size)/(1024*1024*1024))
+}
+
 // Token estimation constants
 const (
 	// Rough token estimation: 1 token ≈ 4 characters for English, 1-2 for Japanese
@@ -204,6 +258,15 @@ func NewClientWithSharedQuota(config ClientConfig, sharedQuota *SharedQuotaManag
 	return client
 }
 
+// OverrideHTTPClient replaces the internal HTTP client.
+// Intended primarily for testing to inject a mock transport.
+func (c *Client) OverrideHTTPClient(client *http.Client) {
+	if client == nil {
+		return
+	}
+	c.httpClient = client
+}
+
 // errorf is a helper to add error stats and return a formatted error
 func (c *Client) errorf(format string, args ...interface{}) (*ChatCompletionResponse, error) {
 	c.stats.AddError()
@@ -382,48 +445,10 @@ func getFileInfo(filePath string) map[string]interface{} {
 	// Determine file type based on extension and content
 	ext := filepath.Ext(filePath)
 	fileName := filepath.Base(filePath)
-
-	// Check for compound extensions first
-	if strings.HasSuffix(fileName, ".tar.gz") || strings.HasSuffix(fileName, ".tar.bz2") || strings.HasSuffix(fileName, ".tar.xz") {
-		info["file_type"] = "archive"
-	} else {
-		switch ext {
-		case ".txt", ".md", ".log":
-			info["file_type"] = "text"
-		case ".json", ".xml", ".yaml", ".yml":
-			info["file_type"] = "structured_text"
-		case ".csv", ".tsv":
-			info["file_type"] = "tabular_data"
-		case ".tar", ".tgz", ".zip", ".rar", ".gz", ".bz2", ".xz", ".7z":
-			info["file_type"] = "archive"
-		case ".bin", ".exe", ".so", ".dll":
-			info["file_type"] = "binary"
-		case ".jpg", ".jpeg", ".png", ".gif", ".bmp":
-			info["file_type"] = "image"
-		case ".mp3", ".wav", ".ogg":
-			info["file_type"] = "audio"
-		case ".mp4", ".avi", ".mkv":
-			info["file_type"] = "video"
-		default:
-			if stat.Mode()&0111 != 0 {
-				info["file_type"] = "executable"
-			} else {
-				info["file_type"] = "unknown"
-			}
-		}
-	}
+	info["file_type"] = classifyFileType(fileName, ext, stat.Mode())
 
 	// Size category for better understanding
-	size := stat.Size()
-	if size < 1024 {
-		info["size_category"] = "small"
-	} else if size < 1024*1024 {
-		info["size_category"] = "medium"
-	} else if size < 10*1024*1024 {
-		info["size_category"] = "large"
-	} else {
-		info["size_category"] = "very_large"
-	}
+	info["size_category"] = sizeCategory(stat.Size())
 
 	return info
 }
@@ -485,53 +510,14 @@ func getStdFileInfo(fd int) map[string]interface{} {
 			// Get file type from extension
 			ext := filepath.Ext(realPath)
 			fileName := filepath.Base(realPath)
-
-			// Check for compound extensions first
-			if strings.HasSuffix(fileName, ".tar.gz") || strings.HasSuffix(fileName, ".tar.bz2") || strings.HasSuffix(fileName, ".tar.xz") {
-				info["file_type"] = "archive"
-			} else {
-				switch ext {
-				case ".txt", ".md", ".log":
-					info["file_type"] = "text"
-				case ".json", ".xml", ".yaml", ".yml":
-					info["file_type"] = "structured_text"
-				case ".csv", ".tsv":
-					info["file_type"] = "tabular_data"
-				case ".tar", ".tgz", ".zip", ".rar", ".gz", ".bz2", ".xz", ".7z":
-					info["file_type"] = "archive"
-				case ".bin", ".exe", ".so", ".dll":
-					info["file_type"] = "binary"
-				case ".jpg", ".jpeg", ".png", ".gif", ".bmp":
-					info["file_type"] = "image"
-				default:
-					info["file_type"] = "unknown"
-				}
-			}
+			info["file_type"] = classifyFileType(fileName, ext, stat.Mode())
 
 			// Size category
-			size := stat.Size()
-			if size < 1024 {
-				info["size_category"] = "small"
-			} else if size < 1024*1024 {
-				info["size_category"] = "medium"
-			} else if size < 10*1024*1024 {
-				info["size_category"] = "large"
-			} else {
-				info["size_category"] = "very_large"
-			}
+			info["size_category"] = sizeCategory(stat.Size())
 		} else {
 			// If we can't get the path, still provide basic file info
 			info["file_type"] = "unknown"
-			size := stat.Size()
-			if size < 1024 {
-				info["size_category"] = "small"
-			} else if size < 1024*1024 {
-				info["size_category"] = "medium"
-			} else if size < 10*1024*1024 {
-				info["size_category"] = "large"
-			} else {
-				info["size_category"] = "very_large"
-			}
+			info["size_category"] = sizeCategory(stat.Size())
 		}
 	} else if stat.Mode()&os.ModeCharDevice != 0 {
 		info["type"] = "terminal"
@@ -756,22 +742,38 @@ C) Virtual File Operations:
 
 	fdMappingContent = "FILE DESCRIPTOR MAPPING:"
 
+	// helper to render the AVAILABLE INPUT SOURCES and WORKFLOW block consistently
+	buildInputSourcesSection := func(stdinType interface{}, hasFiles bool) string {
+		var b strings.Builder
+		b.WriteString("\n\nAVAILABLE INPUT SOURCES:")
+		if hasFiles {
+			b.WriteString("\n✓ input files (fd=3+) - specified above, contains data to process")
+			if stdinType == "file" {
+				b.WriteString("\n? stdin (fd=0) - redirected from file, may also contain data")
+			} else {
+				b.WriteString("\n✗ stdin (fd=0) - ignore, no input data here")
+			}
+			b.WriteString("\nWORKFLOW: read(fd=3+) → spawn(commands) → write(fd=1) → exit(0)")
+			b.WriteString("\n\nFILE REFERENCES: Use $1 for first file, $2 for second file, etc.")
+		} else {
+			if stdinType == "file" {
+				b.WriteString("\n✓ stdin (fd=0) - redirected from file, contains input data to process")
+			} else {
+				b.WriteString("\n✓ stdin (fd=0) - contains input data")
+			}
+			b.WriteString("\n✗ input files - none specified (do NOT read fd=3+)")
+			b.WriteString("\nWORKFLOW: read(fd=0) → spawn(commands) → write(fd=1) → exit(0)")
+		}
+		return b.String()
+	}
+
 	// Check stdin information
 	stdinInfo := getStdFileInfo(0)
 	stdinDisplay := "stdin (standard input)"
 	if stdinInfo["type"] == "file" {
 		if filePath, ok := stdinInfo["file_path"].(string); ok {
 			size := stdinInfo["size_bytes"].(int64)
-			sizeStr := ""
-			if size < 1024 {
-				sizeStr = fmt.Sprintf("%d bytes", size)
-			} else if size < 1024*1024 {
-				sizeStr = fmt.Sprintf("%.1f KB", float64(size)/1024)
-			} else if size < 1024*1024*1024 {
-				sizeStr = fmt.Sprintf("%.1f MB", float64(size)/(1024*1024))
-			} else {
-				sizeStr = fmt.Sprintf("%.1f GB", float64(size)/(1024*1024*1024))
-			}
+			sizeStr := humanReadableSize(size)
 
 			fileType := "unknown"
 			if ftype, ok := stdinInfo["file_type"].(string); ok {
@@ -837,15 +839,7 @@ C) Virtual File Operations:
 				// Regular file - show size, type, category
 				sizeStr := "unknown size"
 				if size, ok := fileInfo["size_bytes"].(int64); ok {
-					if size < 1024 {
-						sizeStr = fmt.Sprintf("%d bytes", size)
-					} else if size < 1024*1024 {
-						sizeStr = fmt.Sprintf("%.1f KB", float64(size)/1024)
-					} else if size < 1024*1024*1024 {
-						sizeStr = fmt.Sprintf("%.1f MB", float64(size)/(1024*1024))
-					} else {
-						sizeStr = fmt.Sprintf("%.1f GB", float64(size)/(1024*1024*1024))
-					}
+					sizeStr = humanReadableSize(size)
 				}
 
 				fileType := "unknown"
@@ -864,24 +858,9 @@ C) Virtual File Operations:
 			fdMappingContent += fmt.Sprintf("\n- fd=%d: %s (input file #%d) %s",
 				i+3, file, i+1, infoDisplay)
 		}
-		fdMappingContent += "\n\nAVAILABLE INPUT SOURCES:"
-		fdMappingContent += "\n✓ input files (fd=3+) - specified above, contains data to process"
-		if stdinInfo["type"] == "file" {
-			fdMappingContent += "\n? stdin (fd=0) - redirected from file, may also contain data"
-		} else {
-			fdMappingContent += "\n✗ stdin (fd=0) - ignore, no input data here"
-		}
-		fdMappingContent += "\nWORKFLOW: read(fd=3+) → spawn(commands) → write(fd=1) → exit(0)"
-		fdMappingContent += "\n\nFILE REFERENCES: Use $1 for first file, $2 for second file, etc."
+	fdMappingContent += buildInputSourcesSection(stdinInfo["type"], true)
 	} else {
-		fdMappingContent += "\n\nAVAILABLE INPUT SOURCES:"
-		if stdinInfo["type"] == "file" {
-			fdMappingContent += "\n✓ stdin (fd=0) - redirected from file, contains input data to process"
-		} else {
-			fdMappingContent += "\n✓ stdin (fd=0) - contains input data"
-		}
-		fdMappingContent += "\n✗ input files - none specified (do NOT read fd=3+)"
-		fdMappingContent += "\nWORKFLOW: read(fd=0) → spawn(commands) → write(fd=1) → exit(0)"
+	fdMappingContent += buildInputSourcesSection(stdinInfo["type"], false)
 	}
 
 	messages = append(messages, ChatMessage{

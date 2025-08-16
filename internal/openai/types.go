@@ -358,56 +358,37 @@ func ToolDefinitions() []Tool {
 				},
 			},
 		},
-		{
-			Type: "function",
-			Function: ToolFunction{
-				Name:        "exit",
-				Description: "Exit the program with specified code",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"code": map[string]interface{}{
-							"type":        "integer",
-							"description": "Exit code",
-							"minimum":     0,
-							"maximum":     255,
-						},
-						"message": map[string]interface{}{
-							"type":        "string",
-							"description": "Optional exit message",
-						},
-					},
-					"required": []string{"code"},
-				},
-			},
-		},
+		exitTool(),
 	}
 }
 
 // ExitToolDefinition returns only the exit tool definition for final API calls
 func ExitToolDefinition() []Tool {
-	return []Tool{
-		{
-			Type: "function",
-			Function: ToolFunction{
-				Name:        "exit",
-				Description: "Exit the program with specified code",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"code": map[string]interface{}{
-							"type":        "integer",
-							"description": "Exit code",
-							"minimum":     0,
-							"maximum":     255,
-						},
-						"message": map[string]interface{}{
-							"type":        "string",
-							"description": "Optional exit message",
-						},
+	return []Tool{ exitTool() }
+}
+
+// exitTool returns the shared exit tool definition to avoid duplication
+func exitTool() Tool {
+	return Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "exit",
+			Description: "Exit the program with specified code",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"code": map[string]interface{}{
+						"type":        "integer",
+						"description": "Exit code",
+						"minimum":     0,
+						"maximum":     255,
 					},
-					"required": []string{"code"},
+					"message": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional exit message",
+					},
 				},
+				"required": []string{"code"},
 			},
 		},
 	}

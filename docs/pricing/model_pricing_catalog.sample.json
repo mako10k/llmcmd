@@ -1,0 +1,62 @@
+{
+  "version": "2025-08-16",
+  "currency": "USD",
+  "unit": "per_1M_tokens",
+  "notes": [
+    "Catalog is illustrative; values copied from API pricing page per user-provided text.",
+    "Use by the Model Pricing Resolver as config-first source; still marked Subject to Change."
+  ],
+  "models": {
+    "gpt-5": {
+      "input": 1.250,
+      "cached": 0.125,
+      "output": 10.000
+    },
+    "gpt-5-mini": {
+      "input": 0.250,
+      "cached": 0.025,
+      "output": 2.000
+    },
+    "gpt-5-nano": {
+      "input": 0.050,
+      "cached": 0.005,
+      "output": 0.400
+    },
+    "gpt-4.1": {
+      "finetune": {
+        "input": 3.00,
+        "cached": 0.75,
+        "output": 12.00,
+        "training": 25.00
+      }
+    },
+    "gpt-4.1-mini": {
+      "finetune": {
+        "input": 0.80,
+        "cached": 0.20,
+        "output": 3.20,
+        "training": 5.00
+      }
+    },
+    "gpt-4.1-nano": {
+      "finetune": {
+        "input": 0.20,
+        "cached": 0.05,
+        "output": 0.80,
+        "training": 1.50
+      }
+    },
+    "o4-mini": {
+      "reinforced_finetune": {
+        "input": 4.00,
+        "cached": 1.00,
+        "output": 16.00,
+        "training_per_hour": 100.00
+      }
+    }
+  },
+  "defaults": {
+    "default_model": "gpt-4o-mini",
+    "region_pricing": "ignored"
+  }
+}

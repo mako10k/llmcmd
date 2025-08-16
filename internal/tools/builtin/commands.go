@@ -7,9 +7,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"syscall"
+	
+	// shared helpers
+	"github.com/mako10k/llmcmd/internal/utils"
 )
 
 // VFS interface for file operations
@@ -146,24 +148,6 @@ func executeSubProcess(cmd *exec.Cmd, processName string) error {
 
 // parseLineCountArg parses -n argument for head/tail commands
 func parseLineCountArg(args []string, defaultLines int) (int, []string, error) {
-	lines := defaultLines
-
-	// Parse number of lines from arguments
-	for i, arg := range args {
-		if arg == "-n" && i+1 < len(args) {
-			n, err := strconv.Atoi(args[i+1])
-			if err != nil {
-				return 0, args, fmt.Errorf("invalid number: %s", args[i+1])
-			}
-			if n < 0 {
-				return 0, args, fmt.Errorf("negative line count: %d", n)
-			}
-			lines = n
-			// Remove processed arguments
-			args = append(args[:i], args[i+2:]...)
-			break
-		}
-	}
-
-	return lines, args, nil
+	// Delegate to shared utility to avoid duplication across packages
+	return utils.ParseLineCountArgument(args, defaultLines)
 }

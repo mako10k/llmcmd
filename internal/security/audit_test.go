@@ -10,17 +10,36 @@ import (
 	"time"
 )
 
+// --- Test helpers to reduce duplication ---
+func newTempLogger(t *testing.T) (AuditLogger, string) {
+	t.Helper()
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "test_audit.log")
+	logger, err := NewFileAuditLogger(logPath)
+	if err != nil {
+		t.Fatalf("Failed to create audit logger: %v", err)
+	}
+	return logger, logPath
+}
+
+func readLogLines(t *testing.T, path string) []string {
+	t.Helper()
+	content, err := ioutil.ReadFile(path)
+	if err != nil {
+		t.Fatalf("Failed to read audit log: %v", err)
+	}
+	s := strings.TrimSpace(string(content))
+	if s == "" {
+		return []string{}
+	}
+	return strings.Split(s, "\n")
+}
+
 // TestAuditEvent_CriticalFactors implements MVP 4-factor testing approach
 func TestAuditEvent_CriticalFactors(t *testing.T) {
 	// Factor 1: Core Functionality - AuditEvent Creation and Logging
 	t.Run("Factor1_CoreFunctionality", func(t *testing.T) {
-		tempDir := t.TempDir()
-		logPath := filepath.Join(tempDir, "test_audit.log")
-
-		logger, err := NewFileAuditLogger(logPath)
-		if err != nil {
-			t.Fatalf("Failed to create audit logger: %v", err)
-		}
+		logger, logPath := newTempLogger(t)
 		defer logger.Close()
 
 		event := AuditEvent{
@@ -32,25 +51,21 @@ func TestAuditEvent_CriticalFactors(t *testing.T) {
 			Success:   true,
 		}
 
-		err = logger.LogEvent(event)
-		if err != nil {
-			t.Fatalf("Failed to log event: %v", err)
-		}
+			if err := logger.LogEvent(event); err != nil {
+				t.Fatalf("Failed to log event: %v", err)
+			}
 
 		// Verify log file was created and contains expected data
 		if _, err := os.Stat(logPath); os.IsNotExist(err) {
 			t.Fatal("Audit log file was not created")
 		}
 
-		content, err := ioutil.ReadFile(logPath)
-		if err != nil {
-			t.Fatalf("Failed to read audit log: %v", err)
-		}
-
-		if !strings.Contains(string(content), "test_user") {
+	lines := readLogLines(t, logPath)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "test_user") {
 			t.Error("Log does not contain expected user ID")
 		}
-		if !strings.Contains(string(content), EventTypeAPIKeyUsage) {
+	if !strings.Contains(joined, EventTypeAPIKeyUsage) {
 			t.Error("Log does not contain expected event type")
 		}
 	})
@@ -58,20 +73,15 @@ func TestAuditEvent_CriticalFactors(t *testing.T) {
 	// Factor 2: Error Handling - Failure scenarios and edge cases
 	t.Run("Factor2_ErrorHandling", func(t *testing.T) {
 		// Test with invalid log path
-		logger, err := NewFileAuditLogger("/invalid/path/audit.log")
+		_, err := NewFileAuditLogger("/invalid/path/audit.log")
 		if err == nil {
 			t.Error("Expected error for invalid log path")
 		}
 
 		// Test logging to closed logger
-		tempDir := t.TempDir()
-		logPath := filepath.Join(tempDir, "test_audit.log")
-		logger, err = NewFileAuditLogger(logPath)
-		if err != nil {
-			t.Fatalf("Failed to create audit logger: %v", err)
-		}
+		logger2, _ := newTempLogger(t)
 
-		logger.Close()
+		logger2.Close()
 		event := AuditEvent{
 			UserID:    "test_user",
 			EventType: EventTypeAPIKeyUsage,
@@ -79,21 +89,14 @@ func TestAuditEvent_CriticalFactors(t *testing.T) {
 			Success:   true,
 		}
 
-		err = logger.LogEvent(event)
-		if err == nil {
+		if err := logger2.LogEvent(event); err == nil {
 			t.Error("Expected error when logging to closed logger")
 		}
 	})
 
 	// Factor 3: Data Integrity - JSON format and required fields
 	t.Run("Factor3_DataIntegrity", func(t *testing.T) {
-		tempDir := t.TempDir()
-		logPath := filepath.Join(tempDir, "test_audit.log")
-
-		logger, err := NewFileAuditLogger(logPath)
-		if err != nil {
-			t.Fatalf("Failed to create audit logger: %v", err)
-		}
+		logger, logPath := newTempLogger(t)
 		defer logger.Close()
 
 		event := AuditEvent{
@@ -105,25 +108,18 @@ func TestAuditEvent_CriticalFactors(t *testing.T) {
 			Success:   true,
 		}
 
-		err = logger.LogEvent(event)
-		if err != nil {
+		if err := logger.LogEvent(event); err != nil {
 			t.Fatalf("Failed to log event: %v", err)
 		}
 
 		// Read and parse the log entry as JSON
-		content, err := ioutil.ReadFile(logPath)
-		if err != nil {
-			t.Fatalf("Failed to read audit log: %v", err)
-		}
-
-		lines := strings.Split(strings.TrimSpace(string(content)), "\n")
+	lines := readLogLines(t, logPath)
 		if len(lines) == 0 {
 			t.Fatal("No log entries found")
 		}
 
 		var loggedEvent map[string]interface{}
-		err = json.Unmarshal([]byte(lines[0]), &loggedEvent)
-		if err != nil {
+		if err := json.Unmarshal([]byte(lines[0]), &loggedEvent); err != nil {
 			t.Fatalf("Failed to parse log entry as JSON: %v", err)
 		}
 
@@ -148,13 +144,7 @@ func TestAuditEvent_CriticalFactors(t *testing.T) {
 
 	// Factor 4: Performance and Security - File permissions and concurrent access
 	t.Run("Factor4_PerformanceAndSecurity", func(t *testing.T) {
-		tempDir := t.TempDir()
-		logPath := filepath.Join(tempDir, "test_audit.log")
-
-		logger, err := NewFileAuditLogger(logPath)
-		if err != nil {
-			t.Fatalf("Failed to create audit logger: %v", err)
-		}
+	logger, logPath := newTempLogger(t)
 		defer logger.Close()
 
 		// Check file permissions (should be 0600 - owner read/write only)
@@ -202,12 +192,7 @@ func TestAuditEvent_CriticalFactors(t *testing.T) {
 		<-done
 
 		// Verify that all events were logged (20 total)
-		content, err := ioutil.ReadFile(logPath)
-		if err != nil {
-			t.Fatalf("Failed to read audit log: %v", err)
-		}
-
-		lines := strings.Split(strings.TrimSpace(string(content)), "\n")
+	lines := readLogLines(t, logPath)
 		if len(lines) != 20 {
 			t.Errorf("Expected 20 log entries, got %d", len(lines))
 		}
@@ -261,12 +246,7 @@ func TestAuditManager_MVP(t *testing.T) {
 	}
 
 	// Verify all events were logged
-	content, err := ioutil.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("Failed to read audit log: %v", err)
-	}
-
-	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
+	lines := readLogLines(t, logPath)
 	if len(lines) != len(testCases) {
 		t.Errorf("Expected %d log entries, got %d", len(testCases), len(lines))
 	}

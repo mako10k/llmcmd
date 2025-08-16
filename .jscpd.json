@@ -8,8 +8,8 @@
     "llmsh-rs/src/**/*.rs"
   ],
   "exclude": [
-    "vendor/**",
-    "node_modules/**",
+  "**/vendor/**",
+  "**/node_modules/**",
     ".git/**",
     ".github/**",
     "docs/**",

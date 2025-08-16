@@ -82,6 +82,27 @@ pub fn child_mux() -> &'static mut ChildMux { unsafe { CHILD_MUX.as_mut().expect
 pub fn run_mux(child_parent_fds: Vec<RawFd>, allow_read:&[String], allow_write:&[String], pass_fds:Option<(i32,i32)>) -> Result<()> {
     struct MuxChild { fd: RawFd, alive: bool, buf: Vec<u8> }
     struct Pending { child_fd: RawFd, child_id: serde_json::Value }
+    
+    // Small helpers to reduce repetition
+    fn send_json_frame(fd: RawFd, v: &serde_json::Value) {
+        if let Ok(bytes) = serde_json::to_vec(v) {
+            let len_bytes = (bytes.len() as u32).to_be_bytes();
+            let _ = write_all_fd(fd, &len_bytes);
+            let _ = write_all_fd(fd, &bytes);
+        }
+    }
+
+    fn respond_reserved_ok(child_fd: RawFd, child_id: &serde_json::Value, payload: serde_json::Value, debug: bool, label: &str) {
+        let resp = json!({ "id": child_id, "ok": true, "result": payload });
+        send_json_frame(child_fd, &resp);
+        if debug { eprintln!("[mux] reserved {} served locally fd={}", label, child_fd); }
+    }
+
+    fn respond_reserved_err(child_fd: RawFd, child_id: &serde_json::Value, code: &str, msg: &str, debug: bool, label: &str) {
+        let resp = json!({ "id": child_id, "ok": false, "error": { "code": code, "message": msg } });
+        send_json_frame(child_fd, &resp);
+        if debug { eprintln!("[mux] reserved {} denied locally fd={} code={}", label, child_fd, code); }
+    }
     // Spawn upstream (inline variant of VfsClient::spawn giving us raw fds for async handling)
     fn spawn_upstream(vfsd_path:&str, allow_read:&[String], allow_write:&[String], pass_fds:Option<(i32,i32)>) -> Result<(RawFd, RawFd)> {
         // Create two pipes to become vfsd's stdio: (parent->child stdin) and (child->parent stdout)
@@ -174,13 +195,10 @@ pub fn run_mux(child_parent_fds: Vec<RawFd>, allow_read:&[String], allow_write:&
                         let mux_id = v.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
                         if let Some(p) = pending.remove(&mux_id) {
                             let mut resp_obj = v.clone();
-                            // restore child id
-                            if let serde_json::Value::String(_) = p.child_id { resp_obj["id"] = p.child_id; } else { resp_obj["id"] = p.child_id; }
-                            let resp_bytes = serde_json::to_vec(&resp_obj).unwrap_or_else(|_| b"{}".to_vec());
-                            let len_bytes = (resp_bytes.len() as u32).to_be_bytes();
-                            if let Err(e)=write_all_fd(p.child_fd,&len_bytes) { eprintln!("mux child write len error: {e}"); }
-                            else if let Err(e)=write_all_fd(p.child_fd,&resp_bytes) { eprintln!("mux child write frame error: {e}"); }
-                            else if mux_debug { eprintln!("[mux] upstream->child delivered mux_id={} child_fd={}", mux_id, p.child_fd); }
+                            // restore child id and forward
+                            resp_obj["id"] = p.child_id;
+                            send_json_frame(p.child_fd, &resp_obj);
+                            if mux_debug { eprintln!("[mux] upstream->child delivered mux_id={} child_fd={}", mux_id, p.child_fd); }
                         } else {
                             eprintln!("mux: unknown mux_id response '{}', dropping", mux_id);
                         }
@@ -215,16 +233,7 @@ pub fn run_mux(child_parent_fds: Vec<RawFd>, allow_read:&[String], allow_write:&
                                     let n = match std::io::stdin().read(&mut buf) { Ok(n)=>n, Err(_)=>{ buf.clear(); 0 } };
                                     buf.truncate(n);
                                     let b64 = if buf.is_empty() { String::new() } else { general_purpose::STANDARD.encode(&buf) };
-                                    let resp_obj = json!({
-                                        "id": child_id,
-                                        "ok": true,
-                                        "result": { "eof": n==0, "data": b64, "reserved": true }
-                                    });
-                                    let resp_bytes = serde_json::to_vec(&resp_obj).unwrap_or_else(|_| b"{}".to_vec());
-                                    let len_bytes = (resp_bytes.len() as u32).to_be_bytes();
-                                    let _ = write_all_fd(child.fd, &len_bytes);
-                                    let _ = write_all_fd(child.fd, &resp_bytes);
-                                    if mux_debug { eprintln!("[mux] served read on fd0 locally to child_fd={}", child.fd); }
+                                    respond_reserved_ok(child.fd, &child_id, json!({ "eof": n==0, "data": b64, "reserved": true }), mux_debug, "read fd0");
                                     continue; // do not forward upstream
                                 }
                             }
@@ -234,34 +243,19 @@ pub fn run_mux(child_parent_fds: Vec<RawFd>, allow_read:&[String], allow_write:&
                                     let data_b64 = v.get("params").and_then(|p| p.get("data")).and_then(|s| s.as_str()).unwrap_or("");
                                     let decoded = general_purpose::STANDARD.decode(data_b64).unwrap_or_default();
                                     let w = if h==1 { std::io::stdout().write(&decoded).unwrap_or(0) } else { std::io::stderr().write(&decoded).unwrap_or(0) };
-                                    let resp_obj = json!({ "id": child_id, "ok": true, "result": { "written": w as u64, "reserved": true } });
-                                    let resp_bytes = serde_json::to_vec(&resp_obj).unwrap_or_else(|_| b"{}".to_vec());
-                                    let len_bytes = (resp_bytes.len() as u32).to_be_bytes();
-                                    let _ = write_all_fd(child.fd, &len_bytes);
-                                    let _ = write_all_fd(child.fd, &resp_bytes);
-                                    if mux_debug { eprintln!("[mux] served write on fd{} locally to child_fd={}", h, child.fd); }
+                                    respond_reserved_ok(child.fd, &child_id, json!({ "written": w as u64, "reserved": true }), mux_debug, "write fd1/2");
                                     continue;
                                 }
                                 if h == 0 {
                                     // writing to fd0 is not allowed; return E_PERM
-                                    let resp_obj = json!({ "id": child_id, "ok": false, "error": { "code": "E_PERM", "message": "not writable" } });
-                                    let resp_bytes = serde_json::to_vec(&resp_obj).unwrap_or_else(|_| b"{}".to_vec());
-                                    let len_bytes = (resp_bytes.len() as u32).to_be_bytes();
-                                    let _ = write_all_fd(child.fd, &len_bytes);
-                                    let _ = write_all_fd(child.fd, &resp_bytes);
-                                    if mux_debug { eprintln!("[mux] denied write on fd0 locally to child_fd={}", child.fd); }
+                                    respond_reserved_err(child.fd, &child_id, "E_PERM", "not writable", mux_debug, "write fd0");
                                     continue;
                                 }
                             }
                             "close" => {
                                 let h = v.get("params").and_then(|p| p.get("h")).and_then(|h| h.as_u64()).unwrap_or(u64::MAX) as u32;
                                 if h <= 2 {
-                                    let resp_obj = json!({ "id": child_id, "ok": true, "result": { "closed": true, "reserved": true } });
-                                    let resp_bytes = serde_json::to_vec(&resp_obj).unwrap_or_else(|_| b"{}".to_vec());
-                                    let len_bytes = (resp_bytes.len() as u32).to_be_bytes();
-                                    let _ = write_all_fd(child.fd, &len_bytes);
-                                    let _ = write_all_fd(child.fd, &resp_bytes);
-                                    if mux_debug { eprintln!("[mux] acknowledged close on reserved fd locally to child_fd={}", child.fd); }
+                                    respond_reserved_ok(child.fd, &child_id, json!({ "closed": true, "reserved": true }), mux_debug, "close fd0/1/2");
                                     continue;
                                 }
                             }
