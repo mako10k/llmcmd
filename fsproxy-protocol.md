@@ -45,6 +45,10 @@ The FS Proxy Protocol is a communication protocol designed to control file acces
 - Synchronization: Strict request/response (one response per request id)
 - Concurrency: Client may pipeline (send multiple requests) but must correlate via `id`
 
+Reserved Handles (stdio):
+- Handles 0, 1, 2 are reserved for stdin, stdout, stderr respectively. The VFS server (vfsd) MUST NOT allocate or accept these handles; any `read`/`write`/`close` on 0..2 MUST be rejected with `E_PERM` by the server if received.
+- The parent-side MUX MUST intercept requests targeting 0..2 and handle them locally by reading from process stdin (fd 0) and writing to stdout/stderr (fd 1/2), and acknowledge `close` as a no-op. Such requests MUST NOT be forwarded upstream.
+
 ### Message Envelope
 
 Request JSON:
