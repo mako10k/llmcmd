@@ -9,10 +9,10 @@ import (
 
 // Grep searches for patterns in text (basic regex support)
 func Grep(args []string, stdin io.Reader, stdout io.Writer) error {
-		if len(args) == 0 {
-				return fmt.Errorf("grep: missing pattern")
-		}
-		if handled, _, err := HandleHelp(args, stdout, `grep - Search text patterns
+	if len(args) == 0 {
+		return fmt.Errorf("grep: missing pattern")
+	}
+	if handled, _, err := HandleHelp(args, stdout, `grep - Search text patterns
 
 Usage: grep [options] pattern [file...]
 
@@ -27,8 +27,8 @@ Examples:
 	grep -i "warning" file    Case-insensitive search
 	grep -v "debug" log       Show lines not containing "debug"
 `); handled {
-				return err
-		}
+		return err
+	}
 
 	// Parse flags and pattern
 	invertMatch := false

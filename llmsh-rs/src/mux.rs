@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Write};
 use std::collections::HashMap;
 use std::env;
 use std::os::unix::io::{RawFd, FromRawFd};
@@ -27,8 +27,6 @@ impl ChildMux {
         let len=(data.len() as u32).to_be_bytes();
         write_all_fd(self.fd_write, &len)?; write_all_fd(self.fd_write, &data)?;
         let mut len_buf=[0u8;4]; self.reader.read_exact(&mut len_buf)?; let resp_len=u32::from_be_bytes(len_buf) as usize; let mut buf=vec![0u8;resp_len]; self.reader.read_exact(&mut buf)?; let v:serde_json::Value=serde_json::from_slice(&buf)?; let ok=v.get("ok").and_then(|b|b.as_bool()).unwrap_or(false); if !ok { let code=v.get("error").and_then(|e|e.get("code").and_then(|c|c.as_str())).unwrap_or("?").to_string(); return Ok((false, json!({"code": code}))); } Ok((true, v.get("result").cloned().unwrap_or(json!({})))) }
-    pub fn open_read(&mut self,path:&str)->Result<Result<u32,VfsErrorCode>>{ let (ok,res)=self.send("open_read", json!({"path":path}))?; if ok { Ok(Ok(res.get("handle").and_then(|h|h.as_u64()).unwrap_or(0) as u32)) } else { Ok(Err(map_code(res.get("code").and_then(|c|c.as_str()).unwrap_or("?")))) } }
-    pub fn open_write(&mut self,path:&str,append:bool)->Result<Result<u32,VfsErrorCode>>{ let (ok,res)=self.send("open_write", json!({"path":path,"append":append}))?; if ok { Ok(Ok(res.get("handle").and_then(|h|h.as_u64()).unwrap_or(0) as u32)) } else { Ok(Err(map_code(res.get("code").and_then(|c|c.as_str()).unwrap_or("?")))) } }
     pub fn read_chunk(&mut self,h:u32,max:u32)->Result<Result<(Vec<u8>,bool),VfsErrorCode>>{ let (ok,res)=self.send("read", json!({"h":h,"max":max}))?; if ok { let b64=res.get("data").and_then(|d|d.as_str()).unwrap_or(""); let mut data=Vec::new(); if !b64.is_empty(){ data=general_purpose::STANDARD.decode(b64).unwrap_or_default(); } let eof=res.get("eof").and_then(|e|e.as_bool()).unwrap_or(false); Ok(Ok((data,eof))) } else { Ok(Err(map_code(res.get("code").and_then(|c|c.as_str()).unwrap_or("?")))) } }
     pub fn write_chunk(&mut self,h:u32,data:&[u8])->Result<Result<usize,VfsErrorCode>>{
         // Implement partial write semantics: upstream may write fewer bytes than requested.
@@ -51,6 +49,10 @@ impl ChildMux {
         Ok(Ok(total_written))
     }
     pub fn close(&mut self,h:u32)->Result<Result<(),VfsErrorCode>>{ let (ok,_)=self.send("close", json!({"h":h}))?; if ok { Ok(Ok(())) } else { Ok(Err(VfsErrorCode::EClosed)) } }
+    pub fn open(&mut self, path:&str, mode:&str) -> Result<Result<u32,VfsErrorCode>> {
+        let (ok,res)= self.send("open", json!({"path":path, "mode":mode}))?;
+        if ok { Ok(Ok(res.get("handle").and_then(|h|h.as_u64()).unwrap_or(0) as u32)) } else { Ok(Err(map_code(res.get("code").and_then(|c|c.as_str()).unwrap_or("?")))) }
+    }
 }
 
 static mut CHILD_MUX: Option<ChildMux> = None;
@@ -154,6 +156,71 @@ pub fn run_mux(child_parent_fds: Vec<RawFd>, allow_read:&[String], allow_write:&
                     let frame = child.buf[4..4+len].to_vec(); child.buf.drain(0..4+len);
                     let mut v: serde_json::Value = match serde_json::from_slice(&frame) { Ok(v)=>v, Err(_)=> { eprintln!("mux: bad json from child"); continue; } };
                     let child_id = v.get("id").cloned().unwrap_or(json!("?"));
+                    // Intercept reserved handle operations (fd 0/1/2) locally in MUX.
+                    if let Some(op) = v.get("op").and_then(|o| o.as_str()) {
+                        match op {
+                            "read" => {
+                                let h = v.get("params").and_then(|p| p.get("h")).and_then(|h| h.as_u64()).unwrap_or(u64::MAX) as u32;
+                                if h == 0 {
+                                    let max = v.get("params").and_then(|p| p.get("max")).and_then(|m| m.as_u64()).unwrap_or(4096) as usize;
+                                    let max = std::cmp::min(max, 4096usize);
+                                    let mut buf = vec![0u8; max];
+                                    let n = match std::io::stdin().read(&mut buf) { Ok(n)=>n, Err(_)=>{ buf.clear(); 0 } };
+                                    buf.truncate(n);
+                                    let b64 = if buf.is_empty() { String::new() } else { general_purpose::STANDARD.encode(&buf) };
+                                    let resp_obj = json!({
+                                        "id": child_id,
+                                        "ok": true,
+                                        "result": { "eof": n==0, "data": b64, "reserved": true }
+                                    });
+                                    let resp_bytes = serde_json::to_vec(&resp_obj).unwrap_or_else(|_| b"{}".to_vec());
+                                    let len_bytes = (resp_bytes.len() as u32).to_be_bytes();
+                                    let _ = write_all_fd(child.fd, &len_bytes);
+                                    let _ = write_all_fd(child.fd, &resp_bytes);
+                                    if mux_debug { eprintln!("[mux] served read on fd0 locally to child_fd={}", child.fd); }
+                                    continue; // do not forward upstream
+                                }
+                            }
+                            "write" => {
+                                let h = v.get("params").and_then(|p| p.get("h")).and_then(|h| h.as_u64()).unwrap_or(u64::MAX) as u32;
+                                if h == 1 || h == 2 {
+                                    let data_b64 = v.get("params").and_then(|p| p.get("data")).and_then(|s| s.as_str()).unwrap_or("");
+                                    let decoded = general_purpose::STANDARD.decode(data_b64).unwrap_or_default();
+                                    let w = if h==1 { std::io::stdout().write(&decoded).unwrap_or(0) } else { std::io::stderr().write(&decoded).unwrap_or(0) };
+                                    let resp_obj = json!({ "id": child_id, "ok": true, "result": { "written": w as u64, "reserved": true } });
+                                    let resp_bytes = serde_json::to_vec(&resp_obj).unwrap_or_else(|_| b"{}".to_vec());
+                                    let len_bytes = (resp_bytes.len() as u32).to_be_bytes();
+                                    let _ = write_all_fd(child.fd, &len_bytes);
+                                    let _ = write_all_fd(child.fd, &resp_bytes);
+                                    if mux_debug { eprintln!("[mux] served write on fd{} locally to child_fd={}", h, child.fd); }
+                                    continue;
+                                }
+                                if h == 0 {
+                                    // writing to fd0 is not allowed; return E_PERM
+                                    let resp_obj = json!({ "id": child_id, "ok": false, "error": { "code": "E_PERM", "message": "not writable" } });
+                                    let resp_bytes = serde_json::to_vec(&resp_obj).unwrap_or_else(|_| b"{}".to_vec());
+                                    let len_bytes = (resp_bytes.len() as u32).to_be_bytes();
+                                    let _ = write_all_fd(child.fd, &len_bytes);
+                                    let _ = write_all_fd(child.fd, &resp_bytes);
+                                    if mux_debug { eprintln!("[mux] denied write on fd0 locally to child_fd={}", child.fd); }
+                                    continue;
+                                }
+                            }
+                            "close" => {
+                                let h = v.get("params").and_then(|p| p.get("h")).and_then(|h| h.as_u64()).unwrap_or(u64::MAX) as u32;
+                                if h <= 2 {
+                                    let resp_obj = json!({ "id": child_id, "ok": true, "result": { "closed": true, "reserved": true } });
+                                    let resp_bytes = serde_json::to_vec(&resp_obj).unwrap_or_else(|_| b"{}".to_vec());
+                                    let len_bytes = (resp_bytes.len() as u32).to_be_bytes();
+                                    let _ = write_all_fd(child.fd, &len_bytes);
+                                    let _ = write_all_fd(child.fd, &resp_bytes);
+                                    if mux_debug { eprintln!("[mux] acknowledged close on reserved fd locally to child_fd={}", child.fd); }
+                                    continue;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                     req_seq += 1; let mux_id = req_seq.to_string();
                     v["id"] = json!(mux_id.clone()); // replace id for upstream
                     // Record pending mapping

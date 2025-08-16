@@ -23,7 +23,7 @@ func main() {
 	i := 0
 	for i < len(args) {
 		arg := args[i]
-	switch arg {
+		switch arg {
 		case "-i":
 			if i+1 >= len(args) {
 				fmt.Fprintf(os.Stderr, "Error: option %s requires an argument\n", arg)

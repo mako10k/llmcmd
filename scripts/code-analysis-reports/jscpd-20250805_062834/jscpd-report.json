@@ -1,0 +1,2293 @@
+{
+  "statistics": {
+    "detectionDate": "2025-08-05T06:28:35.628Z",
+    "formats": {
+      "go": {
+        "sources": {
+          "cmd/llmsh/main.go": {
+            "lines": 179,
+            "tokens": 1449,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/wc.go": {
+            "lines": 94,
+            "tokens": 567,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/uniq.go": {
+            "lines": 75,
+            "tokens": 428,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/tr.go": {
+            "lines": 125,
+            "tokens": 858,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/tee.go": {
+            "lines": 44,
+            "tokens": 213,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/tail.go": {
+            "lines": 68,
+            "tokens": 448,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 25,
+            "duplicatedTokens": 207,
+            "percentage": 36.76,
+            "percentageTokens": 46.21,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/sort.go": {
+            "lines": 108,
+            "tokens": 689,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/sed.go": {
+            "lines": 80,
+            "tokens": 495,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/rev.go": {
+            "lines": 48,
+            "tokens": 300,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/patch_test.go": {
+            "lines": 139,
+            "tokens": 643,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/patch.go": {
+            "lines": 303,
+            "tokens": 2552,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/nl.go": {
+            "lines": 57,
+            "tokens": 322,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/man.go": {
+            "lines": 10,
+            "tokens": 63,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/llmsh.go": {
+            "lines": 140,
+            "tokens": 861,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/llmcmd.go": {
+            "lines": 119,
+            "tokens": 680,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/help_test.go": {
+            "lines": 77,
+            "tokens": 546,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/help.go": {
+            "lines": 563,
+            "tokens": 1310,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/head.go": {
+            "lines": 58,
+            "tokens": 395,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 25,
+            "duplicatedTokens": 207,
+            "percentage": 43.1,
+            "percentageTokens": 52.41,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/grep.go": {
+            "lines": 109,
+            "tokens": 667,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/echo.go": {
+            "lines": 35,
+            "tokens": 147,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/diff.go": {
+            "lines": 156,
+            "tokens": 1017,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/cut.go": {
+            "lines": 75,
+            "tokens": 546,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/commands_test.go": {
+            "lines": 75,
+            "tokens": 622,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/commands.go": {
+            "lines": 141,
+            "tokens": 1105,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/builtin/cat.go": {
+            "lines": 34,
+            "tokens": 161,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/parser/tokenizer.go": {
+            "lines": 270,
+            "tokens": 2075,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/parser/parser_test.go": {
+            "lines": 171,
+            "tokens": 1297,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 30,
+            "duplicatedTokens": 266,
+            "percentage": 17.54,
+            "percentageTokens": 20.51,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/parser/parser.go": {
+            "lines": 307,
+            "tokens": 2292,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/parser/ast.go": {
+            "lines": 139,
+            "tokens": 966,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/commands/split.go": {
+            "lines": 277,
+            "tokens": 2403,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 12,
+            "duplicatedTokens": 166,
+            "percentage": 4.33,
+            "percentageTokens": 6.91,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/commands/manager.go": {
+            "lines": 132,
+            "tokens": 1244,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/commands/external.go": {
+            "lines": 78,
+            "tokens": 653,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/commands/encoding.go": {
+            "lines": 329,
+            "tokens": 2833,
+            "sources": 1,
+            "clones": 4,
+            "duplicatedLines": 48,
+            "duplicatedTokens": 476,
+            "percentage": 14.59,
+            "percentageTokens": 16.8,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/commands/conversion.go": {
+            "lines": 350,
+            "tokens": 3105,
+            "sources": 1,
+            "clones": 5,
+            "duplicatedLines": 86,
+            "duplicatedTokens": 878,
+            "percentage": 24.57,
+            "percentageTokens": 28.28,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/commands/calculation.go": {
+            "lines": 337,
+            "tokens": 3201,
+            "sources": 1,
+            "clones": 6,
+            "duplicatedLines": 54,
+            "duplicatedTokens": 542,
+            "percentage": 16.02,
+            "percentageTokens": 16.93,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/commands/basic.go": {
+            "lines": 181,
+            "tokens": 1667,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/tools/engine.go": {
+            "lines": 1192,
+            "tokens": 9645,
+            "sources": 1,
+            "clones": 7,
+            "duplicatedLines": 146,
+            "duplicatedTokens": 1233,
+            "percentage": 12.25,
+            "percentageTokens": 12.78,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/security/manager.go": {
+            "lines": 215,
+            "tokens": 1653,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/security/audit_test.go": {
+            "lines": 313,
+            "tokens": 2450,
+            "sources": 1,
+            "clones": 4,
+            "duplicatedLines": 44,
+            "duplicatedTokens": 396,
+            "percentage": 14.06,
+            "percentageTokens": 16.16,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/security/audit.go": {
+            "lines": 145,
+            "tokens": 958,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/openai/types.go": {
+            "lines": 413,
+            "tokens": 2853,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 48,
+            "duplicatedTokens": 340,
+            "percentage": 11.62,
+            "percentageTokens": 11.92,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/openai/stream_test.go": {
+            "lines": 41,
+            "tokens": 366,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/openai/std_fd_test.go": {
+            "lines": 38,
+            "tokens": 265,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/openai/standard_fd_test.go": {
+            "lines": 40,
+            "tokens": 299,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/openai/shared_quota.go": {
+            "lines": 164,
+            "tokens": 1198,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/openai/retry.go": {
+            "lines": 173,
+            "tokens": 1259,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/openai/file_info_test.go": {
+            "lines": 47,
+            "tokens": 376,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/openai/efficiency_test.go": {
+            "lines": 60,
+            "tokens": 414,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/openai/client_test.go": {
+            "lines": 75,
+            "tokens": 582,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/openai/client.go": {
+            "lines": 933,
+            "tokens": 7698,
+            "sources": 1,
+            "clones": 8,
+            "duplicatedLines": 98,
+            "duplicatedTokens": 1174,
+            "percentage": 10.5,
+            "percentageTokens": 15.25,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/virtualfile_test.go": {
+            "lines": 43,
+            "tokens": 338,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/vfs_integration_test.go": {
+            "lines": 110,
+            "tokens": 895,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/vfs_fsproxy_integration_test.go": {
+            "lines": 274,
+            "tokens": 2027,
+            "sources": 1,
+            "clones": 4,
+            "duplicatedLines": 52,
+            "duplicatedTokens": 380,
+            "percentage": 18.98,
+            "percentageTokens": 18.75,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/vfs.go": {
+            "lines": 565,
+            "tokens": 4318,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 36,
+            "duplicatedTokens": 286,
+            "percentage": 6.37,
+            "percentageTokens": 6.62,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/shell_test.go": {
+            "lines": 131,
+            "tokens": 886,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/shell.go": {
+            "lines": 242,
+            "tokens": 1513,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/llm_executor.go": {
+            "lines": 148,
+            "tokens": 992,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/help.go": {
+            "lines": 327,
+            "tokens": 2406,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/executor.go": {
+            "lines": 492,
+            "tokens": 3964,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/commands_extra.go": {
+            "lines": 315,
+            "tokens": 2825,
+            "sources": 1,
+            "clones": 7,
+            "duplicatedLines": 90,
+            "duplicatedTokens": 974,
+            "percentage": 28.57,
+            "percentageTokens": 34.48,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/llmsh/command_execution_test.go": {
+            "lines": 68,
+            "tokens": 463,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/install/system.go": {
+            "lines": 210,
+            "tokens": 1504,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/cli/parser_test.go": {
+            "lines": 107,
+            "tokens": 853,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/cli/parser.go": {
+            "lines": 282,
+            "tokens": 1517,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/cli/config.go": {
+            "lines": 794,
+            "tokens": 6106,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/app/vfs_fsproxy_adapter_test.go": {
+            "lines": 205,
+            "tokens": 1635,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 46,
+            "duplicatedTokens": 337,
+            "percentage": 22.44,
+            "percentageTokens": 20.61,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/app/vfs_fsproxy_adapter.go": {
+            "lines": 397,
+            "tokens": 2970,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/app/vfs_adapter_integration_test.go": {
+            "lines": 338,
+            "tokens": 2633,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 46,
+            "duplicatedTokens": 337,
+            "percentage": 13.61,
+            "percentageTokens": 12.8,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/app/vfs.go": {
+            "lines": 538,
+            "tokens": 4179,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/app/fsproxy_test.go": {
+            "lines": 638,
+            "tokens": 4972,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 18,
+            "duplicatedTokens": 170,
+            "percentage": 2.82,
+            "percentageTokens": 3.42,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/app/fsproxy_stream_test.go": {
+            "lines": 142,
+            "tokens": 1067,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/app/fsproxy_stream_command_test.go": {
+            "lines": 116,
+            "tokens": 952,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/app/fsproxy_spawn_test.go": {
+            "lines": 269,
+            "tokens": 2069,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/app/fsproxy_llm_test.go": {
+            "lines": 54,
+            "tokens": 336,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/app/fsproxy_llm_integration_test.go": {
+            "lines": 136,
+            "tokens": 1042,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/app/fsproxy_commands_test.go": {
+            "lines": 483,
+            "tokens": 3996,
+            "sources": 1,
+            "clones": 4,
+            "duplicatedLines": 50,
+            "duplicatedTokens": 408,
+            "percentage": 10.35,
+            "percentageTokens": 10.21,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/app/fsproxy_advanced_test.go": {
+            "lines": 348,
+            "tokens": 2975,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/app/fsproxy.go": {
+            "lines": 1527,
+            "tokens": 12028,
+            "sources": 1,
+            "clones": 5,
+            "duplicatedLines": 56,
+            "duplicatedTokens": 621,
+            "percentage": 3.67,
+            "percentageTokens": 5.16,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/app/core.go": {
+            "lines": 206,
+            "tokens": 1543,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "internal/app/app.go": {
+            "lines": 851,
+            "tokens": 7138,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          }
+        },
+        "total": {
+          "lines": 19688,
+          "tokens": 148978,
+          "sources": 80,
+          "clones": 36,
+          "duplicatedLines": 505,
+          "duplicatedTokens": 4699,
+          "percentage": 2.57,
+          "percentageTokens": 3.15,
+          "newDuplicatedLines": 0,
+          "newClones": 0
+        }
+      }
+    },
+    "total": {
+      "lines": 19688,
+      "tokens": 148978,
+      "sources": 80,
+      "clones": 36,
+      "duplicatedLines": 505,
+      "duplicatedTokens": 4699,
+      "percentage": 2.57,
+      "percentageTokens": 3.15,
+      "newDuplicatedLines": 0,
+      "newClones": 0
+    }
+  },
+  "duplicates": [
+    {
+      "format": "go",
+      "lines": 26,
+      "fragment": ")\n\t\t\treturn nil\n\t\t}\n\t}\n\n\tlines := 10\n\n\t// Parse number of lines from arguments\n\tfor i, arg := range args {\n\t\tif arg == \"-n\" && i+1 < len(args) {\n\t\t\tn, err := strconv.Atoi(args[i+1])\n\t\t\tif err != nil {\n\t\t\t\treturn fmt.Errorf(\"invalid number: %s\", args[i+1])\n\t\t\t}\n\t\t\tif n < 0 {\n\t\t\t\treturn fmt.Errorf(\"negative line count: %d\", n)\n\t\t\t}\n\t\t\tlines = n\n\t\t\t// Remove processed arguments\n\t\t\targs = append(args[:i], args[i+2:]...)\n\t\t\tbreak\n\t\t}\n\t}\n\n\tprocessFunc := func(input io.Reader) error {\n\t\tscanner",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/tools/builtin/head.go",
+        "start": 26,
+        "end": 51,
+        "startLoc": {
+          "line": 26,
+          "column": 2,
+          "position": 102
+        },
+        "endLoc": {
+          "line": 51,
+          "column": 8,
+          "position": 309
+        }
+      },
+      "secondFile": {
+        "name": "internal/tools/builtin/tail.go",
+        "start": 26,
+        "end": 51,
+        "startLoc": {
+          "line": 26,
+          "column": 2,
+          "position": 102
+        },
+        "endLoc": {
+          "line": 51,
+          "column": 4,
+          "position": 309
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 16,
+      "fragment": ", WORD, WORD, EOF},\n\t\t},\n\t}\n\n\tfor _, test := range tests {\n\t\ttokenizer := NewTokenizer(test.input)\n\n\t\tfor i, expectedType := range test.expected {\n\t\t\ttoken, err := tokenizer.NextToken()\n\t\t\tif err != nil {\n\t\t\t\tt.Errorf(\"Error tokenizing '%s': %v\", test.input, err)\n\t\t\t\tbreak\n\t\t\t}\n\n\t\t\tif token.Type != expectedType {\n\t\t\t\tt.Errorf(\"Test '%s' token %d: expected %v, got %v (value: '%s')\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/llmsh/parser/parser_test.go",
+        "start": 152,
+        "end": 167,
+        "startLoc": {
+          "line": 152,
+          "column": 8,
+          "position": 1130
+        },
+        "endLoc": {
+          "line": 167,
+          "column": 56,
+          "position": 1263
+        }
+      },
+      "secondFile": {
+        "name": "internal/llmsh/parser/parser_test.go",
+        "start": 30,
+        "end": 45,
+        "startLoc": {
+          "line": 30,
+          "column": 10,
+          "position": 233
+        },
+        "endLoc": {
+          "line": 45,
+          "column": 42,
+          "position": 366
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 7,
+      "fragment": "filename := fmt.Sprintf(\"%s%02d\", prefix, currentFile)\n\t\tcontent := strings.Join(currentContent, \"\\n\")\n\t\t_, err := stdout.Write([]byte(fmt.Sprintf(\"Creating %s:\\n%s\\n\", filename, content)))\n\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n\t}",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/llmsh/commands/split.go",
+        "start": 269,
+        "end": 275,
+        "startLoc": {
+          "line": 269,
+          "column": 3,
+          "position": 2312
+        },
+        "endLoc": {
+          "line": 275,
+          "column": 2,
+          "position": 2395
+        }
+      },
+      "secondFile": {
+        "name": "internal/llmsh/commands/split.go",
+        "start": 254,
+        "end": 260,
+        "startLoc": {
+          "line": 254,
+          "column": 4,
+          "position": 2169
+        },
+        "endLoc": {
+          "line": 260,
+          "column": 12,
+          "position": 2252
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 13,
+      "fragment": "(args []string, stdin io.ReadWriteCloser, stdout io.ReadWriteCloser) error {\n\tdecompress := false\n\n\t// Parse arguments\n\tfor _, arg := range args {\n\t\tif arg == \"-d\" || arg == \"--decompress\" {\n\t\t\tdecompress = true\n\t\t}\n\t}\n\n\tinput, err := io.ReadAll(stdin)\n\tif err != nil {\n\t\treturn fmt.Errorf(\"bzip2: error reading input: %w\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/llmsh/commands/encoding.go",
+        "start": 251,
+        "end": 263,
+        "startLoc": {
+          "line": 251,
+          "column": 13,
+          "position": 2058
+        },
+        "endLoc": {
+          "line": 263,
+          "column": 33,
+          "position": 2177
+        }
+      },
+      "secondFile": {
+        "name": "internal/llmsh/commands/encoding.go",
+        "start": 214,
+        "end": 226,
+        "startLoc": {
+          "line": 214,
+          "column": 12,
+          "position": 1707
+        },
+        "endLoc": {
+          "line": 226,
+          "column": 32,
+          "position": 1826
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 13,
+      "fragment": "(args []string, stdin io.ReadWriteCloser, stdout io.ReadWriteCloser) error {\n\tdecompress := false\n\n\t// Parse arguments\n\tfor _, arg := range args {\n\t\tif arg == \"-d\" || arg == \"--decompress\" {\n\t\t\tdecompress = true\n\t\t}\n\t}\n\n\tinput, err := io.ReadAll(stdin)\n\tif err != nil {\n\t\treturn fmt.Errorf(\"xz: error reading input: %w\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/llmsh/commands/encoding.go",
+        "start": 292,
+        "end": 304,
+        "startLoc": {
+          "line": 292,
+          "column": 10,
+          "position": 2453
+        },
+        "endLoc": {
+          "line": 304,
+          "column": 30,
+          "position": 2572
+        }
+      },
+      "secondFile": {
+        "name": "internal/llmsh/commands/encoding.go",
+        "start": 214,
+        "end": 226,
+        "startLoc": {
+          "line": 214,
+          "column": 12,
+          "position": 1707
+        },
+        "endLoc": {
+          "line": 226,
+          "column": 32,
+          "position": 1826
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 10,
+      "fragment": "// Parse width argument\n\tfor i, arg := range args {\n\t\tif arg == \"-w\" && i+1 < len(args) {\n\t\t\tif w, err := strconv.Atoi(args[i+1]); err == nil {\n\t\t\t\twidth = w\n\t\t\t}\n\t\t}\n\t}\n\n\t// Read input",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/llmsh/commands/conversion.go",
+        "start": 210,
+        "end": 219,
+        "startLoc": {
+          "line": 210,
+          "column": 2,
+          "position": 1869
+        },
+        "endLoc": {
+          "line": 219,
+          "column": 14,
+          "position": 1960
+        }
+      },
+      "secondFile": {
+        "name": "internal/llmsh/commands/conversion.go",
+        "start": 162,
+        "end": 171,
+        "startLoc": {
+          "line": 162,
+          "column": 2,
+          "position": 1448
+        },
+        "endLoc": {
+          "line": 171,
+          "column": 6,
+          "position": 1539
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 15,
+      "fragment": "(args []string, stdin io.ReadWriteCloser, stdout io.ReadWriteCloser) error {\n\ttabWidth := 8\n\n\t// Parse tab width argument\n\tfor i, arg := range args {\n\t\tif (arg == \"-t\" || arg == \"--tabs\") && i+1 < len(args) {\n\t\t\tif w, err := strconv.Atoi(args[i+1]); err == nil {\n\t\t\t\ttabWidth = w\n\t\t\t}\n\t\t}\n\t}\n\n\tinput, err := io.ReadAll(stdin)\n\tif err != nil {\n\t\treturn fmt.Errorf(\"unexpand: error reading input: %w\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/llmsh/commands/conversion.go",
+        "start": 294,
+        "end": 308,
+        "startLoc": {
+          "line": 294,
+          "column": 16,
+          "position": 2622
+        },
+        "endLoc": {
+          "line": 308,
+          "column": 36,
+          "position": 2790
+        }
+      },
+      "secondFile": {
+        "name": "internal/llmsh/commands/conversion.go",
+        "start": 248,
+        "end": 262,
+        "startLoc": {
+          "line": 248,
+          "column": 14,
+          "position": 2206
+        },
+        "endLoc": {
+          "line": 262,
+          "column": 34,
+          "position": 2374
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 10,
+      "fragment": "{\n\t\t\tleft, err := c.evaluateExpression(expr[:i])\n\t\t\tif err != nil {\n\t\t\t\treturn 0, err\n\t\t\t}\n\t\t\tright, err := c.evaluateExpression(expr[i+1:])\n\t\t\tif err != nil {\n\t\t\t\treturn 0, err\n\t\t\t}\n\t\t\treturn left -",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/llmsh/commands/calculation.go",
+        "start": 105,
+        "end": 114,
+        "startLoc": {
+          "line": 105,
+          "column": 2,
+          "position": 956
+        },
+        "endLoc": {
+          "line": 114,
+          "column": 2,
+          "position": 1047
+        }
+      },
+      "secondFile": {
+        "name": "internal/llmsh/commands/calculation.go",
+        "start": 94,
+        "end": 103,
+        "startLoc": {
+          "line": 94,
+          "column": 2,
+          "position": 783
+        },
+        "endLoc": {
+          "line": 103,
+          "column": 2,
+          "position": 874
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 10,
+      "fragment": "{\n\t\t\tleft, err := c.evaluateExpression(expr[:i])\n\t\t\tif err != nil {\n\t\t\t\treturn 0, err\n\t\t\t}\n\t\t\tright, err := c.evaluateExpression(expr[i+1:])\n\t\t\tif err != nil {\n\t\t\t\treturn 0, err\n\t\t\t}\n\t\t\treturn left *",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/llmsh/commands/calculation.go",
+        "start": 120,
+        "end": 129,
+        "startLoc": {
+          "line": 120,
+          "column": 2,
+          "position": 1105
+        },
+        "endLoc": {
+          "line": 129,
+          "column": 2,
+          "position": 1196
+        }
+      },
+      "secondFile": {
+        "name": "internal/llmsh/commands/calculation.go",
+        "start": 94,
+        "end": 103,
+        "startLoc": {
+          "line": 94,
+          "column": 2,
+          "position": 783
+        },
+        "endLoc": {
+          "line": 103,
+          "column": 2,
+          "position": 874
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 10,
+      "fragment": "'/' {\n\t\t\tleft, err := c.evaluateExpression(expr[:i])\n\t\t\tif err != nil {\n\t\t\t\treturn 0, err\n\t\t\t}\n\t\t\tright, err := c.evaluateExpression(expr[i+1:])\n\t\t\tif err != nil {\n\t\t\t\treturn 0, err\n\t\t\t}\n\t\t\tif",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/llmsh/commands/calculation.go",
+        "start": 131,
+        "end": 140,
+        "startLoc": {
+          "line": 131,
+          "column": 2,
+          "position": 1216
+        },
+        "endLoc": {
+          "line": 140,
+          "column": 3,
+          "position": 1305
+        }
+      },
+      "secondFile": {
+        "name": "internal/llmsh/commands/calculation.go",
+        "start": 105,
+        "end": 103,
+        "startLoc": {
+          "line": 105,
+          "column": 2,
+          "position": 954
+        },
+        "endLoc": {
+          "line": 103,
+          "column": 7,
+          "position": 870
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 17,
+      "fragment": "commandFunc, exists := builtin.Commands[cmd]\n\t\tif !exists {\n\t\t\terr = fmt.Errorf(\"unknown command: %s\", cmd)\n\t\t} else {\n\t\t\terr = commandFunc(args, inReader, outWriter)\n\t\t}\n\n\t\trunningCmd.mu.Lock()\n\t\tif err != nil {\n\t\t\trunningCmd.exitCode = 1\n\t\t} else {\n\t\t\trunningCmd.exitCode = 0\n\t\t}\n\t\trunningCmd.mu.Unlock()\n\t}()\n\n\treturn outFd",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/tools/engine.go",
+        "start": 488,
+        "end": 504,
+        "startLoc": {
+          "line": 488,
+          "column": 3,
+          "position": 3772
+        },
+        "endLoc": {
+          "line": 504,
+          "column": 6,
+          "position": 3902
+        }
+      },
+      "secondFile": {
+        "name": "internal/tools/engine.go",
+        "start": 404,
+        "end": 420,
+        "startLoc": {
+          "line": 404,
+          "column": 3,
+          "position": 3083
+        },
+        "endLoc": {
+          "line": 420,
+          "column": 5,
+          "position": 3213
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 40,
+      "fragment": "int) (int, error) {\n\t// Validate input file descriptor\n\tif inputFd < 0 || inputFd >= len(e.fileDescriptors) || e.fileDescriptors[inputFd] == nil {\n\t\treturn 0, fmt.Errorf(\"invalid input file descriptor: %d\", inputFd)\n\t}\n\n\t// Create output pipe\n\toutReader, outWriter, err := os.Pipe()\n\tif err != nil {\n\t\treturn 0, fmt.Errorf(\"failed to create output pipe: %w\", err)\n\t}\n\n\t// Allocate output file descriptor\n\toutFd := e.allocateFd()\n\n\t// Create and store running command tracker\n\trunningCmd := e.createRunningCommand(cmd, args, outFd, inputFd, outFd, nil, outReader)\n\n\t// Extend file descriptors array if needed\n\tfor len(e.fileDescriptors) <= outFd {\n\t\te.fileDescriptors = append(e.fileDescriptors, nil)\n\t}\n\n\t// Set up file descriptor for reading command output\n\te.fileDescriptors[outFd] = outReader\n\n\t// Start goroutine to execute built-in command\n\tgo func() {\n\t\tdefer func() {\n\t\t\toutWriter.Close()\n\n\t\t\trunningCmd.mu.Lock()\n\t\t\trunningCmd.finished = true\n\t\t\trunningCmd.mu.Unlock()\n\n\t\t\trunningCmd.done <- nil\n\t\t\tclose(runningCmd.done)\n\t\t}()\n\n\t\t// Execute the built-in command directly with input stream",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/tools/engine.go",
+        "start": 508,
+        "end": 547,
+        "startLoc": {
+          "line": 508,
+          "column": 2,
+          "position": 3937
+        },
+        "endLoc": {
+          "line": 547,
+          "column": 59,
+          "position": 4246
+        }
+      },
+      "secondFile": {
+        "name": "internal/tools/engine.go",
+        "start": 424,
+        "end": 463,
+        "startLoc": {
+          "line": 424,
+          "column": 2,
+          "position": 3256
+        },
+        "endLoc": {
+          "line": 463,
+          "column": 27,
+          "position": 3565
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 12,
+      "fragment": "if fd < 0 || fd >= len(e.fileDescriptors) {\n\t\te.stats.ErrorCount++\n\t\treturn \"\", fmt.Errorf(\"read: invalid file descriptor %d\", fd)\n\t}\n\n\tfdObj := e.fileDescriptors[fd]\n\tif fdObj == nil {\n\t\te.stats.ErrorCount++\n\t\treturn \"\", fmt.Errorf(\"read: file descriptor %d not available\", fd)\n\t}\n\n\treader",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/tools/engine.go",
+        "start": 1125,
+        "end": 1136,
+        "startLoc": {
+          "line": 1125,
+          "column": 2,
+          "position": 9042
+        },
+        "endLoc": {
+          "line": 1136,
+          "column": 7,
+          "position": 9145
+        }
+      },
+      "secondFile": {
+        "name": "internal/tools/engine.go",
+        "start": 717,
+        "end": 728,
+        "startLoc": {
+          "line": 717,
+          "column": 2,
+          "position": 5695
+        },
+        "endLoc": {
+          "line": 728,
+          "column": 4,
+          "position": 5798
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 13,
+      "fragment": ", func(t *testing.T) {\n\t\ttempDir := t.TempDir()\n\t\tlogPath := filepath.Join(tempDir, \"test_audit.log\")\n\n\t\tlogger, err := NewFileAuditLogger(logPath)\n\t\tif err != nil {\n\t\t\tt.Fatalf(\"Failed to create audit logger: %v\", err)\n\t\t}\n\t\tdefer logger.Close()\n\n\t\tevent := AuditEvent{\n\t\t\tUserID:    \"test_user\",\n\t\t\tEventType: EventTypeConfigAccess",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/security/audit_test.go",
+        "start": 89,
+        "end": 101,
+        "startLoc": {
+          "line": 89,
+          "column": 24,
+          "position": 612
+        },
+        "endLoc": {
+          "line": 101,
+          "column": 22,
+          "position": 720
+        }
+      },
+      "secondFile": {
+        "name": "internal/security/audit_test.go",
+        "start": 16,
+        "end": 28,
+        "startLoc": {
+          "line": 16,
+          "column": 28,
+          "position": 58
+        },
+        "endLoc": {
+          "line": 28,
+          "column": 21,
+          "position": 166
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 11,
+      "fragment": ", func(t *testing.T) {\n\t\ttempDir := t.TempDir()\n\t\tlogPath := filepath.Join(tempDir, \"test_audit.log\")\n\n\t\tlogger, err := NewFileAuditLogger(logPath)\n\t\tif err != nil {\n\t\t\tt.Fatalf(\"Failed to create audit logger: %v\", err)\n\t\t}\n\t\tdefer logger.Close()\n\n\t\t// Check file permissions (should be 0600 - owner read/write only)",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/security/audit_test.go",
+        "start": 150,
+        "end": 160,
+        "startLoc": {
+          "line": 150,
+          "column": 33,
+          "position": 1141
+        },
+        "endLoc": {
+          "line": 160,
+          "column": 67,
+          "position": 1231
+        }
+      },
+      "secondFile": {
+        "name": "internal/security/audit_test.go",
+        "start": 16,
+        "end": 26,
+        "startLoc": {
+          "line": 16,
+          "column": 28,
+          "position": 58
+        },
+        "endLoc": {
+          "line": 26,
+          "column": 6,
+          "position": 148
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 25,
+      "fragment": "{\n\t\t\tType: \"function\",\n\t\t\tFunction: ToolFunction{\n\t\t\t\tName:        \"exit\",\n\t\t\t\tDescription: \"Exit the program with specified code\",\n\t\t\t\tParameters: map[string]interface{}{\n\t\t\t\t\t\"type\": \"object\",\n\t\t\t\t\t\"properties\": map[string]interface{}{\n\t\t\t\t\t\t\"code\": map[string]interface{}{\n\t\t\t\t\t\t\t\"type\":        \"integer\",\n\t\t\t\t\t\t\t\"description\": \"Exit code\",\n\t\t\t\t\t\t\t\"minimum\":     0,\n\t\t\t\t\t\t\t\"maximum\":     255,\n\t\t\t\t\t\t},\n\t\t\t\t\t\t\"message\": map[string]interface{}{\n\t\t\t\t\t\t\t\"type\":        \"string\",\n\t\t\t\t\t\t\t\"description\": \"Optional exit message\",\n\t\t\t\t\t\t},\n\t\t\t\t\t},\n\t\t\t\t\t\"required\": []string{\"code\"},\n\t\t\t\t},\n\t\t\t},\n\t\t},\n\t}\n}",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/openai/types.go",
+        "start": 390,
+        "end": 414,
+        "startLoc": {
+          "line": 390,
+          "column": 3,
+          "position": 2683
+        },
+        "endLoc": {
+          "line": 414,
+          "column": 2,
+          "position": 2853
+        }
+      },
+      "secondFile": {
+        "name": "internal/openai/types.go",
+        "start": 361,
+        "end": 385,
+        "startLoc": {
+          "line": 361,
+          "column": 3,
+          "position": 2487
+        },
+        "endLoc": {
+          "line": 385,
+          "column": 2,
+          "position": 2657
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 20,
+      "fragment": ")\n\n\t\t\t// Check for compound extensions first\n\t\t\tif strings.HasSuffix(fileName, \".tar.gz\") || strings.HasSuffix(fileName, \".tar.bz2\") || strings.HasSuffix(fileName, \".tar.xz\") {\n\t\t\t\tinfo[\"file_type\"] = \"archive\"\n\t\t\t} else {\n\t\t\t\tswitch ext {\n\t\t\t\tcase \".txt\", \".md\", \".log\":\n\t\t\t\t\tinfo[\"file_type\"] = \"text\"\n\t\t\t\tcase \".json\", \".xml\", \".yaml\", \".yml\":\n\t\t\t\t\tinfo[\"file_type\"] = \"structured_text\"\n\t\t\t\tcase \".csv\", \".tsv\":\n\t\t\t\t\tinfo[\"file_type\"] = \"tabular_data\"\n\t\t\t\tcase \".tar\", \".tgz\", \".zip\", \".rar\", \".gz\", \".bz2\", \".xz\", \".7z\":\n\t\t\t\t\tinfo[\"file_type\"] = \"archive\"\n\t\t\t\tcase \".bin\", \".exe\", \".so\", \".dll\":\n\t\t\t\t\tinfo[\"file_type\"] = \"binary\"\n\t\t\t\tcase \".jpg\", \".jpeg\", \".png\", \".gif\", \".bmp\":\n\t\t\t\t\tinfo[\"file_type\"] = \"image\"\n\t\t\t\tdefault",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/openai/client.go",
+        "start": 487,
+        "end": 506,
+        "startLoc": {
+          "line": 487,
+          "column": 9,
+          "position": 3980
+        },
+        "endLoc": {
+          "line": 506,
+          "column": 8,
+          "position": 4206
+        }
+      },
+      "secondFile": {
+        "name": "internal/openai/client.go",
+        "start": 384,
+        "end": 403,
+        "startLoc": {
+          "line": 384,
+          "column": 9,
+          "position": 3058
+        },
+        "endLoc": {
+          "line": 403,
+          "column": 5,
+          "position": 3284
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 11,
+      "fragment": "size := stat.Size()\n\t\t\tif size < 1024 {\n\t\t\t\tinfo[\"size_category\"] = \"small\"\n\t\t\t} else if size < 1024*1024 {\n\t\t\t\tinfo[\"size_category\"] = \"medium\"\n\t\t\t} else if size < 10*1024*1024 {\n\t\t\t\tinfo[\"size_category\"] = \"large\"\n\t\t\t} else {\n\t\t\t\tinfo[\"size_category\"] = \"very_large\"\n\t\t\t}\n\t\t}",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/openai/client.go",
+        "start": 512,
+        "end": 522,
+        "startLoc": {
+          "line": 512,
+          "column": 4,
+          "position": 4230
+        },
+        "endLoc": {
+          "line": 522,
+          "column": 2,
+          "position": 4338
+        }
+      },
+      "secondFile": {
+        "name": "internal/openai/client.go",
+        "start": 417,
+        "end": 428,
+        "startLoc": {
+          "line": 417,
+          "column": 2,
+          "position": 3389
+        },
+        "endLoc": {
+          "line": 428,
+          "column": 7,
+          "position": 3498
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 12,
+      "fragment": "size := stat.Size()\n\t\t\tif size < 1024 {\n\t\t\t\tinfo[\"size_category\"] = \"small\"\n\t\t\t} else if size < 1024*1024 {\n\t\t\t\tinfo[\"size_category\"] = \"medium\"\n\t\t\t} else if size < 10*1024*1024 {\n\t\t\t\tinfo[\"size_category\"] = \"large\"\n\t\t\t} else {\n\t\t\t\tinfo[\"size_category\"] = \"very_large\"\n\t\t\t}\n\t\t}\n\t}",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/openai/client.go",
+        "start": 525,
+        "end": 536,
+        "startLoc": {
+          "line": 525,
+          "column": 4,
+          "position": 4358
+        },
+        "endLoc": {
+          "line": 536,
+          "column": 2,
+          "position": 4469
+        }
+      },
+      "secondFile": {
+        "name": "internal/openai/client.go",
+        "start": 417,
+        "end": 522,
+        "startLoc": {
+          "line": 417,
+          "column": 2,
+          "position": 3389
+        },
+        "endLoc": {
+          "line": 522,
+          "column": 5,
+          "position": 4340
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 10,
+      "fragment": "if size < 1024 {\n\t\t\t\t\t\tsizeStr = fmt.Sprintf(\"%d bytes\", size)\n\t\t\t\t\t} else if size < 1024*1024 {\n\t\t\t\t\t\tsizeStr = fmt.Sprintf(\"%.1f KB\", float64(size)/1024)\n\t\t\t\t\t} else if size < 1024*1024*1024 {\n\t\t\t\t\t\tsizeStr = fmt.Sprintf(\"%.1f MB\", float64(size)/(1024*1024))\n\t\t\t\t\t} else {\n\t\t\t\t\t\tsizeStr = fmt.Sprintf(\"%.1f GB\", float64(size)/(1024*1024*1024))\n\t\t\t\t\t}\n\t\t\t\t}",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/openai/client.go",
+        "start": 823,
+        "end": 832,
+        "startLoc": {
+          "line": 823,
+          "column": 6,
+          "position": 6774
+        },
+        "endLoc": {
+          "line": 832,
+          "column": 2,
+          "position": 6916
+        }
+      },
+      "secondFile": {
+        "name": "internal/openai/client.go",
+        "start": 761,
+        "end": 771,
+        "startLoc": {
+          "line": 761,
+          "column": 4,
+          "position": 6132
+        },
+        "endLoc": {
+          "line": 771,
+          "column": 9,
+          "position": 6275
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 14,
+      "fragment": ", func(t *testing.T) {\n\t\tconfig := &Config{\n\t\t\tInputFiles:     inputFiles,\n\t\t\tOutputFiles:    outputFiles,\n\t\t\tEnableFSProxy:  true,\n\t\t\tFSProxyManager: fsProxyManager,\n\t\t}\n\n\t\tshell, err := NewShell(config)\n\t\tif err != nil {\n\t\t\tt.Fatalf(\"Failed to create shell with FSProxy: %v\", err)\n\t\t}\n\n\t\t// Test simple command execution",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/llmsh/vfs_fsproxy_integration_test.go",
+        "start": 137,
+        "end": 150,
+        "startLoc": {
+          "line": 137,
+          "column": 33,
+          "position": 988
+        },
+        "endLoc": {
+          "line": 150,
+          "column": 33,
+          "position": 1083
+        }
+      },
+      "secondFile": {
+        "name": "internal/llmsh/vfs_fsproxy_integration_test.go",
+        "start": 81,
+        "end": 94,
+        "startLoc": {
+          "line": 81,
+          "column": 15,
+          "position": 568
+        },
+        "endLoc": {
+          "line": 94,
+          "column": 29,
+          "position": 663
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 14,
+      "fragment": ", func(t *testing.T) {\n\t\tconfig := &Config{\n\t\t\tInputFiles:     inputFiles,\n\t\t\tOutputFiles:    outputFiles,\n\t\t\tEnableFSProxy:  true,\n\t\t\tFSProxyManager: fsProxyManager,\n\t\t}\n\n\t\tshell, err := NewShell(config)\n\t\tif err != nil {\n\t\t\tt.Fatalf(\"Failed to create shell with FSProxy: %v\", err)\n\t\t}\n\n\t\t// Test tools.VirtualFileSystem interface methods",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/llmsh/vfs_fsproxy_integration_test.go",
+        "start": 180,
+        "end": 193,
+        "startLoc": {
+          "line": 180,
+          "column": 33,
+          "position": 1303
+        },
+        "endLoc": {
+          "line": 193,
+          "column": 50,
+          "position": 1398
+        }
+      },
+      "secondFile": {
+        "name": "internal/llmsh/vfs_fsproxy_integration_test.go",
+        "start": 81,
+        "end": 94,
+        "startLoc": {
+          "line": 81,
+          "column": 15,
+          "position": 568
+        },
+        "endLoc": {
+          "line": 94,
+          "column": 29,
+          "position": 663
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 19,
+      "fragment": "var file *os.File\n\t\tvar err error\n\n\t\tif append {\n\t\t\tfile, err = os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)\n\t\t} else {\n\t\t\tfile, err = os.Create(filename)\n\t\t}\n\n\t\tif err != nil {\n\t\t\treturn nil, fmt.Errorf(\"cannot create file %s: %v\", filename, err)\n\t\t}\n\n\t\t// Cache the opened file\n\t\tvfs.realFiles[filename] = file\n\t\treturn file, nil\n\t}\n\n\t// If no real file access, create virtual file",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/llmsh/vfs.go",
+        "start": 385,
+        "end": 403,
+        "startLoc": {
+          "line": 385,
+          "column": 3,
+          "position": 2893
+        },
+        "endLoc": {
+          "line": 403,
+          "column": 47,
+          "position": 3036
+        }
+      },
+      "secondFile": {
+        "name": "internal/llmsh/vfs.go",
+        "start": 363,
+        "end": 381,
+        "startLoc": {
+          "line": 363,
+          "column": 3,
+          "position": 2704
+        },
+        "endLoc": {
+          "line": 381,
+          "column": 53,
+          "position": 2847
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 41,
+      "fragment": "(args []string, stdin io.ReadWriteCloser, stdout io.ReadWriteCloser) error {\n\twidth := 80\n\n\t// Parse width argument\n\tfor i, arg := range args {\n\t\tif arg == \"-w\" && i+1 < len(args) {\n\t\t\tif w, err := strconv.Atoi(args[i+1]); err == nil {\n\t\t\t\twidth = w\n\t\t\t}\n\t\t}\n\t}\n\n\t// Read input\n\tinput, err := io.ReadAll(stdin)\n\tif err != nil {\n\t\treturn fmt.Errorf(\"fold: error reading input: %w\", err)\n\t}\n\n\ttext := string(input)\n\tlines := strings.Split(text, \"\\n\")\n\n\tfor _, line := range lines {\n\t\tfor len(line) > width {\n\t\t\t_, err := stdout.Write([]byte(line[:width] + \"\\n\"))\n\t\t\tif err != nil {\n\t\t\t\treturn err\n\t\t\t}\n\t\t\tline = line[width:]\n\t\t}\n\t\tif len(line) > 0 {\n\t\t\t_, err := stdout.Write([]byte(line + \"\\n\"))\n\t\t\tif err != nil {\n\t\t\t\treturn err\n\t\t\t}\n\t\t}\n\t}\n\n\treturn nil\n}\n\n// executeExpand implements expand command (tabs to spaces)",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/llmsh/commands_extra.go",
+        "start": 13,
+        "end": 53,
+        "startLoc": {
+          "line": 13,
+          "column": 12,
+          "position": 39
+        },
+        "endLoc": {
+          "line": 53,
+          "column": 60,
+          "position": 399
+        }
+      },
+      "secondFile": {
+        "name": "internal/llmsh/commands/conversion.go",
+        "start": 207,
+        "end": 247,
+        "startLoc": {
+          "line": 207,
+          "column": 12,
+          "position": 1834
+        },
+        "endLoc": {
+          "line": 247,
+          "column": 68,
+          "position": 2194
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 16,
+      "fragment": "(args []string, stdin io.ReadWriteCloser, stdout io.ReadWriteCloser) error {\n\ttabstop := 8\n\n\t// Parse tabstop argument\n\tfor i, arg := range args {\n\t\tif arg == \"-t\" && i+1 < len(args) {\n\t\t\tif t, err := strconv.Atoi(args[i+1]); err == nil {\n\t\t\t\ttabstop = t\n\t\t\t}\n\t\t}\n\t}\n\n\t// Read input\n\tinput, err := io.ReadAll(stdin)\n\tif err != nil {\n\t\treturn fmt.Errorf(\"unexpand: error reading input: %w\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/llmsh/commands_extra.go",
+        "start": 97,
+        "end": 112,
+        "startLoc": {
+          "line": 97,
+          "column": 16,
+          "position": 793
+        },
+        "endLoc": {
+          "line": 112,
+          "column": 36,
+          "position": 954
+        }
+      },
+      "secondFile": {
+        "name": "internal/llmsh/commands_extra.go",
+        "start": 54,
+        "end": 69,
+        "startLoc": {
+          "line": 54,
+          "column": 14,
+          "position": 411
+        },
+        "endLoc": {
+          "line": 69,
+          "column": 34,
+          "position": 572
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 6,
+      "fragment": ":\n\t\t\tif len(stack) >= 2 {\n\t\t\t\tb := stack[len(stack)-1]\n\t\t\t\ta := stack[len(stack)-2]\n\t\t\t\tstack = stack[:len(stack)-2]\n\t\t\t\tstack = append(stack, a-",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/llmsh/commands_extra.go",
+        "start": 205,
+        "end": 210,
+        "startLoc": {
+          "line": 205,
+          "column": 4,
+          "position": 1725
+        },
+        "endLoc": {
+          "line": 210,
+          "column": 2,
+          "position": 1798
+        }
+      },
+      "secondFile": {
+        "name": "internal/llmsh/commands_extra.go",
+        "start": 198,
+        "end": 203,
+        "startLoc": {
+          "line": 198,
+          "column": 4,
+          "position": 1641
+        },
+        "endLoc": {
+          "line": 203,
+          "column": 2,
+          "position": 1714
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 6,
+      "fragment": ":\n\t\t\tif len(stack) >= 2 {\n\t\t\t\tb := stack[len(stack)-1]\n\t\t\t\ta := stack[len(stack)-2]\n\t\t\t\tstack = stack[:len(stack)-2]\n\t\t\t\tstack = append(stack, a*",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/llmsh/commands_extra.go",
+        "start": 212,
+        "end": 217,
+        "startLoc": {
+          "line": 212,
+          "column": 4,
+          "position": 1809
+        },
+        "endLoc": {
+          "line": 217,
+          "column": 2,
+          "position": 1882
+        }
+      },
+      "secondFile": {
+        "name": "internal/llmsh/commands_extra.go",
+        "start": 198,
+        "end": 203,
+        "startLoc": {
+          "line": 198,
+          "column": 4,
+          "position": 1641
+        },
+        "endLoc": {
+          "line": 203,
+          "column": 2,
+          "position": 1714
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 14,
+      "fragment": ")\n\n\t// Create adapter with FSProxy disabled\n\tadapter := NewVFSFSProxyAdapter(nil, mockVFS, false)\n\n\t// Test that operations fall back to legacy VFS\n\tt.Run(\"FallbackOpenFile\", func(t *testing.T) {\n\t\tfile, err := adapter.OpenFile(\"fallback.txt\", os.O_CREATE|os.O_WRONLY, 0644)\n\t\tif err != nil {\n\t\t\tt.Fatalf(\"Fallback OpenFile failed: %v\", err)\n\t\t}\n\t\tdefer file.Close()\n\n\t\tfallbackData",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/app/vfs_adapter_integration_test.go",
+        "start": 88,
+        "end": 101,
+        "startLoc": {
+          "line": 88,
+          "column": 5,
+          "position": 639
+        },
+        "endLoc": {
+          "line": 101,
+          "column": 13,
+          "position": 748
+        }
+      },
+      "secondFile": {
+        "name": "internal/app/vfs_fsproxy_adapter_test.go",
+        "start": 77,
+        "end": 90,
+        "startLoc": {
+          "line": 77,
+          "column": 6,
+          "position": 559
+        },
+        "endLoc": {
+          "line": 90,
+          "column": 2,
+          "position": 668
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 22,
+      "fragment": ")\n\t\tif err != nil {\n\t\t\tt.Fatalf(\"Write to fallback file failed: %v\", err)\n\t\t}\n\t})\n\n\tt.Run(\"FallbackListFiles\", func(t *testing.T) {\n\t\tfiles := adapter.ListFiles()\n\t\tfound := false\n\t\tfor _, file := range files {\n\t\t\tif file == \"fallback.txt\" {\n\t\t\t\tfound = true\n\t\t\t\tbreak\n\t\t\t}\n\t\t}\n\t\tif !found {\n\t\t\tt.Error(\"Expected fallback.txt to be in file list\")\n\t\t}\n\t})\n}\n\n// TestFSProxyFileHandleLifecycle tests file handle lifecycle management",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/app/vfs_adapter_integration_test.go",
+        "start": 102,
+        "end": 123,
+        "startLoc": {
+          "line": 102,
+          "column": 13,
+          "position": 772
+        },
+        "endLoc": {
+          "line": 123,
+          "column": 73,
+          "position": 911
+        }
+      },
+      "secondFile": {
+        "name": "internal/app/vfs_fsproxy_adapter_test.go",
+        "start": 90,
+        "end": 111,
+        "startLoc": {
+          "line": 90,
+          "column": 2,
+          "position": 685
+        },
+        "endLoc": {
+          "line": 111,
+          "column": 55,
+          "position": 824
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 13,
+      "fragment": ", func(t *testing.T) {\n\t\terr := handle.Close()\n\t\tif err != nil {\n\t\t\tt.Fatalf(\"Close failed: %v\", err)\n\t\t}\n\n\t\t// Verify fd was removed from table\n\t\t_, exists := fdTable.GetFile(1001)\n\t\tif exists {\n\t\t\tt.Error(\"Expected fd to be removed from table after close\")\n\t\t}\n\n\t\t// Verify subsequent close operations don't fail",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/app/vfs_adapter_integration_test.go",
+        "start": 175,
+        "end": 187,
+        "startLoc": {
+          "line": 175,
+          "column": 18,
+          "position": 1313
+        },
+        "endLoc": {
+          "line": 187,
+          "column": 49,
+          "position": 1402
+        }
+      },
+      "secondFile": {
+        "name": "internal/app/vfs_fsproxy_adapter_test.go",
+        "start": 163,
+        "end": 175,
+        "startLoc": {
+          "line": 163,
+          "column": 8,
+          "position": 1235
+        },
+        "endLoc": {
+          "line": 175,
+          "column": 37,
+          "position": 1324
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 10,
+      "fragment": "if !isNumeric(msg.FileNo) {\n\t\t\treturn FSProxyMessage{}, &FSProxyError{Message: \"invalid fileno: \" + msg.FileNo}\n\t\t}\n\n\t\t// Validate size\n\t\tif !isNumeric(msg.Size) {\n\t\t\treturn FSProxyMessage{}, &FSProxyError{Message: \"invalid size: \" + msg.Size}\n\t\t}\n\n\tcase \"CLOSE\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/app/fsproxy_test.go",
+        "start": 581,
+        "end": 590,
+        "startLoc": {
+          "line": 581,
+          "column": 3,
+          "position": 4517
+        },
+        "endLoc": {
+          "line": 590,
+          "column": 8,
+          "position": 4602
+        }
+      },
+      "secondFile": {
+        "name": "internal/app/fsproxy_test.go",
+        "start": 564,
+        "end": 573,
+        "startLoc": {
+          "line": 564,
+          "column": 3,
+          "position": 4366
+        },
+        "endLoc": {
+          "line": 573,
+          "column": 8,
+          "position": 4451
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 13,
+      "fragment": ", func(t *testing.T) {\n\t\t\tproxy, _, w := setupTestFSProxy(t, true)\n\t\t\tdefer w.Close()\n\n\t\t\t// First open a file\n\t\t\topenResponse := proxy.handleOpen(\"test.txt\", \"w\", \"true\")\n\t\t\tif openResponse.Status != \"OK\" {\n\t\t\t\tt.Fatalf(\"Failed to open file: %s\", openResponse.Data)\n\t\t\t}\n\n\t\t\tfd := openResponse.Data\n\n\t\t\ttests",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/app/fsproxy_commands_test.go",
+        "start": 168,
+        "end": 180,
+        "startLoc": {
+          "line": 168,
+          "column": 16,
+          "position": 1274
+        },
+        "endLoc": {
+          "line": 180,
+          "column": 6,
+          "position": 1379
+        }
+      },
+      "secondFile": {
+        "name": "internal/app/fsproxy_commands_test.go",
+        "start": 120,
+        "end": 131,
+        "startLoc": {
+          "line": 120,
+          "column": 16,
+          "position": 885
+        },
+        "endLoc": {
+          "line": 131,
+          "column": 9,
+          "position": 989
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 14,
+      "fragment": ")\n\n\t\t\t\t\tif response.Status != \"ERROR\" {\n\t\t\t\t\t\tt.Errorf(\"Expected ERROR status, got %s\", response.Status)\n\t\t\t\t\t}\n\n\t\t\t\t\tif tt.expectedError != \"\" && !containsSubstring(response.Data, tt.expectedError) {\n\t\t\t\t\t\tt.Errorf(\"Expected error containing '%s', got '%s'\", tt.expectedError, response.Data)\n\t\t\t\t\t}\n\t\t\t\t})\n\t\t\t}\n\t\t})\n\n\t\tt.Run(\"VFS_unavailable_scenario\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/app/fsproxy_commands_test.go",
+        "start": 282,
+        "end": 295,
+        "startLoc": {
+          "line": 282,
+          "column": 6,
+          "position": 2172
+        },
+        "endLoc": {
+          "line": 295,
+          "column": 27,
+          "position": 2271
+        }
+      },
+      "secondFile": {
+        "name": "internal/app/fsproxy_commands_test.go",
+        "start": 248,
+        "end": 261,
+        "startLoc": {
+          "line": 248,
+          "column": 11,
+          "position": 1894
+        },
+        "endLoc": {
+          "line": 261,
+          "column": 23,
+          "position": 1993
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 14,
+      "fragment": ")\n\t\t}\n\t\tif fileno, err := strconv.Atoi(parts[1]); err != nil {\n\t\t\treturn FSRequest{}, fmt.Errorf(\"invalid fileno: %s\", parts[1])\n\t\t} else {\n\t\t\trequest.Fileno = fileno\n\t\t}\n\t\tif size, err := strconv.Atoi(parts[2]); err != nil {\n\t\t\treturn FSRequest{}, fmt.Errorf(\"invalid size: %s\", parts[2])\n\t\t} else {\n\t\t\trequest.Size = size\n\t\t}\n\n\t\t// Read data of specified size",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/app/fsproxy.go",
+        "start": 442,
+        "end": 455,
+        "startLoc": {
+          "line": 442,
+          "column": 33,
+          "position": 3443
+        },
+        "endLoc": {
+          "line": 455,
+          "column": 31,
+          "position": 3588
+        }
+      },
+      "secondFile": {
+        "name": "internal/app/fsproxy.go",
+        "start": 421,
+        "end": 433,
+        "startLoc": {
+          "line": 421,
+          "column": 45,
+          "position": 3202
+        },
+        "endLoc": {
+          "line": 433,
+          "column": 30,
+          "position": 3346
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 9,
+      "fragment": ")\n\t\t}\n\t\tif processID, err := strconv.Atoi(parts[1]); err != nil {\n\t\t\treturn FSRequest{}, fmt.Errorf(\"invalid process_id: %s\", parts[1])\n\t\t} else {\n\t\t\trequest.ProcessID = processID\n\t\t}\n\t\tstreamType := parts[2]\n\t\tif streamType != \"stdin\"",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/app/fsproxy.go",
+        "start": 494,
+        "end": 502,
+        "startLoc": {
+          "line": 494,
+          "column": 58,
+          "position": 3999
+        },
+        "endLoc": {
+          "line": 502,
+          "column": 8,
+          "position": 4090
+        }
+      },
+      "secondFile": {
+        "name": "internal/app/fsproxy.go",
+        "start": 478,
+        "end": 486,
+        "startLoc": {
+          "line": 478,
+          "column": 50,
+          "position": 3829
+        },
+        "endLoc": {
+          "line": 486,
+          "column": 9,
+          "position": 3920
+        }
+      }
+    },
+    {
+      "format": "go",
+      "lines": 15,
+      "fragment": "switch mode {\n\tcase \"r\":\n\t\tflag = os.O_RDONLY\n\tcase \"w\":\n\t\tflag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC\n\tcase \"a\":\n\t\tflag = os.O_WRONLY | os.O_CREATE | os.O_APPEND\n\tcase \"r+\":\n\t\tflag = os.O_RDWR\n\tcase \"w+\":\n\t\tflag = os.O_RDWR | os.O_CREATE | os.O_TRUNC\n\tcase \"a+\":\n\t\tflag = os.O_RDWR | os.O_CREATE | os.O_APPEND\n\tdefault:\n\t\treturn",
+      "tokens": 0,
+      "firstFile": {
+        "name": "internal/app/fsproxy.go",
+        "start": 694,
+        "end": 708,
+        "startLoc": {
+          "line": 694,
+          "column": 2,
+          "position": 5795
+        },
+        "endLoc": {
+          "line": 708,
+          "column": 7,
+          "position": 5944
+        }
+      },
+      "secondFile": {
+        "name": "internal/tools/engine.go",
+        "start": 1072,
+        "end": 1086,
+        "startLoc": {
+          "line": 1072,
+          "column": 2,
+          "position": 8581
+        },
+        "endLoc": {
+          "line": 1086,
+          "column": 2,
+          "position": 8730
+        }
+      }
+    }
+  ]
+}

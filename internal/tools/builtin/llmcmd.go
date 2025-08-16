@@ -11,7 +11,7 @@ import (
 
 // Llmcmd executes the llmcmd command in a separate process
 func Llmcmd(args []string, stdin io.Reader, stdout io.Writer) error {
-		if handled, _, err := HandleHelp(args, stdout, `llmcmd - Execute llmcmd in subprocess
+	if handled, _, err := HandleHelp(args, stdout, `llmcmd - Execute llmcmd in subprocess
 
 Usage: llmcmd [llmcmd-args...]
 
@@ -25,8 +25,8 @@ Examples:
 	llmcmd read file.txt      Execute llmcmd read command
 	llmcmd help               Show llmcmd help
 `); handled {
-				return err
-		}
+		return err
+	}
 
 	// Parse arguments for llmcmd execution
 	if len(args) == 0 {

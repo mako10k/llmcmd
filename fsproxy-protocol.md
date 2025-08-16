@@ -126,16 +126,22 @@ Opens (or creates) a file. Path policy (allowlist vs virtual temp) is enforced s
 
 Request:
 ```
-{ "id":"1", "op":"open", "params": { "path":"test.txt", "mode":"w", "top_level":false } }
+{ "id":"1", "op":"open", "params": { "path":"test.txt", "mode":"w" } }
 ```
 Parameters:
 - `path` (string, required)
-- `mode` (string, required): `r` | `w` | `a` | `rw` (future: `r+`,`w+`,`a+` synonyms)
-- `top_level` (bool, optional, default false) – reserved for policy branching
+- `mode` (string, required): `r` | `w` | `a` | `rw`
+
+Notes:
+- Response is intentionally minimal: ONLY the numeric `handle` is returned on success. No creation / virtual / capability metadata is included (future `stat` op may expose details if needed).
+- `rw` mode: read/write; creates file (or virtual) if absent without truncation.
+- `w` mode: write-only; truncate/create semantics.
+- `a` mode: append-only (write); read attempts will yield `E_PERM`.
+- `r` mode: read-only; requires existing allowlisted or previously created virtual path.
 
 Success Response:
 ```
-{ "id":"1", "ok":true, "result": { "handle": 42, "created": true } }
+{ "id":"1", "ok":true, "result": { "handle": 42 } }
 ```
 
 Error Response Example:

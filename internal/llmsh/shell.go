@@ -138,7 +138,9 @@ func (s *Shell) Interactive() error {
 		}
 
 		if line == "help" {
-			if s.help == nil { s.help = NewHelpSystem() }
+			if s.help == nil {
+				s.help = NewHelpSystem()
+			}
 			fmt.Print(s.help.FormatCommandList())
 			continue
 		}

@@ -1,0 +1,11 @@
+/home/mako10k/llmcmd/vfsd/target/debug/deps/liblinux_raw_sys-f4ac8f746b56d0e8.rmeta: /home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/lib.rs /home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/elf.rs /home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/x86_64/errno.rs /home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/x86_64/general.rs /home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/x86_64/ioctl.rs
+
+/home/mako10k/llmcmd/vfsd/target/debug/deps/liblinux_raw_sys-f4ac8f746b56d0e8.rlib: /home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/lib.rs /home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/elf.rs /home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/x86_64/errno.rs /home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/x86_64/general.rs /home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/x86_64/ioctl.rs
+
+/home/mako10k/llmcmd/vfsd/target/debug/deps/linux_raw_sys-f4ac8f746b56d0e8.d: /home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/lib.rs /home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/elf.rs /home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/x86_64/errno.rs /home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/x86_64/general.rs /home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/x86_64/ioctl.rs
+
+/home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/lib.rs:
+/home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/elf.rs:
+/home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/x86_64/errno.rs:
+/home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/x86_64/general.rs:
+/home/mako10k/.cargo/registry/src/index.crates.io-6f17d22bba15001f/linux-raw-sys-0.9.4/src/x86_64/ioctl.rs:

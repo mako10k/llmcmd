@@ -16,7 +16,7 @@ type DiffChunk struct {
 // Diff compares two text inputs separated by ---LLMCMD_DIFF_SEPARATOR---
 // and outputs unified diff format
 func Diff(args []string, stdin io.Reader, stdout io.Writer) error {
-		if handled, _, err := HandleHelp(args, stdout, `diff - Compare two text inputs
+	if handled, _, err := HandleHelp(args, stdout, `diff - Compare two text inputs
 
 Usage: diff [file...]
 
@@ -32,8 +32,8 @@ Examples:
 	Input with separator to compare two texts
 	Output shows unified diff format with +/- indicators
 `); handled {
-				return err
-		}
+		return err
+	}
 
 	content, err := io.ReadAll(stdin)
 	if err != nil {

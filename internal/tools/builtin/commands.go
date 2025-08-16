@@ -35,7 +35,9 @@ func openFileForReading(filename string) (io.ReadCloser, error) {
 
 	// Normalize path to help injection gating
 	if filename != "" && filename != "-" && filename[0] != '<' {
-		if abs, err := filepath.Abs(filename); err == nil { filename = abs }
+		if abs, err := filepath.Abs(filename); err == nil {
+			filename = abs
+		}
 	}
 
 	// Use external context (isInternal=false) to properly handle real files

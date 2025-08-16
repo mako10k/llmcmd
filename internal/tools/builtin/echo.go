@@ -8,7 +8,7 @@ import (
 
 // Echo outputs the specified text
 func Echo(args []string, stdin io.Reader, stdout io.Writer) error {
-		if handled, _, err := HandleHelp(args, stdout, `echo - Display text
+	if handled, _, err := HandleHelp(args, stdout, `echo - Display text
 
 Usage: echo [text...]
 
@@ -22,8 +22,8 @@ Examples:
 	echo hello world          Output: hello world
 	echo "quoted text"        Output: quoted text
 `); handled {
-				return err
-		}
+		return err
+	}
 
 	// Join arguments with spaces and output
 	output := strings.Join(args, " ")

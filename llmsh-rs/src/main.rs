@@ -206,10 +206,10 @@ fn run_builtin_cat(args: &Vec<String>, redir: &RedirSpec, _allow_read:&[String],
     if inputs.is_empty() { return 0; }
     let client = child_mux();
     let mut out_handle: Option<u32> = None;
-    if let Some((path, append)) = &redir.out_file { match client.open_write(path, *append) { Ok(Ok(h))=> out_handle=Some(h), Ok(Err(code))=> { eprintln!("open_write error: {:?}", code); return map_exit(&code); }, Err(e)=> { eprintln!("protocol open_write error: {e}"); return 6; } } }
+    if let Some((path, append)) = &redir.out_file { let mode = if *append { "a" } else { "w" }; match client.open(path, mode) { Ok(Ok(h))=> out_handle=Some(h), Ok(Err(code))=> { eprintln!("open {path} {mode} error: {:?}", code); return map_exit(&code); }, Err(e)=> { eprintln!("protocol open {path} {mode} error: {e}"); return 6; } } }
     let mut stdout_handle = std::io::stdout();
     for p in inputs.iter() {
-    let h = match client.open_read(p) { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open_read {} error: {:?}", p, code); return map_exit(&code); }, Err(e)=> { eprintln!("protocol open_read {p} error: {e}"); return 6; } };
+    let h = match client.open(p, "r") { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open {p} r error: {:?}", code); return map_exit(&code); }, Err(e)=> { eprintln!("protocol open {p} r error: {e}"); return 6; } };
         loop {
             match client.read_chunk(h, 4096) {
                 Ok(Ok((data, eof))) => {
@@ -252,7 +252,7 @@ fn run_builtin_head(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], 
     let mut remaining = limit;
     for p in files.iter() {
         if remaining == 0 { break; }
-        let h = match client.open_read(p) { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open_read {} error: {:?}", p, code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open_read {p} error: {e}"); return 6; } };
+    let h = match client.open(p, "r") { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open {p} r error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open {p} r error: {e}"); return 6; } };
         let mut buf_acc:Vec<u8>=Vec::new();
         loop {
             match client.read_chunk(h, 4096) {
@@ -284,7 +284,7 @@ fn run_builtin_tail(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], 
     let client = child_mux();
     let mut stdout_handle = std::io::stdout();
     for (fi,p) in files.iter().enumerate() {
-        let h = match client.open_read(p) { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open_read {} error: {:?}", p, code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open_read {p} error: {e}"); return 6; } };
+        let h = match client.open(p, "r") { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open {p} r error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open {p} r error: {e}"); return 6; } };
         // naive: read whole file (WARNING large file). Could optimize later.
         let mut all:Vec<u8>=Vec::new();
         loop { match client.read_chunk(h, 8192) { Ok(Ok((data,eof)))=>{ if !data.is_empty(){ all.extend_from_slice(&data); } if eof { break; } }, Ok(Err(code))=>{ eprintln!("read error {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol read error: {e}"); return 6; } } }
@@ -329,7 +329,7 @@ fn run_builtin_wc(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _a
     let mut total_l=0usize; let mut total_w=0usize; let mut total_b=0usize;
     let multi = files.len()>1;
     for p in files.iter() {
-        let h = match client.open_read(p) { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open_read {} error: {:?}", p, code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open_read {p} error: {e}"); return 6; } };
+        let h = match client.open(p, "r") { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open {p} r error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open {p} r error: {e}"); return 6; } };
         let mut l=0usize; let mut w=0usize; let mut b=0usize; let mut in_word=false;
         loop { match client.read_chunk(h, 8192) { Ok(Ok((data,eof)))=>{ if data.is_empty() && eof { break; } b+=data.len(); for &c in &data { if c==b'\n' { l+=1; } if c.is_ascii_whitespace() { if in_word { in_word=false; } } else { if !in_word { w+=1; in_word=true; } } } if eof { break; } }, Ok(Err(code))=>{ eprintln!("read error {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol read error: {e}"); return 6; } } }
         let _ = client.close(h);
@@ -359,7 +359,7 @@ fn run_builtin_grep(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], 
     let multi = files.len()>1;
     let mut any_match=false;
     for p in files.iter() {
-        let h = match client.open_read(p) { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open_read {} error: {:?}", p, code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open_read {p} error: {e}"); return 6; } };
+        let h = match client.open(p, "r") { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open {p} r error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open {p} r error: {e}"); return 6; } };
         let mut buf_acc:Vec<u8>=Vec::new();
         let mut line_no:usize=0;
         loop { match client.read_chunk(h, 4096) { Ok(Ok((data,eof)))=>{ if data.is_empty() && eof { break; } buf_acc.extend_from_slice(&data);
@@ -406,10 +406,11 @@ fn run_builtin_tr(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _a
     for (fb,tb) in set_from.as_bytes().iter().zip(set_to.as_bytes()) { map[*fb as usize] = *tb as u16; }
     }
     if let Some((of, append))=&redir.out_file {
-        match client.open_write(of, *append) { Ok(Ok(h))=> out_handle=Some(h), Ok(Err(code))=> { eprintln!("open_write {} error: {:?}", of, code); return map_exit(&code); }, Err(e)=> { eprintln!("protocol open_write {of} error: {e}"); return 6; } }
+        let mode = if *append { "a" } else { "w" };
+        match client.open(of, mode) { Ok(Ok(h))=> out_handle=Some(h), Ok(Err(code))=> { eprintln!("open {of} {mode} error: {:?}", code); return map_exit(&code); }, Err(e)=> { eprintln!("protocol open {of} {mode} error: {e}"); return 6; } }
     }
     for p in files.iter() {
-        let h = match client.open_read(p) { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open_read {} error: {:?}", p, code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open_read {p} error: {e}"); return 6; } };
+    let h = match client.open(p, "r") { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open {p} r error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open {p} r error: {e}"); return 6; } };
         loop {
             match client.read_chunk(h, 8192) {
                 Ok(Ok((data,eof))) => {
@@ -462,10 +463,10 @@ fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _
     let use_regex = flags.contains('r') || flags.contains('E'); // extended regex flags
     let client = child_mux();
     let mut out_handle: Option<u32> = None;
-    if let Some((path, append))=&redir.out_file { match client.open_write(path, *append) { Ok(Ok(h))=>out_handle=Some(h), Ok(Err(code))=>{ eprintln!("open_write error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open_write error: {e}"); return 6; } } }
+    if let Some((path, append))=&redir.out_file { let mode = if *append { "a" } else { "w" }; match client.open(path, mode) { Ok(Ok(h))=>out_handle=Some(h), Ok(Err(code))=>{ eprintln!("open {path} {mode} error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open {path} {mode} error: {e}"); return 6; } } }
     let mut stdout_handle = std::io::stdout();
     for p in files.iter() {
-        let h = match client.open_read(p) { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open_read {} error: {:?}", p, code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open_read {p} error: {e}"); return 6; } };
+        let h = match client.open(p, "r") { Ok(Ok(h))=>h, Ok(Err(code))=>{ eprintln!("open {p} r error: {:?}", code); return map_exit(&code); }, Err(e)=>{ eprintln!("protocol open {p} r error: {e}"); return 6; } };
         let mut buf_acc:Vec<u8>=Vec::new();
         loop {
             match client.read_chunk(h, 4096) {

@@ -8,7 +8,7 @@ import (
 
 // Tee writes input to both stdout and multiple files
 func Tee(args []string, stdin io.Reader, stdout io.Writer) error {
-		if handled, _, err := HandleHelp(args, stdout, `tee - Write input to stdout and files
+	if handled, _, err := HandleHelp(args, stdout, `tee - Write input to stdout and files
 
 Usage: tee [file...]
 
@@ -22,8 +22,8 @@ Examples:
 	tee file.txt              Copy input to stdout and file.txt
 	echo "data" | tee out.txt Display and save data to out.txt
 `); handled {
-				return err
-		}
+		return err
+	}
 
 	processFunc := func(input io.Reader) error {
 		// Read all input first

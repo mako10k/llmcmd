@@ -8,7 +8,7 @@ import (
 
 // Rev reverses each line
 func Rev(args []string, stdin io.Reader, stdout io.Writer) error {
-		if handled, _, err := HandleHelp(args, stdout, `rev - Reverse lines character by character
+	if handled, _, err := HandleHelp(args, stdout, `rev - Reverse lines character by character
 
 Usage: rev [file...]
 
@@ -22,8 +22,8 @@ Examples:
 	rev file.txt              Reverse each line in file
 	echo "hello" | rev        Output: "olleh"
 `); handled {
-				return err
-		}
+		return err
+	}
 
 	processFunc := func(input io.Reader) error {
 		scanner := bufio.NewScanner(input)

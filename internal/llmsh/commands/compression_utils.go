@@ -13,13 +13,13 @@ type CompressionArgs struct {
 // ParseCompressionArgs parses common compression arguments
 func ParseCompressionArgs(args []string) CompressionArgs {
 	result := CompressionArgs{}
-	
+
 	for _, arg := range args {
 		if arg == "-d" || arg == "--decompress" {
 			result.Decompress = true
 		}
 	}
-	
+
 	return result
 }
 

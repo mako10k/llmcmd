@@ -10,7 +10,7 @@ import (
 
 // Cut extracts selected portions of lines from input
 func Cut(args []string, stdin io.Reader, stdout io.Writer) error {
-		if handled, _, err := HandleHelp(args, stdout, `cut - Extract selected portions of lines
+	if handled, _, err := HandleHelp(args, stdout, `cut - Extract selected portions of lines
 
 Usage: cut -f fields [-d delimiter] [file...]
 
@@ -23,8 +23,8 @@ Examples:
 	cut -f 1,3 file.txt       Extract fields 1 and 3
 	cut -f 2 -d ',' data.csv  Extract field 2 using comma delimiter
 `); handled {
-				return err
-		}
+		return err
+	}
 
 	var fields []int
 	var delimiter string = "	" // Default delimiter

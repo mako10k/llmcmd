@@ -52,72 +52,23 @@ STATUS data\n
 
 ## コマンド仕様
 
-### 1. OPEN コマンド
+### 1. open (JSON プライマリ)
 
-ファイルを開き、ファイル番号（fileno）を取得します。
+現在の実装は JSON 長さプリフィックス付きフレーミングを正規形とし、OPEN 等のテキストコマンドはレガシーとして非推奨です。`open` 成功時の結果は最小で `{"handle": <u32>}` のみを返します。作成や仮想ファイル等のメタ情報は返しません（将来 `stat` 相当を追加予定）。
 
-#### リクエスト
+モード:
+- `r` 既存のみ読み込み（存在しない場合 `E_NOENT`）
+- `w` 書き込み（truncate/create, 読み不可）
+- `a` 追記のみ（append/create, 読み不可, 読み試行で `E_PERM`）
+- `rw` 読み書き（存在しなければ create, truncate しない）
+
+例 (JSON):
 ```
-OPEN filename mode [context]\n
-```
-
-**パラメータ**:
-- `filename`: 開くファイル名
-- `mode`: ファイルオープンモード
-- `context`: ファイルアクセスコンテキスト（オプション）
-  - `internal`: LLM内部処理によるアクセス（VFS制限適用）
-  - `user`: ユーザー指定ファイルアクセス（制限なし、デフォルト）
-
-**サポートモード**:
-- `r`: 読み込み専用 (O_RDONLY)
-- `w`: 書き込み専用、新規作成、切り詰め (O_WRONLY|O_CREATE|O_TRUNC)
-- `a`: 書き込み専用、新規作成、追記 (O_WRONLY|O_CREATE|O_APPEND)
-- `r+`: 読み書き (O_RDWR)
-- `w+`: 読み書き、新規作成、切り詰め (O_RDWR|O_CREATE|O_TRUNC)
-- `a+`: 読み書き、新規作成、追記 (O_RDWR|O_CREATE|O_APPEND)
-
-#### レスポンス
-
-**成功時**:
-```
-OK fileno\n
-```
-- `fileno`: 割り当てられたファイル番号
-
-**エラー時**:
-```
-ERROR message\n
+{"id":"7","op":"open","params":{"path":"out.txt","mode":"w"}}
+→ {"id":"7","ok":true,"result":{"handle":5}}
 ```
 
-**エラーパターン**:
-- `ERROR OPEN requires filename and mode` - パラメータ不足
-- `ERROR invalid mode: invalid` - 無効なモード
-- `ERROR invalid context: invalid` - 無効なコンテキスト（internal/user以外）
-- `ERROR VFS not available` - VFS利用不可
-- `ERROR VFS access denied: 'path'` - VFS制限による拒否（internalコンテキスト時）
-- `ERROR failed to open file 'path': reason` - ファイルオープンエラー
-
-#### 例
-
-```
-# 正常ケース - ユーザー指定ファイル（デフォルト）
-Client → Server: "OPEN test.txt w\n"
-Server → Client: "OK 12345\n"
-
-# 正常ケース - LLM内部処理（明示的指定）
-Client → Server: "OPEN temp.txt w internal\n"
-Server → Client: "OK 12346\n"
-
-# エラーケース - 無効なモード
-Client → Server: "OPEN test.txt invalid\n"
-Server → Client: "ERROR invalid mode: invalid\n"
-
-# エラーケース - VFS制限違反（internal context）
-Client → Server: "OPEN /etc/passwd r internal\n"
-Server → Client: "ERROR VFS access denied: '/etc/passwd'\n"
-```
-
-### 2. READ コマンド
+### 2. read コマンド (JSON primary)
 
 指定されたファイル番号から指定バイト数を読み込みます。IsTopLevelCmdがtrueの場合、VFSサーバが実ファイルを開きます。
 
@@ -161,7 +112,7 @@ ERROR message\n
 - `ERROR invalid isTopLevel: maybe` - 無効なisTopLevelフラグ
 - `ERROR READ not yet implemented` - 未実装（Phase 1）
 
-### 3. WRITE コマンド
+### 3. write コマンド (JSON primary)
 
 指定されたファイル番号に指定データを書き込みます。
 
@@ -196,7 +147,7 @@ ERROR message\n
 - `ERROR failed to read data: reason` - データ読み込みエラー
 - `ERROR WRITE not yet implemented` - 未実装（Phase 1）
 
-### 4. CLOSE コマンド
+### 4. close コマンド (JSON primary)
 
 指定されたファイル番号のファイルを閉じます。
 
@@ -302,17 +253,19 @@ ERROR invalid size: xyz
 - ユーザー責任での実行
 - `-i/-o`フラグ指定時など、ユーザーが明示的に指定した場合
 
-## 使用例
+## 使用例 (Legacy テキスト例は簡略化)
 
 ```go
 // 子プロセス側 (FS Client)
 client, _ := fsclient.NewFSClient()
 
-// ユーザー指定ファイルを開く（制限なし）
-fileno1, _ := client.Open("data.txt", "w", "user")
-
-// LLM内部処理でファイルを開く（VFS制限適用）
-fileno2, _ := client.Open("temp.txt", "w", "internal")
+// JSON リクエスト例 (open -> write -> close)
+send({"id":"1","op":"open","params":{"path":"log.txt","mode":"w"}})
+→ {"id":"1","ok":true,"result":{"handle":4}}
+send({"id":"2","op":"write","params":{"h":4,"data":"aGVsbG8="}})
+→ {"id":"2","ok":true,"result":{"written":5}}
+send({"id":"3","op":"close","params":{"h":4}})
+→ {"id":"3","ok":true}
 
 // データを書き込む
 data := []byte("Hello, World!")
@@ -325,6 +278,7 @@ client.Close(fileno2)
 
 ```go
 // 親プロセス側 (FS Proxy Manager)
-proxy := NewFSProxyManager(vfs, pipe, true)
-go proxy.HandleFSRequest()  // バックグラウンドで処理
+// 親側: 長さプリフィックス JSON ループでフレームを処理
+// (擬似コード)
+loop read 4 bytes -> len -> read JSON -> dispatch by op
 ```

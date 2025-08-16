@@ -8,7 +8,7 @@ import (
 
 // Uniq removes duplicate adjacent lines from input
 func Uniq(args []string, stdin io.Reader, stdout io.Writer) error {
-		if handled, _, err := HandleHelp(args, stdout, `uniq - Remove duplicate adjacent lines
+	if handled, _, err := HandleHelp(args, stdout, `uniq - Remove duplicate adjacent lines
 
 Usage: uniq [options] [file...]
 
@@ -20,8 +20,8 @@ Examples:
 	uniq file.txt             Remove duplicate adjacent lines
 	uniq -c file.txt          Show count of occurrences
 `); handled {
-				return err
-		}
+		return err
+	}
 
 	count := false
 

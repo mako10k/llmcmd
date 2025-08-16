@@ -30,9 +30,11 @@ type ShellExecutor interface {
 }
 
 // InternalShellRunner runs shell scripts inside the process using llmsh parser+executor
-type InternalShellRunner struct { nextPID *int64 }
+type InternalShellRunner struct{ nextPID *int64 }
 
-func NewInternalShellRunner(pidCounter *int64) *InternalShellRunner { return &InternalShellRunner{nextPID: pidCounter} }
+func NewInternalShellRunner(pidCounter *int64) *InternalShellRunner {
+	return &InternalShellRunner{nextPID: pidCounter}
+}
 
 type InternalRunResult struct {
 	PID      int
@@ -45,12 +47,21 @@ func (r *InternalShellRunner) RunScript(script string, stdin io.Reader, stdout, 
 	pid := int(atomic.AddInt64(r.nextPID, 1))
 	start := time.Now()
 	var err error
-	defer func() { if rec := recover(); rec != nil { err = fmt.Errorf("panic: %v", rec) } }()
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = fmt.Errorf("panic: %v", rec)
+		}
+	}()
 	// TODO(feature/spawn-internal): Replace naive echo with real llmsh parser+executor pipeline.
 	// Current behavior: simply writes script text followed by newline to stdout; ignores stdin.
-	if _, werr := stdout.Write([]byte(script + "\n")); werr != nil { err = werr }
+	if _, werr := stdout.Write([]byte(script + "\n")); werr != nil {
+		err = werr
+	}
 	_ = time.Since(start)
-	code := 0; if err != nil { code = 1 }
+	code := 0
+	if err != nil {
+		code = 1
+	}
 	return InternalRunResult{PID: pid, Err: err, ExitCode: code}
 }
 
@@ -203,8 +214,8 @@ type Engine struct {
 	stats           ExecutionStats
 	noStdin         bool // Skip reading from stdin
 	// New components for llmsh integration
-	shellExecutor ShellExecutor
-	virtualFS     VirtualFileSystem
+	shellExecutor      ShellExecutor
+	virtualFS          VirtualFileSystem
 	internalPidCounter *int64
 }
 
@@ -824,8 +835,14 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	}
 
 	// Fail-fast for deprecated keys (already enforced by validateArgs but belt+suspenders)
-	if _, hasOld := args["in_fd"]; hasOld { e.stats.ErrorCount++; return "", fmt.Errorf("spawn: deprecated / forbidden parameter 'in_fd'") }
-	if _, hasOld := args["out_fd"]; hasOld { e.stats.ErrorCount++; return "", fmt.Errorf("spawn: deprecated / forbidden parameter 'out_fd'") }
+	if _, hasOld := args["in_fd"]; hasOld {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("spawn: deprecated / forbidden parameter 'in_fd'")
+	}
+	if _, hasOld := args["out_fd"]; hasOld {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("spawn: deprecated / forbidden parameter 'out_fd'")
+	}
 
 	// Allocate pipes for child process
 	prIn, pwIn := io.Pipe()   // parent writes -> child stdin
@@ -835,29 +852,42 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	stdinFd := e.allocateFd()
 	stdoutFd := e.allocateFd()
 	stderrFd := e.allocateFd()
-	for len(e.fileDescriptors) <= stderrFd { e.fileDescriptors = append(e.fileDescriptors, nil) }
+	for len(e.fileDescriptors) <= stderrFd {
+		e.fileDescriptors = append(e.fileDescriptors, nil)
+	}
 	e.fileDescriptors[stdinFd] = pwIn
 	e.fileDescriptors[stdoutFd] = prOut
 	e.fileDescriptors[stderrFd] = prErr
 
 	// Resolve llmsh executable path (C2 -> C1)
 	exeName := "llmsh"
-	if runtime.GOOS == "windows" { exeName = "llmsh.exe" }
+	if runtime.GOOS == "windows" {
+		exeName = "llmsh.exe"
+	}
 	resolvedPath := ""
 	// 1. sibling path relative to current executable directory
 	if selfPath, err := os.Executable(); err == nil {
 		baseDir := filepath.Dir(selfPath)
 		cand := filepath.Join(baseDir, exeName)
-		if fi, err2 := os.Stat(cand); err2 == nil && fi.Mode()&0111 != 0 { resolvedPath = cand }
+		if fi, err2 := os.Stat(cand); err2 == nil && fi.Mode()&0111 != 0 {
+			resolvedPath = cand
+		}
 	}
 	// 2. fallback to PATH
 	if resolvedPath == "" {
-		if lp, err := exec.LookPath(exeName); err == nil { resolvedPath = lp }
+		if lp, err := exec.LookPath(exeName); err == nil {
+			resolvedPath = lp
+		}
 	}
 	if resolvedPath == "" {
 		e.stats.ErrorCount++
 		// Close pipes to avoid leaks
-		pwIn.Close(); pwOut.Close(); pwErr.Close(); prIn.Close(); prOut.Close(); prErr.Close()
+		pwIn.Close()
+		pwOut.Close()
+		pwErr.Close()
+		prIn.Close()
+		prOut.Close()
+		prErr.Close()
 		return "", fmt.Errorf("spawn: process_spawn_error: cannot locate llmsh executable")
 	}
 
@@ -885,7 +915,12 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	// Launch process
 	if err := cmd.Start(); err != nil {
 		e.stats.ErrorCount++
-		pwIn.Close(); pwOut.Close(); pwErr.Close(); prIn.Close(); prOut.Close(); prErr.Close()
+		pwIn.Close()
+		pwOut.Close()
+		pwErr.Close()
+		prIn.Close()
+		prOut.Close()
+		prErr.Close()
 		return "", fmt.Errorf("spawn: process_spawn_error: failed to start llmsh: %w", err)
 	}
 
@@ -919,11 +954,11 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	}()
 
 	result := map[string]interface{}{
-		"success":   true,
-		"stdin_fd":  stdinFd,
-		"stdout_fd": stdoutFd,
-		"stderr_fd": stderrFd,
-		"pid":       pid,
+		"success":    true,
+		"stdin_fd":   stdinFd,
+		"stdout_fd":  stdoutFd,
+		"stderr_fd":  stderrFd,
+		"pid":        pid,
 		"script_len": len(script),
 	}
 	return e.spawnSuccess(result)

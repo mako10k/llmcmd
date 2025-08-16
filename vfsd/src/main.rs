@@ -147,9 +147,11 @@ fn write_frame(stdout: &mut impl Write, data: &[u8]) -> Result<()> {
 
 const MAX_READ: usize = 4096;
 
-enum HandleKind {
-    Read(File),
-    Write(File),
+struct HandleKind {
+    file: File,
+    readable: bool,
+    writable: bool,
+    append: bool, // if true, each write seeks to end (append semantics)
 }
 
 struct VirtualEntry {
@@ -178,55 +180,79 @@ fn path_allowed(list: &[String], path: &str) -> bool {
 }
 
 fn handle(state: &mut State, req: Request) -> Response {
+    // Helper to create a new O_TMPFILE-backed anonymous file (RW) for virtual entries.
+    fn new_virtual_file() -> std::io::Result<File> { tempfile() }
     match req.op.as_str() {
         "ping" => ok(req.id, json!({"pong": true})),
         "init" => ok(req.id, json!({"status":"ready"})), // kept for compatibility; no-op
-        "open_read" => {
+        "open" => {
+            // Unified minimal open. params: path, mode(r|w|a|rw)
             let path = if let Some(p) = req.params.get("path").and_then(|v| v.as_str()) { p } else { return err(req.id, "E_ARG", "missing path"); };
-            if path_allowed(&state.allow_read, path) || path_allowed(&state.allow_write, path) {
-                match File::open(path) {
-                    Ok(f) => {
-                        let h = state.alloc(HandleKind::Read(f));
-                        ok(req.id, json!({"handle": h}))
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => err(req.id, "E_NOENT", "not found"),
-                    Err(_) => err(req.id, "E_IO", "open failed"),
-                }
-            } else {
-                // virtual path must already exist; no implicit creation
-                let ve = if let Some(v) = state.virtual_files.get(path) { v } else { return err(req.id, "E_NOENT", "virtual not found"); };
-                let dup_fd = match fcntl(ve.file.as_raw_fd(), FcntlArg::F_DUPFD(0)) { Ok(fd)=>fd, Err(_)=> return err(req.id, "E_IO", "dup failed") };
-                let mut dup_file = unsafe { File::from_raw_fd(dup_fd) };
-                let _ = dup_file.seek(SeekFrom::Start(0));
-                let h = state.alloc(HandleKind::Read(dup_file));
-                ok(req.id, json!({"handle": h, "virtual": true}))
+            let mode = if let Some(m) = req.params.get("mode").and_then(|v| v.as_str()) { m } else { return err(req.id, "E_ARG", "missing mode"); };
+            let allow_readable = path_allowed(&state.allow_read, path) || path_allowed(&state.allow_write, path);
+            let allow_writable = path_allowed(&state.allow_write, path);
+            let (mut readable, mut writable, mut append, mut need_existing, mut create, mut truncate) = (false,false,false,false,true,false);
+            match mode {
+                "r"  => { readable=true; need_existing=true; create=false; },
+                "w"  => { writable=true; truncate=true; },
+                "a"  => { writable=true; append=true; },
+                "rw" => { readable=true; writable=true; /* hybrid create-if-absent; no truncate */ },
+                _ => { return err(req.id, "E_ARG", "invalid mode"); }
             }
-        }
-        "open_write" => {
-            let path = if let Some(p) = req.params.get("path").and_then(|v| v.as_str()) { p } else { return err(req.id, "E_ARG", "missing path"); };
-            let append = req.params.get("append").and_then(|v| v.as_bool()).unwrap_or(false);
-            if path_allowed(&state.allow_write, path) {
-                let mut opts = OpenOptions::new(); opts.write(true).create(true);
-                if append { opts.append(true); } else { opts.truncate(true); }
-                match opts.open(path) {
-                    Ok(f) => { let h = state.alloc(HandleKind::Write(f)); ok(req.id, json!({"handle": h})) }
-                    Err(_) => err(req.id, "E_IO", "open failed"),
+            let is_allowlisted = allow_readable || allow_writable;
+            if is_allowlisted {
+                // Real file path
+                if need_existing {
+                    match File::open(path) {
+                        Ok(f) => {
+                            let h = state.alloc(HandleKind { file: f, readable, writable:false, append:false });
+                            return ok(req.id, json!({"handle": h}));
+                        }
+                        Err(e) if e.kind()==std::io::ErrorKind::NotFound => { return err(req.id, "E_NOENT", "not found"); }
+                        Err(_) => { return err(req.id, "E_IO", "open failed"); }
+                    }
+                } else {
+                    // Build OpenOptions
+                    let mut opts = OpenOptions::new();
+                    opts.read(readable).write(writable).create(create);
+                    if truncate { opts.truncate(true); }
+                    if append { opts.append(true); }
+                    // For w (truncate) readable=false; rw sets read+write without truncate; a sets append
+                    match opts.open(path) {
+                        Ok(f) => {
+                            let h = state.alloc(HandleKind { file: f, readable, writable, append });
+                            ok(req.id, json!({"handle": h}))
+                        }
+                        Err(e) if e.kind()==std::io::ErrorKind::NotFound => err(req.id, "E_NOENT", "not found"),
+                        Err(_) => err(req.id, "E_IO", "open failed"),
+                    }
                 }
             } else {
-                // virtual path: create or reuse backing, then dup
-                let ve = state.virtual_files.entry(path.to_string()).or_insert_with(|| {
-                    let f = tempfile().expect("tempfile");
-                    VirtualEntry { file: f }
-                });
-                if !append {
-                    // truncate by reopening a new tempfile (simulate new O_TRUNC semantics)
-                    let f = tempfile().expect("tempfile");
-                    ve.file = f;
+                // Virtual path: existing required only for r
+                if need_existing {
+                    let ve = if let Some(v) = state.virtual_files.get(path) { v } else { return err(req.id, "E_NOENT", "virtual not found"); };
+                    let dup_fd = match fcntl(ve.file.as_raw_fd(), FcntlArg::F_DUPFD(0)) { Ok(fd)=>fd, Err(_)=> return err(req.id, "E_IO", "dup failed") };
+                    let mut dup_file = unsafe { File::from_raw_fd(dup_fd) };
+                    let _ = dup_file.seek(SeekFrom::Start(0));
+                    let h = state.alloc(HandleKind { file: dup_file, readable:true, writable:false, append:false });
+                    ok(req.id, json!({"handle": h}))
+                } else {
+                    // create or reuse; semantics:
+                    let ve = state.virtual_files.entry(path.to_string()).or_insert_with(|| {
+                        let f = new_virtual_file().expect("virtual otmpfile");
+                        VirtualEntry { file: f }
+                    });
+                    if truncate && !append {
+                        // w mode: replace backing
+                        let f = new_virtual_file().expect("virtual otmpfile");
+                        ve.file = f;
+                    }
+                    let dup_fd = fcntl(ve.file.as_raw_fd(), FcntlArg::F_DUPFD(0)).expect("dupfd");
+                    let dup_file = unsafe { File::from_raw_fd(dup_fd) };
+                    // Preserve original readability semantics (w/a must stay unreadable, only r or rw readable)
+                    let h = state.alloc(HandleKind { file: dup_file, readable, writable: writable, append });
+                    ok(req.id, json!({"handle": h}))
                 }
-                let dup_fd = fcntl(ve.file.as_raw_fd(), FcntlArg::F_DUPFD(0)).expect("dupfd");
-                let dup_file = unsafe { File::from_raw_fd(dup_fd) };
-                let h = state.alloc(HandleKind::Write(dup_file));
-                ok(req.id, json!({"handle": h, "virtual": true}))
             }
         }
         "read" => {
@@ -234,25 +260,10 @@ fn handle(state: &mut State, req: Request) -> Response {
             let max_req = req.params.get("max").and_then(|v| v.as_u64()).map(|v| v as usize).unwrap_or(MAX_READ);
             let max = std::cmp::min(max_req, MAX_READ);
             if max == 0 { return err(req.id, "E_ARG", "max must be > 0"); }
-            // Reserved handle 0 => process stdin (read-only, bypass allow lists / state table)
-            if h == 0 {
-                use std::io::Read as _;
-                let mut buf = vec![0u8; max];
-                match std::io::stdin().read(&mut buf) {
-                    Ok(n) => {
-                        buf.truncate(n);
-                        let b64 = general_purpose::STANDARD.encode(&buf);
-                        let eof = n == 0; // zero read => EOF
-                        return ok(req.id, json!({"eof": eof, "data": b64, "reserved": true}));
-                    }
-                    Err(_) => { return err(req.id, "E_IO", "read failed"); }
-                }
-            }
-            let readable = if let Some(e) = state.handles.get_mut(&h) { e } else { return err(req.id, "E_CLOSED", "invalid handle"); };
-            let f = match readable {
-                HandleKind::Read(f) => f,
-                HandleKind::Write(_) => return err(req.id, "E_PERM", "not readable"),
-            };
+            if h <= 2 { return err(req.id, "E_PERM", "reserved handle not allowed"); }
+            let handle = if let Some(e) = state.handles.get_mut(&h) { e } else { return err(req.id, "E_CLOSED", "invalid handle"); };
+            if !handle.readable { return err(req.id, "E_PERM", "not readable"); }
+            let f = &mut handle.file;
             let mut buf = vec![0u8; max];
             match f.read(&mut buf) {
                 Ok(n) => {
@@ -267,32 +278,20 @@ fn handle(state: &mut State, req: Request) -> Response {
         "write" => {
             let h = if let Some(v) = req.params.get("h").and_then(|v| v.as_u64()) { v as u32 } else { return err(req.id, "E_ARG", "missing h"); };
             let data_b64 = if let Some(s) = req.params.get("data").and_then(|v| v.as_str()) { s } else { return err(req.id, "E_ARG", "missing data"); };
-            // Reserved stdout/stderr handles
-            if h == 1 || h == 2 {
-                let decoded = match general_purpose::STANDARD.decode(data_b64) { Ok(d)=>d, Err(_)=> return err(req.id, "E_ARG", "bad base64") };
-                let n = if h == 1 { match std::io::stdout().write(&decoded) { Ok(n)=>n, Err(_)=> return err(req.id, "E_IO", "write failed") } } else { match std::io::stderr().write(&decoded) { Ok(n)=>n, Err(_)=> return err(req.id, "E_IO", "write failed") } };
-                return ok(req.id, json!({"written": n, "reserved": true}));
-            }
-            if h == 0 { return err(req.id, "E_PERM", "not writable"); }
-            let entry = if let Some(e) = state.handles.get_mut(&h) { e } else { return err(req.id, "E_CLOSED", "invalid handle"); };
-            match entry {
-                HandleKind::Write(f) => {
-                    let decoded = match general_purpose::STANDARD.decode(data_b64) { Ok(d)=>d, Err(_)=> return err(req.id, "E_ARG", "bad base64") };
-                    match f.write(&decoded) {
-                        Ok(n) => ok(req.id, json!({"written": n})),
-                        Err(_) => err(req.id, "E_IO", "write failed"),
-                    }
-                }
-                HandleKind::Read(_) => err(req.id, "E_PERM", "not writable"),
+            if h <= 2 { return err(req.id, "E_PERM", "reserved handle not allowed"); }
+            let handle = if let Some(e) = state.handles.get_mut(&h) { e } else { return err(req.id, "E_CLOSED", "invalid handle"); };
+            if !handle.writable { return err(req.id, "E_PERM", "not writable"); }
+            let decoded = match general_purpose::STANDARD.decode(data_b64) { Ok(d)=>d, Err(_)=> return err(req.id, "E_ARG", "bad base64") };
+            if handle.append { let _ = handle.file.seek(SeekFrom::End(0)); }
+            match handle.file.write(&decoded) {
+                Ok(n) => ok(req.id, json!({"written": n})),
+                Err(_) => err(req.id, "E_IO", "write failed"),
             }
         }
         "close" => {
             let h = if let Some(v) = req.params.get("h").and_then(|v| v.as_u64()) { v as u32 } else { return err(req.id, "E_ARG", "missing h"); };
-            if h <= 2 { return ok(req.id, json!({"closed": true, "reserved": true})); }
-            match state.handles.remove(&h) {
-                Some(_) => ok(req.id, json!({"closed": true})),
-                None => err(req.id, "E_CLOSED", "invalid handle"),
-            }
+            if h <= 2 { return err(req.id, "E_PERM", "reserved handle not allowed"); }
+            if let Some(_) = state.handles.remove(&h) { ok(req.id, json!({"closed": true})) } else { err(req.id, "E_CLOSED", "invalid handle") }
         }
         other => unsupported_with(req.id, other)
     }
@@ -300,9 +299,8 @@ fn handle(state: &mut State, req: Request) -> Response {
 
 fn main() -> Result<()> {
     // Modes:
-    // 1) Origin: vfsd --client-vfs-fd <fd> [-i path ... -o path ...]
+    // 1) Origin (fd): vfsd --client-vfs-fd <fd> [-i path ... -o path ...]
     // 2) Bridge: vfsd --client-vfs-fd <fd> --vfs-fd <upstream-fd>
-    // Legacy stdin/stdout fallback has been removed (fail-fast if omitted).
     let mut args = env::args().skip(1);
     let mut client_fd: Option<i32> = None;
     let mut upstream_fd: Option<i32> = None;
@@ -314,29 +312,31 @@ fn main() -> Result<()> {
             "--vfs-fd" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("--vfs-fd requires value"))?; let fd: i32 = v.parse().map_err(|_| anyhow::anyhow!("invalid fd"))?; upstream_fd = Some(fd); },
             "-i" | "--input" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after -i"))?; ins.push(v); },
             "-o" | "--output" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after -o"))?; outs.push(v); },
-            "-h" | "--help" => { eprintln!("usage: vfsd --client-vfs-fd <fd> [--vfs-fd <upstream-fd>] [-i path ... -o path ...]\n       --client-vfs-fd is mandatory. Bridge mode disallows -i/-o."); return Ok(()); },
+            "-h" | "--help" => { eprintln!(
+                "usage: vfsd --client-vfs-fd <fd> [-i path ... -o path ...]\n       vfsd --client-vfs-fd <fd> --vfs-fd <upstream-fd>\n       Notes: Bridge mode disallows -i/-o."
+            ); return Ok(()); },
             other => { bail!("unknown arg: {}", other); }
         }
     }
     if upstream_fd.is_some() && (!ins.is_empty() || !outs.is_empty()) { bail!("--vfs-fd cannot be combined with -i/-o (origin allow lists)"); }
-    let cfd = client_fd.ok_or_else(|| anyhow::anyhow!("--client-vfs-fd is required (legacy stdin/stdout mode removed)"))?;
-    if let Some(up_fd) = upstream_fd { return run_bridge(cfd, up_fd); }
-    // origin mode over provided socket fd
+    if let Some(up_fd) = upstream_fd {
+        let cfd = client_fd.ok_or_else(|| anyhow::anyhow!("--client-vfs-fd is required for bridge mode"))?;
+        return run_bridge(cfd, up_fd);
+    }
+    // Origin mode over provided fd (stdio mode removed)
     let mut state = State::new(ins, outs);
+    let cfd = client_fd.ok_or_else(|| anyhow::anyhow!("--client-vfs-fd is required (stdio mode is not supported)"))?;
     let mut ctrl = unsafe { File::from_raw_fd(cfd) };
     loop {
-        let opt = match read_frame(&mut ctrl) {
-            Ok(o) => o,
-            Err(e) => {
-                eprintln!("[origin] frame read error: {}", e); return Err(e);
-            }
-        };
-        if opt.is_none() { eprintln!("[origin] clean EOF (no more frames)"); break; }
+        if std::env::var("VFS_TEST_DEBUG").ok().as_deref() == Some("1") { eprintln!("[origin-fd] waiting frame..."); }
+        let opt = match read_frame(&mut ctrl) { Ok(o) => o, Err(e) => { eprintln!("[origin-fd] frame read error: {}", e); return Err(e); } };
+        if opt.is_none() { eprintln!("[origin-fd] clean EOF (no more frames)"); break; }
         let frame = opt.unwrap();
+        if std::env::var("VFS_TEST_DEBUG").ok().as_deref() == Some("1") { eprintln!("[origin-fd] got frame ({} bytes)", frame.len()); }
         let req: Request = match serde_json::from_slice(&frame) {
             Ok(r) => r,
             Err(_) => {
-                eprintln!("[origin] invalid JSON frame");
+                eprintln!("[origin-fd] invalid JSON frame");
                 let resp = Response { id: "?".to_string(), ok: false, result: None, error: Some(ErrorBody{ code:"E_ARG".to_string(), message:"invalid json".to_string()}) };
                 let data = serde_json::to_vec(&resp)?; write_frame(&mut ctrl, &data)?; continue;
             }
