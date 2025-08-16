@@ -8,6 +8,12 @@
 3. **Consult personas**: Check with relevant team personas before major decisions
 4. **Read project files**: Always check existing implementations and designs
 
+### Specification Confirmation & Recording (Mandatory)
+1. Before asking the user about existing specs or decisions, first search in associative memory: use `mcp_mcp-assoc-mem_memory_search` to find prior specifications and decisions (avoid re-asking users).
+2. When a new specification decision is made, record it in associative memory using `mcp_mcp-assoc-mem_memory_store` under scope `work/llmcmd/spec-decisions` with a concise note (<=10 lines) including: context, decision, rationale, and impacts.
+3. Apply this rule to design/architecture, CLI/flags, protocol, and built-in tool behaviors.
+4. Reference these stored decisions in PR descriptions and help/docs where relevant.
+
 ### After Completing ANY Task
 1. **Store lessons learned**: Use `mcp_mcp-assoc-mem_memory_store` to save failures, solutions, design decisions
 2. **Update shared memory**: Use `mcp_mcp-llm-gener_shared-memory-create` or `shared-memory-update` for team knowledge

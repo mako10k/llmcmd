@@ -1,0 +1,1 @@
+'Foo foo' && sed 's/(foo)/X\1Y/EI' out.txt
