@@ -4,10 +4,11 @@ use std::collections::HashMap;
 use std::env;
 use std::os::unix::io::{RawFd, FromRawFd};
 use std::os::fd::IntoRawFd;
+// IntoRawFd imported from unix io module above
 use nix::fcntl::{fcntl, FcntlArg, FdFlag};
-use nix::unistd::{dup, read as nread, close};
+use nix::unistd::{dup, read as nread, close, pipe, dup2, fork, ForkResult, execvp};
 use libc;
-use nix::sys::socket::{socketpair, AddressFamily, SockType, SockFlag};
+// no socketpair needed in new design
 use serde_json::json;
 use base64::{engine::general_purpose, Engine as _};
 
@@ -78,33 +79,60 @@ static mut CHILD_MUX: Option<ChildMux> = None;
 pub fn init_child_mux(fd: RawFd) { unsafe { CHILD_MUX = Some(ChildMux::new(fd).expect("child mux init")); } }
 pub fn child_mux() -> &'static mut ChildMux { unsafe { CHILD_MUX.as_mut().expect("child mux not initialized") } }
 
-pub fn run_mux(child_parent_fds: Vec<RawFd>, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> Result<()> {
+pub fn run_mux(child_parent_fds: Vec<RawFd>, allow_read:&[String], allow_write:&[String], pass_fds:Option<(i32,i32)>) -> Result<()> {
     struct MuxChild { fd: RawFd, alive: bool, buf: Vec<u8> }
     struct Pending { child_fd: RawFd, child_id: serde_json::Value }
     // Spawn upstream (inline variant of VfsClient::spawn giving us raw fds for async handling)
-    fn spawn_upstream(vfsd_path:&str, allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> Result<(RawFd, RawFd)> {
-        let (cli_fd_owned, parent_fd_owned) = socketpair(AddressFamily::Unix, SockType::Stream, None, SockFlag::empty())?;
-        let cli_fd = cli_fd_owned.into_raw_fd();
-        let parent_fd = parent_fd_owned.into_raw_fd();
-        let mut cmd = std::process::Command::new(vfsd_path);
-        cmd.arg("--client-vfs-fd").arg(cli_fd.to_string());
-        if let Some(up_fd) = pass_fd { cmd.arg("--vfs-fd").arg(up_fd.to_string()); }
-        else { for p in allow_read { cmd.arg("-i").arg(p); } for p in allow_write { cmd.arg("-o").arg(p); } }
-        let status = cmd.stderr(std::process::Stdio::inherit()).spawn();
-        let _ = close(cli_fd);
-        if let Some(up_fd)=pass_fd { let _ = close(up_fd); }
-        let _child = status?; // keep child process alive
-        // Duplicate for separate read/write handles (blocking)
-        let read_dup = nix::unistd::dup(parent_fd)?;
-        // Mark CLOEXEC
-        let _ = fcntl(parent_fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC));
-        let _ = fcntl(read_dup, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC));
-        Ok((parent_fd, read_dup))
+    fn spawn_upstream(vfsd_path:&str, allow_read:&[String], allow_write:&[String], pass_fds:Option<(i32,i32)>) -> Result<(RawFd, RawFd)> {
+        // Create two pipes to become vfsd's stdio: (parent->child stdin) and (child->parent stdout)
+        let (stdin_r_owned, stdin_w_owned) = pipe()?; // parent writes to stdin_w, child reads stdin_r as fd0
+        let (stdout_r_owned, stdout_w_owned) = pipe()?; // child writes stdout_w as fd1, parent reads stdout_r
+        let stdin_r = stdin_r_owned.into_raw_fd();
+        let stdin_w = stdin_w_owned.into_raw_fd();
+        let stdout_r = stdout_r_owned.into_raw_fd();
+        let stdout_w = stdout_w_owned.into_raw_fd();
+        // Ensure CLOEXEC on parent ends (we'll dup in child)
+        let _ = fcntl(stdin_w, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC));
+        let _ = fcntl(stdout_r, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC));
+        match unsafe { fork()? } {
+            ForkResult::Child => {
+                // Child: wire stdio and exec vfsd
+                let _ = fcntl(stdin_r, FcntlArg::F_SETFD(FdFlag::empty()));
+                let _ = fcntl(stdout_w, FcntlArg::F_SETFD(FdFlag::empty()));
+                let _ = dup2(stdin_r, 0); let _ = dup2(stdout_w, 1);
+                let _ = close(stdin_w); let _ = close(stdout_r);
+                // Close original fds after dup2
+                let _ = close(stdin_r); let _ = close(stdout_w);
+                // Build argv
+                let mut args: Vec<std::ffi::CString> = Vec::new();
+                let bin = std::ffi::CString::new(vfsd_path.as_bytes()).unwrap();
+                args.push(bin.clone());
+                if let Some((rfd,wfd)) = pass_fds { args.push(std::ffi::CString::new("--vfs-fds").unwrap()); args.push(std::ffi::CString::new(format!("{},{}", rfd, wfd)).unwrap()); }
+                else { for p in allow_read { args.push(std::ffi::CString::new("-i").unwrap()); args.push(std::ffi::CString::new(p.as_str()).unwrap()); } for p in allow_write { args.push(std::ffi::CString::new("-o").unwrap()); args.push(std::ffi::CString::new(p.as_str()).unwrap()); } }
+                // Exec
+                let argv_refs: Vec<&std::ffi::CStr> = args.iter().map(|c| c.as_c_str()).collect();
+                let prog = argv_refs[0];
+                let _ = execvp(prog, &argv_refs);
+                std::process::exit(127);
+            }
+            ForkResult::Parent { .. } => {
+                // Parent: close child's ends
+                let _ = close(stdin_r); let _ = close(stdout_w);
+                // Return write end to child stdin and read end from child stdout
+                // Duplicate for separate read/write handles (blocking use)
+                let up_write_fd = stdin_w;
+                let up_read_fd = stdout_r;
+                // Mark CLOEXEC on returned fds
+                let _ = fcntl(up_write_fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC));
+                let _ = fcntl(up_read_fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC));
+                return Ok((up_write_fd, up_read_fd));
+            }
+        }
     }
 
     let mut children: Vec<MuxChild> = child_parent_fds.into_iter().map(|fd| MuxChild { fd, alive:true, buf:Vec::new() }).collect();
     let vfsd_path = env::var("LLMSH_VFSD_BIN").unwrap_or_else(|_| "vfsd/target/debug/vfsd".to_string());
-    let (up_write_fd, up_read_fd) = spawn_upstream(&vfsd_path, allow_read, allow_write, pass_fd)?;
+    let (up_write_fd, up_read_fd) = spawn_upstream(&vfsd_path, allow_read, allow_write, pass_fds)?;
     let mux_debug = env::var("LLMSH_DEBUG_MUX").is_ok();
     let mut upstream_buf: Vec<u8> = Vec::new();
     let mut pending: HashMap<String, Pending> = HashMap::new();

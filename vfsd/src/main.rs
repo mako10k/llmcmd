@@ -1,9 +1,8 @@
 use std::io::{Read, Write, Seek, SeekFrom};
 use std::env;
-use std::sync::Arc;
+// std::sync is unused now
 use std::thread;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::net::Shutdown;
+// atomic flags unused
 use std::os::unix::io::RawFd;
 use std::fs::{File, OpenOptions};
 use serde::{Deserialize, Serialize};
@@ -13,7 +12,6 @@ use std::collections::HashMap;
 use base64::{engine::general_purpose, Engine as _};
 use nix::fcntl::{fcntl, FcntlArg};
 use std::os::unix::io::{AsRawFd, FromRawFd};
-use std::os::unix::net::UnixStream;
 use tempfile::tempfile;
 
 #[derive(Deserialize)]
@@ -66,74 +64,55 @@ fn read_frame(stdin: &mut impl Read) -> Result<Option<Vec<u8>>> {
     Ok(Some(buf))
 }
 
-// Bridge mode: client_fd <-> upstream_fd (both full-duplex sockets)
-fn run_bridge(client_fd: RawFd, upstream_fd: RawFd) -> Result<()> {
-    // SAFETY: caller guarantees these are valid socket fds
-    let mut client = unsafe { UnixStream::from_raw_fd(client_fd) }; // read side handle (also used for shutdown)
-    let mut upstream = unsafe { UnixStream::from_raw_fd(upstream_fd) };
-    client.set_nonblocking(false)?; upstream.set_nonblocking(false)?;
-    let mut client_w = client.try_clone()?; // writer/for shutdown
-    let mut upstream_w = upstream.try_clone()?; // writer/for shutdown
+// Bridge mode over pipes: (client_r, client_w) <-> (upstream_r, upstream_w)
+fn run_bridge_pipes(client_r_fd: RawFd, client_w_fd: RawFd, upstream_r_fd: RawFd, upstream_w_fd: RawFd, debug: bool) -> Result<()> {
+    // SAFETY: caller guarantees these are valid fds
+    let client_r = unsafe { File::from_raw_fd(client_r_fd) };
+    let client_w = unsafe { File::from_raw_fd(client_w_fd) };
+    let upstream_r = unsafe { File::from_raw_fd(upstream_r_fd) };
+    let upstream_w = unsafe { File::from_raw_fd(upstream_w_fd) };
 
-    let terminated = Arc::new(AtomicBool::new(false));
-    let term_c = terminated.clone();
-    let term_u = terminated.clone();
-
-    // client -> upstream
+    // Move ownership into threads (one direction per thread)
+    let mut c_r = client_r;
+    let mut u_w = upstream_w;
     let t_cu = thread::spawn(move || -> Result<()> {
         let mut buf = [0u8; 8192];
         loop {
-            let n = match client.read(&mut buf) {
+            let n = match c_r.read(&mut buf) {
                 Ok(n) => n,
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => { continue; },
-                Err(e) => {
-                    eprintln!("[bridge] client->upstream read error: {}", e);
-                    break;
-                }
+                Err(e) => { eprintln!("[bridge] client->upstream read error: {}", e); break; }
             };
-            if n == 0 { // EOF
-                eprintln!("[bridge] client EOF");
-                let _ = upstream_w.shutdown(Shutdown::Write);
+            if n == 0 { // EOF from client
+                // Close upstream write by dropping u_w at scope end
                 break;
             }
-            if let Err(e) = upstream_w.write_all(&buf[..n]) { eprintln!("[bridge] write to upstream failed: {}", e); let _ = upstream_w.shutdown(Shutdown::Write); break; }
+            if let Err(e) = u_w.write_all(&buf[..n]) { eprintln!("[bridge] write to upstream failed: {}", e); break; }
         }
-        term_c.store(true, Ordering::SeqCst);
         Ok(())
     });
 
-    // upstream -> client
+    let mut u_r = upstream_r;
+    let mut c_w = client_w;
     let t_uc = thread::spawn(move || -> Result<()> {
         let mut buf = [0u8; 8192];
         loop {
-            let n = match upstream.read(&mut buf) {
+            let n = match u_r.read(&mut buf) {
                 Ok(n) => n,
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => { continue; },
-                Err(e) => {
-                    eprintln!("[bridge] upstream->client read error: {}", e);
-                    break;
-                }
+                Err(e) => { eprintln!("[bridge] upstream->client read error: {}", e); break; }
             };
-            if n == 0 { // EOF
-                eprintln!("[bridge] upstream EOF");
-                let _ = client_w.shutdown(Shutdown::Write);
+            if n == 0 { // EOF from upstream
                 break;
             }
-            if let Err(e) = client_w.write_all(&buf[..n]) { eprintln!("[bridge] write to client failed: {}", e); let _ = client_w.shutdown(Shutdown::Write); break; }
+            if let Err(e) = c_w.write_all(&buf[..n]) { eprintln!("[bridge] write to client failed: {}", e); break; }
         }
-        term_u.store(true, Ordering::SeqCst);
         Ok(())
     });
 
-    let r1 = match t_cu.join() {
-        Ok(inner) => match inner { Ok(_) => true, Err(e) => { eprintln!("[bridge] client->upstream thread error: {}", e); false } },
-        Err(_) => { eprintln!("[bridge] client->upstream thread panicked"); false }
-    };
-    let r2 = match t_uc.join() {
-        Ok(inner) => match inner { Ok(_) => true, Err(e) => { eprintln!("[bridge] upstream->client thread error: {}", e); false } },
-        Err(_) => { eprintln!("[bridge] upstream->client thread panicked"); false }
-    };
-    eprintln!("[bridge] terminated: c2u_ok={} u2c_ok={}", r1, r2);
+    let _ = t_cu.join();
+    let _ = t_uc.join();
+    if debug { eprintln!("[bridge] terminated pipes"); }
     Ok(())
 }
 
@@ -168,7 +147,7 @@ struct State {
 
 impl State {
     fn new(allow_read: Vec<String>, allow_write: Vec<String>) -> Self {
-    // Reserve 0,1,2 for stdio semantics handled by MUX; vfsd must not allocate them.
+    // Reserve 0,1,2 as non-allocatable handle ids (unrelated to transport stdio).
     State { next: 3, handles: HashMap::new(), allow_read, allow_write, virtual_files: HashMap::new() }
     }
     fn alloc(&mut self, kind: HandleKind) -> u32 {
@@ -300,52 +279,65 @@ fn handle(state: &mut State, req: Request) -> Response {
 
 fn main() -> Result<()> {
     // Modes:
-    // 1) Origin (fd): vfsd --client-vfs-fd <fd> [-i path ... -o path ...]
-    // 2) Bridge: vfsd --client-vfs-fd <fd> --vfs-fd <upstream-fd>
+    // 1) Server (default): lower stream = stdio (fd 0/1). Usage: vfsd [-i path ... -o path ...]
+    // 2) Bridge: lower stream = stdio (fd 0/1), upper stream = --vfs-fds <rfd>,<wfd>
     let mut args = env::args().skip(1);
-    let mut client_fd: Option<i32> = None;
-    let mut upstream_fd: Option<i32> = None;
+    let mut upstream_rfd: Option<i32> = None;
+    let mut upstream_wfd: Option<i32> = None;
     let mut ins: Vec<String> = Vec::new();
     let mut outs: Vec<String> = Vec::new();
+    let mut debug: bool = false;
     while let Some(a) = args.next() {
         match a.as_str() {
-            "--client-vfs-fd" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("--client-vfs-fd requires value"))?; let fd: i32 = v.parse().map_err(|_| anyhow::anyhow!("invalid fd"))?; client_fd = Some(fd); },
-            "--vfs-fd" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("--vfs-fd requires value"))?; let fd: i32 = v.parse().map_err(|_| anyhow::anyhow!("invalid fd"))?; upstream_fd = Some(fd); },
+            "--debug" | "--verbose" => { debug = true; },
+            "--vfs-fds" => {
+                let v = args.next().ok_or_else(|| anyhow::anyhow!("--vfs-fds requires value <rfd>,<wfd>"))?;
+                let mut it = v.split(',');
+                let rf = it.next().ok_or_else(|| anyhow::anyhow!("--vfs-fds requires two fds"))?;
+                let wf = it.next().ok_or_else(|| anyhow::anyhow!("--vfs-fds requires two fds"))?;
+                if it.next().is_some() { bail!("--vfs-fds takes exactly two comma-separated fds"); }
+                upstream_rfd = Some(rf.parse().map_err(|_| anyhow::anyhow!("invalid rfd"))?);
+                upstream_wfd = Some(wf.parse().map_err(|_| anyhow::anyhow!("invalid wfd"))?);
+            },
             "-i" | "--input" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after -i"))?; ins.push(v); },
             "-o" | "--output" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after -o"))?; outs.push(v); },
             "-h" | "--help" => { eprintln!(
-                "usage: vfsd --client-vfs-fd <fd> [-i path ... -o path ...]\n       vfsd --client-vfs-fd <fd> --vfs-fd <upstream-fd>\n       Notes: Bridge mode disallows -i/-o."
+                "usage: vfsd [--debug|--verbose] [-i path ... -o path ...]\n       vfsd [--debug|--verbose] --vfs-fds <rfd>,<wfd>\n       Notes: Bridge mode disallows -i/-o. Debug output is shown only with --debug/--verbose."
             ); return Ok(()); },
             other => { bail!("unknown arg: {}", other); }
         }
     }
-    if upstream_fd.is_some() && (!ins.is_empty() || !outs.is_empty()) { bail!("--vfs-fd cannot be combined with -i/-o (origin allow lists)"); }
-    if let Some(up_fd) = upstream_fd {
-        let cfd = client_fd.ok_or_else(|| anyhow::anyhow!("--client-vfs-fd is required for bridge mode"))?;
-        return run_bridge(cfd, up_fd);
+    if upstream_rfd.is_some() && (!ins.is_empty() || !outs.is_empty()) { bail!("--vfs-fds cannot be combined with -i/-o (origin allow lists)"); }
+
+    if let (Some(ur), Some(uw)) = (upstream_rfd, upstream_wfd) {
+        // Bridge mode: lower = stdio (0/1), upper = provided fds
+        return run_bridge_pipes(0, 1, ur, uw, debug);
     }
-    // Origin mode over provided fd (stdio mode removed)
+
+    // Server mode over stdio (fd 0/1)
     let mut state = State::new(ins, outs);
-    let cfd = client_fd.ok_or_else(|| anyhow::anyhow!("--client-vfs-fd is required (stdio mode is not supported)"))?;
-    let mut ctrl = unsafe { File::from_raw_fd(cfd) };
+    let r = std::io::stdin();
+    let w = std::io::stdout();
+    let mut rl = r.lock();
+    let mut wl = w.lock();
     loop {
-        if std::env::var("VFS_TEST_DEBUG").ok().as_deref() == Some("1") { eprintln!("[origin-fd] waiting frame..."); }
-        let opt = match read_frame(&mut ctrl) { Ok(o) => o, Err(e) => { eprintln!("[origin-fd] frame read error: {}", e); return Err(e); } };
-        if opt.is_none() { eprintln!("[origin-fd] clean EOF (no more frames)"); break; }
+        if debug { eprintln!("[server-stdio] waiting frame..."); }
+        let opt = match read_frame(&mut rl) { Ok(o) => o, Err(e) => { eprintln!("[server-stdio] frame read error: {}", e); return Err(e); } };
+        if opt.is_none() { if debug { eprintln!("[server-stdio] clean EOF (no more frames)"); } break; }
         let frame = opt.unwrap();
-        if std::env::var("VFS_TEST_DEBUG").ok().as_deref() == Some("1") { eprintln!("[origin-fd] got frame ({} bytes)", frame.len()); }
+        if debug { eprintln!("[server-stdio] got frame ({} bytes)", frame.len()); }
         let req: Request = match serde_json::from_slice(&frame) {
-            Ok(r) => r,
+            Ok(rq) => rq,
             Err(_) => {
-                eprintln!("[origin-fd] invalid JSON frame");
+                eprintln!("[server-stdio] invalid JSON frame");
                 let resp = Response { id: "?".to_string(), ok: false, result: None, error: Some(ErrorBody{ code:"E_ARG".to_string(), message:"invalid json".to_string()}) };
-                let data = serde_json::to_vec(&resp)?; write_frame(&mut ctrl, &data)?; continue;
+                let data = serde_json::to_vec(&resp)?; write_frame(&mut wl, &data)?; continue;
             }
         };
         let resp = handle(&mut state, req);
-        let data = serde_json::to_vec(&resp)?; write_frame(&mut ctrl, &data)?;
+        let data = serde_json::to_vec(&resp)?; write_frame(&mut wl, &data)?;
     }
-    if !state.handles.is_empty() { eprintln!("[origin] warning: {} unclosed handle(s) at shutdown", state.handles.len()); }
+    if !state.handles.is_empty() { eprintln!("[server-stdio] warning: {} unclosed handle(s) at shutdown", state.handles.len()); }
     Ok(())
 }
 

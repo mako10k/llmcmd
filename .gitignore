@@ -52,6 +52,12 @@ Thumbs.db
 
 # Log files
 *.log
+logs/
+
+# Trace outputs
+strace*.log
+strace-*.txt
+*.trace
 
 # Temporary files
 tmp/

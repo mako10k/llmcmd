@@ -55,7 +55,7 @@ fn parse_segment(seg: &str) -> Option<ExecUnit> {
 
 fn parse_pipeline(input:&str)->Vec<ExecUnit>{ input.split('|').filter_map(|s| parse_segment(s.trim())).collect() }
 
-fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String], pass_fd:Option<i32>) -> Result<i32> {
+fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String], pass_fds:Option<(i32,i32)>) -> Result<i32> {
     if units.is_empty() { return Ok(0); }
     // Helper: set FD_CLOEXEC; optionally set O_NONBLOCK (used for MUX sockets so poll loop is safe)
     fn set_cloexec(fd: RawFd) { let _ = fcntl(fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC)); }
@@ -100,15 +100,15 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
                 match unit {
                     ExecUnit::Builtin { kind, args, redir } => {
                         let code = match kind {
-                BuiltinKind::Cat => run_builtin_cat(args, redir, allow_read, allow_write, pass_fd),
-                BuiltinKind::Head => run_builtin_head(args, redir, allow_read, allow_write, pass_fd),
-                BuiltinKind::Tail => run_builtin_tail(args, redir, allow_read, allow_write, pass_fd),
-                BuiltinKind::Wc => run_builtin_wc(args, redir, allow_read, allow_write, pass_fd),
-                BuiltinKind::Grep => run_builtin_grep(args, redir, allow_read, allow_write, pass_fd),
-                BuiltinKind::Tr => run_builtin_tr(args, redir, allow_read, allow_write, pass_fd),
-                BuiltinKind::Sed => run_builtin_sed(args, redir, allow_read, allow_write, pass_fd),
+                BuiltinKind::Cat => run_builtin_cat(args, redir, allow_read, allow_write, pass_fds),
+                BuiltinKind::Head => run_builtin_head(args, redir, allow_read, allow_write, pass_fds),
+                BuiltinKind::Tail => run_builtin_tail(args, redir, allow_read, allow_write, pass_fds),
+                BuiltinKind::Wc => run_builtin_wc(args, redir, allow_read, allow_write, pass_fds),
+                BuiltinKind::Grep => run_builtin_grep(args, redir, allow_read, allow_write, pass_fds),
+                BuiltinKind::Tr => run_builtin_tr(args, redir, allow_read, allow_write, pass_fds),
+                BuiltinKind::Sed => run_builtin_sed(args, redir, allow_read, allow_write, pass_fds),
                             BuiltinKind::Help => run_builtin_help(args),
-                BuiltinKind::Llmsh => run_builtin_llmsh(args, redir, allow_read, allow_write, pass_fd),
+                BuiltinKind::Llmsh => run_builtin_llmsh(args, redir, allow_read, allow_write, pass_fds),
                         }; 
                         std::process::exit(code); 
                     }
@@ -149,7 +149,7 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
     if mux_mode {
         let mut parent_fds: Vec<RawFd> = Vec::new();
         for pair in mux_child_fds.into_iter() { if let Some((child_fd,parent_fd))=pair { let _=close(child_fd); parent_fds.push(parent_fd); } }
-        mux::run_mux(parent_fds, allow_read, allow_write, pass_fd)?;
+        mux::run_mux(parent_fds, allow_read, allow_write, pass_fds)?;
     }
     let mut status_code = 0;
     for _ in 0..units.len() { let mut status: i32 = 0; unsafe { libc::wait(&mut status); if libc::WIFEXITED(status){ status_code = libc::WEXITSTATUS(status);} } }
@@ -161,20 +161,20 @@ fn main() -> Result<()> {
     let mut script: Option<String> = None;
     let mut allow_read: Vec<String> = Vec::new();
     let mut allow_write: Vec<String> = Vec::new();
-    let mut pass_fd: Option<i32> = None;
+    let mut pass_fds: Option<(i32,i32)> = None;
     let mut vfsd_arg: Option<String> = None; // --vfsd explicit binary path
     while let Some(a) = args.next() {
         match a.as_str() {
             "-c" => { script = Some(args.next().ok_or_else(|| anyhow::anyhow!("missing script after -c"))?); }
             "-i" | "--input" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after -i"))?; allow_read.push(v); }
             "-o" | "--output" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after -o"))?; allow_write.push(v); }
-            "--vfs-fd" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after --vfs-fd"))?; let fd: i32 = v.parse().map_err(|_| anyhow::anyhow!("invalid fd"))?; pass_fd = Some(fd); }
+            "--vfs-fds" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after --vfs-fds"))?; let parts: Vec<&str> = v.split(',').collect(); if parts.len()!=2 { anyhow::bail!("--vfs-fds requires '<rfd>,<wfd>'"); } let rfd: i32 = parts[0].parse().map_err(|_| anyhow::anyhow!("invalid rfd"))?; let wfd: i32 = parts[1].parse().map_err(|_| anyhow::anyhow!("invalid wfd"))?; pass_fds = Some((rfd,wfd)); }
             "--vfsd" => { let v = args.next().ok_or_else(|| anyhow::anyhow!("missing value after --vfsd"))?; vfsd_arg = Some(v); }
             other => { eprintln!("unknown arg: {other}"); }
         }
     }
-    if pass_fd.is_some() && (!allow_read.is_empty() || !allow_write.is_empty()) {
-        eprintln!("error: --vfs-fd cannot be combined with -i/-o options");
+    if pass_fds.is_some() && (!allow_read.is_empty() || !allow_write.is_empty()) {
+        eprintln!("error: --vfs-fds cannot be combined with -i/-o options");
         std::process::exit(2);
     }
 
@@ -197,11 +197,11 @@ fn main() -> Result<()> {
     env::set_var("LLMSH_VFSD_BIN", &resolved_vfsd);
     let s = script.unwrap_or_else(|| "".to_string());
     let units = parse_pipeline(&s);
-    let code = spawn_pipeline(&units, &allow_read, &allow_write, pass_fd)?;
+    let code = spawn_pipeline(&units, &allow_read, &allow_write, pass_fds)?;
     std::process::exit(code);
 }
 
-fn run_builtin_cat(args: &Vec<String>, redir: &RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fd:Option<i32>) -> i32 {
+fn run_builtin_cat(args: &Vec<String>, redir: &RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fds:Option<(i32,i32)>) -> i32 {
     let inputs: Vec<String> = if !args.is_empty() { args.clone() } else if let Some(f)= &redir.in_file { vec![f.clone()] } else { Vec::new() };
     if inputs.is_empty() { return 0; }
     let client = child_mux();
@@ -242,7 +242,7 @@ fn parse_head_tail_args(_kind: BuiltinKind, args:&[String]) -> (usize, Vec<Strin
     (n, files)
 }
 
-fn run_builtin_head(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fd:Option<i32>) -> i32 {
+fn run_builtin_head(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fds:Option<(i32,i32)>) -> i32 {
     let (limit, mut files) = parse_head_tail_args(BuiltinKind::Head, args);
     if files.is_empty() {
         if let Some(f)=&redir.in_file { files.push(f.clone()); } else { return 0; }
@@ -278,7 +278,7 @@ fn run_builtin_head(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], 
     0
 }
 
-fn run_builtin_tail(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fd:Option<i32>) -> i32 {
+fn run_builtin_tail(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fds:Option<(i32,i32)>) -> i32 {
     let (limit, mut files) = parse_head_tail_args(BuiltinKind::Tail, args);
     if files.is_empty() { if let Some(f)=&redir.in_file { files.push(f.clone()); } else { return 0; } }
     let client = child_mux();
@@ -315,7 +315,7 @@ fn run_builtin_tail(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], 
 
 fn map_exit(code:&VfsErrorCode) -> i32 { match code { VfsErrorCode::ENoEnt=>1, VfsErrorCode::EPerm|VfsErrorCode::EArg=>2, VfsErrorCode::EIO=>3, VfsErrorCode::EClosed=>4, VfsErrorCode::EUnsupported=>5, VfsErrorCode::Other(_)=>6 } }
 // ---- wc ----
-fn run_builtin_wc(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fd:Option<i32>) -> i32 {
+fn run_builtin_wc(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fds:Option<(i32,i32)>) -> i32 {
     // Options (subset): support -l (lines), -w (words), -c (bytes), default all three like POSIX.
     let mut show_l=true; let mut show_w=true; let mut show_b=true;
     let mut files:Vec<String>=Vec::new();
@@ -342,7 +342,7 @@ fn run_builtin_wc(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _a
 }
 
 // ---- grep (simple substring match, no regex yet) ----
-fn run_builtin_grep(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fd:Option<i32>) -> i32 {
+fn run_builtin_grep(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fds:Option<(i32,i32)>) -> i32 {
     if args.is_empty() { eprintln!("grep: missing pattern"); return 2; }
     // parse options: -i (ignore case), -n (line numbers), -E (regex) default literal, -r alias for -E
     let mut idx=0; let mut ignore_case=false; let mut show_line=false; let mut use_regex=false;
@@ -378,7 +378,7 @@ fn run_builtin_grep(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], 
 }
 
 // ---- tr (simple 1:1 mapping, optional -d delete) ----
-fn run_builtin_tr(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fd:Option<i32>) -> i32 {
+fn run_builtin_tr(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fds:Option<(i32,i32)>) -> i32 {
     if args.is_empty() { eprintln!("tr: missing args"); return 2; }
     let mut delete_mode=false; let mut sets:Vec<String>=Vec::new();
     for a in args { if a=="-d" { delete_mode=true; } else { sets.push(a.clone()); } }
@@ -435,7 +435,7 @@ fn run_builtin_tr(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _a
 }
 
 // ---- sed (subset: only single substitution expression s<delim>pat<delim>repl<delim>[flags], literal match (no regex), flags: g) ----
-fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fd:Option<i32>) -> i32 {
+fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], _pass_fds:Option<(i32,i32)>) -> i32 {
     if args.is_empty() { eprintln!("sed: missing script"); return 2; }
     let script = &args[0];
     let mut files:Vec<String> = if args.len()>1 { args[1..].to_vec() } else { Vec::new() };
@@ -509,7 +509,7 @@ fn run_builtin_sed(args:&Vec<String>, redir:&RedirSpec, _allow_read:&[String], _
 }
 
 // ---- llmsh (invoke nested shell) ----
-fn run_builtin_llmsh(args:&Vec<String>, _redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], pass_fd:Option<i32>) -> i32 {
+fn run_builtin_llmsh(args:&Vec<String>, _redir:&RedirSpec, _allow_read:&[String], _allow_write:&[String], pass_fds:Option<(i32,i32)>) -> i32 {
     // Only supported form: llmsh -c 'script'
     let mut idx=0; let mut script:Option<String>=None;
     while idx < args.len() {
@@ -522,7 +522,7 @@ fn run_builtin_llmsh(args:&Vec<String>, _redir:&RedirSpec, _allow_read:&[String]
     let mut cmd = Command::new(&bin);
     cmd.arg("-c").arg(&script);
     // Nested shell does not need -i / -o propagation (server-managed paths)
-    if let Some(fd)=pass_fd { cmd.arg("--vfs-fd").arg(fd.to_string()); }
+    if let Some((rfd,wfd))=pass_fds { cmd.arg("--vfs-fds").arg(format!("{},{}", rfd, wfd)); }
     match cmd.status() { Ok(st)=> st.code().unwrap_or(1), Err(e)=> { eprintln!("llmsh exec failed: {e}"); 5 } }
 }
 
@@ -538,7 +538,7 @@ static HELP_ENTRIES:&[HelpEntry] = &[
     HelpEntry { name:"tr", usage:"tr [-d] set1 [set2]", desc:"translate or delete characters (1:1 literal)", options:&[("-d","delete characters in set1")], examples:&[("tr abc xyz < in","Map a->x b->y c->z"),("tr -d 0-9 < in","Delete digits (range not yet supported)")], related:&["sed"] },
     HelpEntry { name:"sed", usage:"sed s/pat/repl/[gE] [file...]", desc:"stream substitution (literal by default, E enables regex)", options:&[("g","global replace"),("E","enable regex (alias r)")], examples:&[("sed s/foo/bar/ file","Replace first foo"),("sed s/foo/bar/g file","Replace all foo"),("sed 's/fo*/X/E' file","Regex replace")], related:&["grep","tr"] },
     HelpEntry { name:"help", usage:"help [command]", desc:"list commands or show detailed help", options:&[], examples:&[("help","List commands"),("help grep","Show grep help")], related:&[] },
-    HelpEntry { name:"llmsh", usage:"llmsh [-c 'pipeline'] [--vfs-fd N | (-i path ... -o path ...)]", desc:"invoke nested llmsh instance (only -c supported; --vfs-fd is exclusive with -i/-o)", options:&[("-c SCRIPT","execute pipeline SCRIPT"),("--vfs-fd N","reuse parent VFS connection (no -i/-o allowed)")], examples:&[("llmsh -c 'cat file.txt' -i file.txt","Run with allow list"),("llmsh -c 'grep foo a | wc -l' --vfs-fd 3","Nested pipeline sharing VFS FD")], related:&["help"] },
+    HelpEntry { name:"llmsh", usage:"llmsh [-c 'pipeline'] [--vfs-fds R,W | (-i path ... -o path ...)]", desc:"invoke nested llmsh instance (only -c supported; --vfs-fds is exclusive with -i/-o)", options:&[("-c SCRIPT","execute pipeline SCRIPT"),("--vfs-fds R,W","reuse parent VFS pipe fds (no -i/-o allowed)")], examples:&[("llmsh -c 'cat file.txt' -i file.txt","Run with allow list"),("llmsh -c 'grep foo a | wc -l' --vfs-fds 5,6","Nested pipeline sharing VFS pipes")], related:&["help"] },
 ];
 
 fn find_help(name:&str)->Option<&'static HelpEntry>{
