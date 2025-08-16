@@ -38,7 +38,7 @@ Current state analysis reveals a **highly mature system** that has evolved beyon
 ### 1. Virtual File System (VFS) - ⭐ Production Quality
 
 **Implementation Locations:**
-- `internal/llmsh/vfs.go` - Primary VFS for llmsh
+- (Deprecated) `internal/llmsh/*` - Legacy Go-based llmsh components. As of 2025-08-16, llmsh is provided by the Rust project `llmsh-rs/` and the Go code has been removed.
 - `internal/app/app.go` - SimpleVirtualFS with PIPE behavior
 - `internal/tools/engine.go` - Tools Engine VFS integration
 

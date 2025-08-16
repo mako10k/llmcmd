@@ -30,7 +30,7 @@ llmcmdプロジェクトは、当初の予想を大幅に上回る**高度なア
 
 **現状**: 3つの異なるVFS実装が存在
 ```
-1. internal/llmsh/vfs.go        - llmsh専用VFS
+1. (Deprecated) internal/llmsh/*        - 旧 llmsh (Go) 実装一式。現在は Rust 実装 `llmsh-rs/` に移行済み。
 2. internal/app/app.go          - SimpleVirtualFS (PIPE動作)
 3. internal/tools/engine.go     - Tools Engine連携
 ```

@@ -219,7 +219,7 @@ type EnhancedVFS struct {
 ### Multiple VFS Implementations Analysis
 
 **🔍 Architecture Consistency Issue**: 3 VFS implementations exist
-1. `internal/llmsh/vfs.go` - llmsh-specific VFS
+1. (Deprecated) `internal/llmsh/*` - legacy Go llmsh-specific code (removed). The active shell is implemented in Rust under `llmsh-rs/`.
 2. `internal/app/app.go` - SimpleVirtualFS (PIPE behavior)  
 3. `internal/app/vfs.go` - EnhancedVFS (most advanced)
 
