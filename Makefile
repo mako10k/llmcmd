@@ -23,10 +23,11 @@ LLMSH_RS_BIN=llmsh
 VFSD_RS_BIN=vfsd
 
 # Publish/CI toggles (override with `make VAR=...`)
-BUILD_RUST ?= 1           # 1: build llmsh/vfsd when available, 0: skip
+# Default is OPT-OUT: Rust tools are required unless explicitly disabled.
+BUILD_RUST ?= 1           # 1 (default): build llmsh/vfsd; 0: skip building Rust helpers
 SKIP_POLICY ?= 0          # 1: skip policy checks in `make test`
-INSTALL_LLMSH ?= 1        # 1: install llmsh in `make install`, 0: skip
-INSTALL_VFSD ?= 1         # 1: install vfsd in `make install`, 0: skip
+INSTALL_LLMSH ?= 1        # 1 (default): install llmsh, 0: skip
+INSTALL_VFSD ?= 1         # 1 (default): install vfsd, 0: skip
 
 # Version info
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "v1.0.0-dev")
@@ -40,7 +41,7 @@ LDFLAGS_LLMCMD=-ldflags "-X 'main.AppVersion=$(VERSION)' -X 'main.BuildCommit=$(
 # Platform targets
 PLATFORMS=linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
-.PHONY: all build clean test install uninstall dist release help
+.PHONY: all build build-core build-llmcmd build-llmsh build-vfsd build-debug clean test install install-core uninstall dist release help publish dev-setup fmt lint policy examples
 
 all: build
 
@@ -51,7 +52,7 @@ ifeq ($(BUILD_RUST),1)
 BUILD_RUST_TARGETS += build-llmsh build-vfsd
 endif
 
-build: build-llmcmd $(BUILD_RUST_TARGETS) ## Build binaries for current platform (use BUILD_RUST=0 to skip Rust tools)
+build: build-llmcmd $(BUILD_RUST_TARGETS) ## Build binaries for current platform (Rust tools ON by default; use BUILD_RUST=0 to opt-out)
 
 .PHONY: build-core
 build-core: build-llmcmd ## Build llmcmd only (no Rust tools)
@@ -60,7 +61,7 @@ build-llmcmd: ## Build llmcmd binary
 	@echo "Building $(BINARY_NAME) $(VERSION)..."
 	$(GOBUILD) $(LDFLAGS_LLMCMD) -o $(BINARY_NAME) $(BINARY_PATH)
 
-build-llmsh: ## Build llmsh binary (Rust only)
+build-llmsh: ## Build llmsh binary (Rust only; required by default)
 	@echo "Building $(LLMSH_NAME) (Rust) $(VERSION)..."
 	@if [ -f $(LLMSH_RS_DIR)/Cargo.toml ] && command -v $(CARGO) >/dev/null 2>&1; then \
 		echo "Building Rust $(LLMSH_NAME) from $(LLMSH_RS_DIR)..."; \
@@ -78,17 +79,21 @@ build-llmsh: ## Build llmsh binary (Rust only)
 			echo "Error: Rust llmsh artifact not found under $(LLMSH_RS_DIR)/target/release" >&2; exit 1; \
 		fi; \
 	else \
-		echo "Skipping $(LLMSH_NAME) build: Rust project or cargo not available"; \
+		echo "Error: Rust project or cargo not available for $(LLMSH_NAME). Rust tools are required by default." >&2; \
+		echo "Hint: install Rust/Cargo, or explicitly opt-out via 'make BUILD_RUST=0 ...'" >&2; \
+		exit 1; \
 	fi
 
-build-vfsd: ## Build vfsd helper (Rust, optional)
+build-vfsd: ## Build vfsd helper (Rust; required by default)
 	@if [ -f $(VFSD_RS_DIR)/Cargo.toml ] && command -v $(CARGO) >/dev/null 2>&1; then \
 		echo "Building Rust $(VFSD_RS_BIN) from $(VFSD_RS_DIR)..."; \
 		(cd $(VFSD_RS_DIR) && $(CARGO) build --release); \
 		cp $(VFSD_RS_DIR)/target/release/$(VFSD_RS_BIN) ./$(VFSD_RS_BIN); \
 		echo "Built ./$(VFSD_RS_BIN)"; \
 	else \
-		echo "Skipping $(VFSD_RS_BIN) build: Rust project or cargo not available"; \
+		echo "Error: Rust project or cargo not available for $(VFSD_RS_BIN). Rust tools are required by default." >&2; \
+		echo "Hint: install Rust/Cargo, or explicitly opt-out via 'make BUILD_RUST=0 ...'" >&2; \
+		exit 1; \
 	fi
 
 build-debug: ## Build with debug info
@@ -144,31 +149,29 @@ test-coverage: ## Run tests with coverage
 install: build ## Install binaries system-wide (requires sudo)
 	@echo "Installing $(BINARY_NAME) system-wide..."
 	sudo ./$(BINARY_NAME) --install
-	@if [ "$(INSTALL_LLMSH)" = "1" ] && [ -f ./$(LLMSH_NAME) ]; then \
-		echo "Installing $(LLMSH_NAME) to /usr/local/bin..."; \
-		sudo cp ./$(LLMSH_NAME) /usr/local/bin/$(LLMSH_NAME); \
-		sudo chmod +x /usr/local/bin/$(LLMSH_NAME); \
-	else \
-		if [ "$(INSTALL_LLMSH)" != "1" ]; then \
-			echo "Skipping $(LLMSH_NAME) install: INSTALL_LLMSH=$(INSTALL_LLMSH) (set INSTALL_LLMSH=1 to enable)"; \
-		elif [ ! -f ./$(LLMSH_NAME) ]; then \
-			echo "Skipping $(LLMSH_NAME) install: binary './$(LLMSH_NAME)' not found (run 'make build-llmsh' first)"; \
+	@if [ "$(INSTALL_LLMSH)" = "1" ]; then \
+		if [ -f ./$(LLMSH_NAME) ]; then \
+			echo "Installing $(LLMSH_NAME) to /usr/local/bin..."; \
+			sudo cp ./$(LLMSH_NAME) /usr/local/bin/$(LLMSH_NAME); \
+			sudo chmod +x /usr/local/bin/$(LLMSH_NAME); \
 		else \
-			echo "Skipping $(LLMSH_NAME) install: unknown condition"; \
+			echo "Error: './$(LLMSH_NAME)' not found. Build it (make build-llmsh) or opt-out: INSTALL_LLMSH=0" >&2; \
+			exit 1; \
 		fi; \
+	else \
+		echo "Skipping $(LLMSH_NAME) install: INSTALL_LLMSH=$(INSTALL_LLMSH) (explicit opt-out)"; \
 	fi
-	@if [ "$(INSTALL_VFSD)" = "1" ] && [ -f ./$(VFSD_RS_BIN) ]; then \
-		echo "Installing $(VFSD_RS_BIN) to /usr/local/bin..."; \
-		sudo cp ./$(VFSD_RS_BIN) /usr/local/bin/$(VFSD_RS_BIN); \
-		sudo chmod +x /usr/local/bin/$(VFSD_RS_BIN); \
-	else \
-		if [ "$(INSTALL_VFSD)" != "1" ]; then \
-			echo "Skipping $(VFSD_RS_BIN) install: INSTALL_VFSD=$(INSTALL_VFSD) (set INSTALL_VFSD=1 to enable)"; \
-		elif [ ! -f ./$(VFSD_RS_BIN) ]; then \
-			echo "Skipping $(VFSD_RS_BIN) install: binary './$(VFSD_RS_BIN)' not found (run 'make build-vfsd' first)"; \
+	@if [ "$(INSTALL_VFSD)" = "1" ]; then \
+		if [ -f ./$(VFSD_RS_BIN) ]; then \
+			echo "Installing $(VFSD_RS_BIN) to /usr/local/bin..."; \
+			sudo cp ./$(VFSD_RS_BIN) /usr/local/bin/$(VFSD_RS_BIN); \
+			sudo chmod +x /usr/local/bin/$(VFSD_RS_BIN); \
 		else \
-			echo "Skipping $(VFSD_RS_BIN) install: unknown condition"; \
+			echo "Error: './$(VFSD_RS_BIN)' not found. Build it (make build-vfsd) or opt-out: INSTALL_VFSD=0" >&2; \
+			exit 1; \
 		fi; \
+	else \
+		echo "Skipping $(VFSD_RS_BIN) install: INSTALL_VFSD=$(INSTALL_VFSD) (explicit opt-out)"; \
 	fi
 
 .PHONY: install-core
@@ -257,10 +260,10 @@ help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@echo ""
 	@echo "Toggles (override like VAR=0):"
-	@echo "  BUILD_RUST=1     Build Rust tools (llmsh/vfsd) when available"
+	@echo "  BUILD_RUST=1     Build Rust tools (llmsh/vfsd). Set BUILD_RUST=0 to opt-out."
 	@echo "  SKIP_POLICY=0    Skip policy check in 'make test' when set to 1"
-	@echo "  INSTALL_LLMSH=1  Install llmsh in 'make install' when set to 1"
-	@echo "  INSTALL_VFSD=1   Install vfsd in 'make install' when set to 1"
+	@echo "  INSTALL_LLMSH=1  Install llmsh by default; set INSTALL_LLMSH=0 to skip"
+	@echo "  INSTALL_VFSD=1   Install vfsd by default; set INSTALL_VFSD=0 to skip"
 
 # Default target
 .DEFAULT_GOAL := help
