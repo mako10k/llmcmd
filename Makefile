@@ -21,6 +21,7 @@ LLMSH_RS_DIR=./llmsh-rs
 VFSD_RS_DIR=./vfsd
 LLMSH_RS_BIN=llmsh
 VFSD_RS_BIN=vfsd
+VFSD_ARTIFACT=vfsd.bin
 
 # Publish/CI toggles (override with `make VAR=...`)
 # Default is OPT-OUT: Rust tools are required unless explicitly disabled.
@@ -48,11 +49,12 @@ all: build
 ## Build commands
 # Conditionally include Rust helper builds
 BUILD_RUST_TARGETS :=
-ifeq ($(BUILD_RUST),1)
+ifeq ($(strip $(BUILD_RUST)),1)
 BUILD_RUST_TARGETS += build-llmsh build-vfsd
 endif
 
 build: build-llmcmd $(BUILD_RUST_TARGETS) ## Build binaries for current platform (Rust tools ON by default; use BUILD_RUST=0 to opt-out)
+	@echo "[build] BUILD_RUST='$(BUILD_RUST)' (trimmed='$(strip $(BUILD_RUST))') -> targets: $(BUILD_RUST_TARGETS)"
 
 .PHONY: build-core
 build-core: build-llmcmd ## Build llmcmd only (no Rust tools)
@@ -88,8 +90,8 @@ build-vfsd: ## Build vfsd helper (Rust; required by default)
 	@if [ -f $(VFSD_RS_DIR)/Cargo.toml ] && command -v $(CARGO) >/dev/null 2>&1; then \
 		echo "Building Rust $(VFSD_RS_BIN) from $(VFSD_RS_DIR)..."; \
 		(cd $(VFSD_RS_DIR) && $(CARGO) build --release); \
-		cp $(VFSD_RS_DIR)/target/release/$(VFSD_RS_BIN) ./$(VFSD_RS_BIN); \
-		echo "Built ./$(VFSD_RS_BIN)"; \
+		cp $(VFSD_RS_DIR)/target/release/$(VFSD_RS_BIN) ./$(VFSD_ARTIFACT); \
+		echo "Built ./$(VFSD_ARTIFACT)"; \
 	else \
 		echo "Error: Rust project or cargo not available for $(VFSD_RS_BIN). Rust tools are required by default." >&2; \
 		echo "Hint: install Rust/Cargo, or explicitly opt-out via 'make BUILD_RUST=0 ...'" >&2; \
@@ -123,7 +125,7 @@ clean: ## Clean build artifacts
 	$(GOCLEAN)
 	rm -f $(BINARY_NAME)
 	rm -f $(LLMSH_NAME)
-	rm -f ./$(VFSD_RS_BIN)
+	rm -f ./$(VFSD_ARTIFACT)
 	rm -rf $(BUILD_DIR)
 	rm -rf $(DIST_DIR)
 
@@ -164,12 +166,12 @@ install: build ## Install binaries system-wide (requires sudo)
 	fi
 	@val_vfsd='$(INSTALL_VFSD)'; val_vfsd_trim=$$(printf '%s' "$$val_vfsd" | tr -d '[:space:]'); \
 	if [ "$$val_vfsd_trim" = "1" ]; then \
-		if [ -f ./$(VFSD_RS_BIN) ]; then \
+		if [ -f ./$(VFSD_ARTIFACT) ]; then \
 			echo "Installing $(VFSD_RS_BIN) to /usr/local/bin..."; \
-			sudo cp ./$(VFSD_RS_BIN) /usr/local/bin/$(VFSD_RS_BIN); \
+			sudo cp ./$(VFSD_ARTIFACT) /usr/local/bin/$(VFSD_RS_BIN); \
 			sudo chmod +x /usr/local/bin/$(VFSD_RS_BIN); \
 		else \
-			echo "Error: './$(VFSD_RS_BIN)' not found. Build it (make build-vfsd) or opt-out: INSTALL_VFSD=0" >&2; \
+			echo "Error: './$(VFSD_ARTIFACT)' not found. Build it (make build-vfsd) or opt-out: INSTALL_VFSD=0" >&2; \
 			exit 1; \
 		fi; \
 	else \
