@@ -65,9 +65,14 @@ Examples:
 	for scanner.Scan() {
 		line := scanner.Text()
 		if globalReplace {
-			line = regex.ReplaceAllString(line, replacement)
+			// Replace all matches with literal replacement (no backrefs)
+			line = regex.ReplaceAllStringFunc(line, func(string) string { return replacement })
 		} else {
-			line = regex.ReplaceAllString(line, replacement)
+			// Replace first match only (literal replacement)
+			if loc := regex.FindStringIndex(line); loc != nil {
+				start, end := loc[0], loc[1]
+				line = line[:start] + replacement + line[end:]
+			}
 		}
 		fmt.Fprintln(stdout, line)
 	}
