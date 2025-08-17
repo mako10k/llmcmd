@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -34,67 +35,88 @@ Examples:
 		return err
 	}
 
-	// Parse options and expression/files
+	// Parse options, programs, and files
 	suppressPrint := false
-	var expr string
+	var programs []string
 	var files []string
-	for _, a := range args {
-		if a == "-n" {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch a {
+		case "-n":
 			suppressPrint = true
-			continue
+		case "-e":
+			if i+1 >= len(args) {
+				return fmt.Errorf("sed: -e requires an argument")
+			}
+			i++
+			programs = append(programs, args[i])
+		default:
+			if strings.HasPrefix(a, "-") {
+				// Unknown flag ignored for now
+				continue
+			}
+			if len(programs) == 0 {
+				// First non-flag treated as program; rest as files
+				programs = append(programs, a)
+			} else {
+				files = append(files, a)
+			}
 		}
-		if expr == "" {
-			expr = a
-			continue
-		}
-		files = append(files, a)
 	}
-	if expr == "" {
+	if len(programs) == 0 {
 		return fmt.Errorf("sed: missing expression")
 	}
 
-	pat, repl, flags, err := parseSubstExpression(expr)
-	if err != nil {
-		return err
-	}
-	globalReplace := strings.Contains(flags, "g")
-	ignoreCase := strings.Contains(flags, "i")
-	printOnSub := strings.Contains(flags, "p")
-
-	// Compile regex
-	if ignoreCase {
-		pat = "(?i)" + pat
-	}
-	regex, err := regexp.Compile(pat)
-	if err != nil {
-		return fmt.Errorf("invalid regex pattern: %s", err)
+	// Split programs on unescaped ';'
+	var rawCmds []string
+	for _, p := range programs {
+		rawCmds = append(rawCmds, splitBySemicolon(p)...)
 	}
 
-	// Processor for a single reader
+	// Parse commands
+	cmds := make([]sedCommand, 0, len(rawCmds))
+	for _, rc := range rawCmds {
+		rc = strings.TrimSpace(rc)
+		if rc == "" { continue }
+		sc, err := parseSedCommand(rc)
+		if err != nil { return err }
+		cmds = append(cmds, sc)
+	}
+	if len(cmds) == 0 {
+		return fmt.Errorf("sed: no valid commands")
+	}
+
+	// Processor: read all lines first to support '$'
 	process := func(r io.Reader) error {
+		var lines []string
 		scanner := bufio.NewScanner(r)
-		for scanner.Scan() {
-			line := scanner.Text()
-			newLine, substituted := applySubstitution(line, regex, repl, globalReplace)
+		for scanner.Scan() { lines = append(lines, scanner.Text()) }
+		if err := scanner.Err(); err != nil { return err }
+
+		inRange := make([]bool, len(cmds))
+		for idx, line := range lines {
+			final := line
+			extraPrints := 0
+			for j := range cmds {
+				matched, end := matchAddress(&cmds[j], idx+1, len(lines), final, &inRange[j])
+				if matched {
+					var subbed bool
+					final, subbed = applySubstitution(final, cmds[j].re, cmds[j].repl, cmds[j].global)
+					if cmds[j].printOnSub && subbed { extraPrints++ }
+				}
+				if end { inRange[j] = false }
+			}
 			if suppressPrint {
-				if printOnSub && substituted {
-					fmt.Fprintln(stdout, newLine)
-				}
+				for k := 0; k < extraPrints; k++ { fmt.Fprintln(stdout, final) }
 			} else {
-				fmt.Fprintln(stdout, newLine)
-				if printOnSub && substituted {
-					// sed prints twice when -n is not set and 'p' flag is used
-					fmt.Fprintln(stdout, newLine)
-				}
+				fmt.Fprintln(stdout, final)
+				for k := 0; k < extraPrints; k++ { fmt.Fprintln(stdout, final) }
 			}
 		}
-		return scanner.Err()
+		return nil
 	}
 
-	// Use files if provided, otherwise stdin
-	if len(files) == 0 {
-		return process(stdin)
-	}
+	if len(files) == 0 { return process(stdin) }
 	return processInput(files, stdin, process)
 }
 
@@ -231,4 +253,169 @@ func applySubstitution(line string, re *regexp.Regexp, repl string, global bool)
 		pos += idx[1]
 	}
 	return out.String(), substituted
+}
+
+// --- Address and multi-command support ---
+
+type addrKind int
+
+const (
+	addrNone addrKind = iota
+	addrLine
+	addrLast
+	addrRegex
+)
+
+type address struct {
+	kind addrKind
+	num  int
+	re   *regexp.Regexp
+}
+
+type sedCommand struct {
+	a1, a2 address
+	hasA1, hasA2 bool
+	negate bool
+	re    *regexp.Regexp
+	repl  string
+	global bool
+	printOnSub bool
+}
+
+func splitBySemicolon(s string) []string {
+	var out []string
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\\' {
+			// Escape only for ';' and '\\'. Otherwise, keep backslash literal.
+			if i+1 < len(s) {
+				next := s[i+1]
+				if next == ';' {
+					b.WriteByte(';')
+					i++
+					continue
+				}
+				if next == '\\' {
+					b.WriteByte('\\')
+					i++
+					continue
+				}
+			}
+			// keep backslash as-is
+			b.WriteByte('\\')
+			continue
+		}
+		if c == ';' {
+			out = append(out, strings.TrimSpace(b.String()))
+			b.Reset()
+			continue
+		}
+		b.WriteByte(c)
+	}
+	if b.Len() > 0 { out = append(out, strings.TrimSpace(b.String())) }
+	return out
+}
+
+func parseSedCommand(s string) (sedCommand, error) {
+	var cmd sedCommand
+	s = strings.TrimSpace(s)
+	// Parse optional addresses
+	rest := s
+	a1, n1, ok1 := parseAddressPrefix(rest)
+	if ok1 {
+		cmd.a1 = a1; cmd.hasA1 = true
+		rest = rest[n1:]
+		if len(rest) > 0 && rest[0] == ',' {
+			rest = rest[1:]
+			a2, n2, ok2 := parseAddressPrefix(rest)
+			if !ok2 { return cmd, fmt.Errorf("sed: invalid range address") }
+			cmd.a2 = a2; cmd.hasA2 = true
+			rest = rest[n2:]
+		}
+		rest = strings.TrimSpace(rest)
+		if len(rest) > 0 && rest[0] == '!' { cmd.negate = true; rest = strings.TrimSpace(rest[1:]) }
+	}
+	rest = strings.TrimSpace(rest)
+	// Must start with s
+	p, r, f, err := parseSubstExpression(rest)
+	if err != nil { return cmd, err }
+	ignoreCase := strings.Contains(f, "i")
+	if ignoreCase { p = "(?i)" + p }
+	re, err := regexp.Compile(p)
+	if err != nil { return cmd, fmt.Errorf("invalid regex pattern: %s", err) }
+	cmd.re = re
+	cmd.repl = r
+	cmd.global = strings.Contains(f, "g")
+	cmd.printOnSub = strings.Contains(f, "p")
+	return cmd, nil
+}
+
+func parseAddressPrefix(s string) (address, int, bool) {
+	s = strings.TrimSpace(s)
+	var a address
+	if s == "" { return a, 0, false }
+	// '$'
+	if s[0] == '$' { a.kind = addrLast; return a, 1, true }
+	// number
+	if c := s[0]; c >= '0' && c <= '9' {
+		i := 0
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' { i++ }
+		n, _ := strconv.Atoi(s[:i])
+		a.kind = addrLine; a.num = n
+		return a, i, true
+	}
+	// /regex/
+	if s[0] == '/' {
+		i := 1
+		var b strings.Builder
+		for i < len(s) {
+			ch := s[i]
+			if ch == '\\' {
+				if i+1 < len(s) { b.WriteByte(s[i+1]); i += 2; continue }
+				i++
+				continue
+			}
+			if ch == '/' { i++; break }
+			b.WriteByte(ch)
+			i++
+		}
+		pattern := b.String()
+		re, err := regexp.Compile(pattern)
+		if err != nil { return a, 0, false }
+		a.kind = addrRegex; a.re = re
+		return a, i, true
+	}
+	return a, 0, false
+}
+
+func matchAddress(cmd *sedCommand, lineNo int, total int, line string, inRange *bool) (matched bool, endRange bool) {
+	eval := func(a address) bool {
+		switch a.kind {
+		case addrLine:
+			return lineNo == a.num
+		case addrLast:
+			return lineNo == total
+		case addrRegex:
+			return a.re.MatchString(line)
+		default:
+			return true
+		}
+	}
+	var m bool
+	if !cmd.hasA1 && !cmd.hasA2 {
+		m = true
+	} else if cmd.hasA1 && !cmd.hasA2 {
+		m = eval(cmd.a1)
+	} else {
+		// range
+		if !*inRange {
+			if eval(cmd.a1) { *inRange = true; m = true } else { m = false }
+		} else {
+			m = true
+		}
+		if *inRange && eval(cmd.a2) { endRange = true }
+	}
+	if cmd.negate { m = !m }
+	return m, endRange
 }

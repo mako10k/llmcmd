@@ -146,3 +146,52 @@ func TestSedFileArgument(t *testing.T) {
         t.Fatalf("got %q, want %q", got, want)
     }
 }
+
+func TestSedAddressLineNumber(t *testing.T) {
+    in := strings.NewReader("a\nb\nc\n")
+    var out bytes.Buffer
+    if err := Sed([]string{"2s/b/B/"}, in, &out); err != nil { t.Fatalf("%v", err) }
+    if got, want := out.String(), "a\nB\nc\n"; got != want { t.Fatalf("got %q want %q", got, want) }
+}
+
+func TestSedAddressLastLine(t *testing.T) {
+    in := strings.NewReader("a\nb\nc\n")
+    var out bytes.Buffer
+    if err := Sed([]string{"$s/c/C/"}, in, &out); err != nil { t.Fatalf("%v", err) }
+    if got, want := out.String(), "a\nb\nC\n"; got != want { t.Fatalf("got %q want %q", got, want) }
+}
+
+func TestSedAddressRegex(t *testing.T) {
+    in := strings.NewReader("foo\nbar\nfoo\n")
+    var out bytes.Buffer
+    if err := Sed([]string{"/bar/s/bar/BAR/"}, in, &out); err != nil { t.Fatalf("%v", err) }
+    if got, want := out.String(), "foo\nBAR\nfoo\n"; got != want { t.Fatalf("got %q want %q", got, want) }
+}
+
+func TestSedRangeAddress(t *testing.T) {
+    in := strings.NewReader("1\n2\n3\n4\n")
+    var out bytes.Buffer
+    if err := Sed([]string{"2,3s/[0-9]/X/g"}, in, &out); err != nil { t.Fatalf("%v", err) }
+    if got, want := out.String(), "1\nX\nX\n4\n"; got != want { t.Fatalf("got %q want %q", got, want) }
+}
+
+func TestSedNegation(t *testing.T) {
+    in := strings.NewReader("foo\nbar\nfoo\n")
+    var out bytes.Buffer
+    if err := Sed([]string{"/bar/!s/foo/FOO/"}, in, &out); err != nil { t.Fatalf("%v", err) }
+    if got, want := out.String(), "FOO\nbar\nFOO\n"; got != want { t.Fatalf("got %q want %q", got, want) }
+}
+
+func TestSedMultiCommandsSemicolon(t *testing.T) {
+    in := strings.NewReader("ab\ncd\n")
+    var out bytes.Buffer
+    if err := Sed([]string{"s/a/A/; s/b/B/"}, in, &out); err != nil { t.Fatalf("%v", err) }
+    if got, want := out.String(), "AB\ncd\n"; got != want { t.Fatalf("got %q want %q", got, want) }
+}
+
+func TestSedMultiCommandsDashE(t *testing.T) {
+    in := strings.NewReader("ab\ncd\n")
+    var out bytes.Buffer
+    if err := Sed([]string{"-e", "s/a/A/", "-e", "s/b/B/"}, in, &out); err != nil { t.Fatalf("%v", err) }
+    if got, want := out.String(), "AB\ncd\n"; got != want { t.Fatalf("got %q want %q", got, want) }
+}
