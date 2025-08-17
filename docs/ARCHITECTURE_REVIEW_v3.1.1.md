@@ -161,11 +161,14 @@ type Engine struct {
 🔍 File descriptor limit management
 🔍 Resource cleanup automation
 
-### 4. Built-in Commands - ⭐ Comprehensive Implementation
+### 4. Built-in Commands - ★ Rust-based Implementation
 
-**Implementation Location:**
-- `internal/tools/builtin/commands.go` - Main command implementations
-- `internal/tools/builtin/help.go` - Advanced help system
+**Implementation Location (Current):**
+- `llmsh-rs/` - All built-in commands implemented in Rust (llmsh)
+- Go engine delegates help to llmsh via `llmsh -c "help [keys...]"`
+
+**Notes:**
+- Previous Go implementation under `internal/tools/builtin/*` is deprecated and no longer used by llmcmd runtime.
 
 **Command Categories:**
 ```go
@@ -182,12 +185,11 @@ type Engine struct {
 "diff", "patch", "join", "comm", "split", "tee", "rev", "nl"
 ```
 
-**Help System Features:**
-- Interactive command help
-- Usage examples
-- VFS debugging guides
+**Help System Features (via llmsh):**
+- Command index and per-command usage
+- Examples aligned with Rust behavior
 - Error troubleshooting
-- Advanced operation patterns
+- VFS usage notes
 
 **Strengths:**
 ✅ Comprehensive command set (40+ commands)

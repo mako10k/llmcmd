@@ -202,7 +202,7 @@ type EnhancedVFS struct {
 ### ✅ **FITS - Excellent Foundation**
 
 #### Built-in Commands Analysis
-**Current Implementation**: 40+ commands in `internal/tools/builtin/`
+**Current Implementation**: Rust-based commands in `llmsh-rs/` (Go builtin directory deprecated)
 ```go
 // Comprehensive command set already available
 cat, grep, sed (s/// with g/i/p, addresses N/$//re/, ranges, negation (!), multi-commands via -e and ';', backrefs &/\1..\9, custom delimiters), head, tail, sort, wc, tr, cut, uniq, 

@@ -15,8 +15,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/mako10k/llmcmd/internal/tools/builtin"
 	"github.com/mako10k/llmcmd/internal/utils"
 )
 
@@ -1322,15 +1320,53 @@ func (e *Engine) executeHelp(args map[string]interface{}) (string, error) {
 		keys[i] = key
 	}
 
-	// Create a buffer to capture output
-	var outputBuf bytes.Buffer
-
-	// Call builtin GetHelp function
-	err := builtin.GetHelp(keys, nil, &outputBuf)
-	if err != nil {
+	// Resolve llmsh executable (reuse logic similar to executeSpawn)
+	exeName := "llmsh"
+	if runtime.GOOS == "windows" {
+		exeName = "llmsh.exe"
+	}
+	resolvedPath := ""
+	if selfPath, err := os.Executable(); err == nil {
+		baseDir := filepath.Dir(selfPath)
+		cand := filepath.Join(baseDir, exeName)
+		if fi, err2 := os.Stat(cand); err2 == nil && fi.Mode()&0111 != 0 {
+			resolvedPath = cand
+		}
+	}
+	if resolvedPath == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			cand := filepath.Join(cwd, exeName)
+			if fi, err2 := os.Stat(cand); err2 == nil && fi.Mode()&0111 != 0 {
+				resolvedPath = cand
+			}
+		}
+	}
+	if resolvedPath == "" {
+		if lp, err := exec.LookPath(exeName); err == nil {
+			resolvedPath = lp
+		}
+	}
+	if resolvedPath == "" {
 		e.stats.ErrorCount++
-		return "", fmt.Errorf("help: %w", err)
+		return "", fmt.Errorf("help: cannot locate llmsh executable")
 	}
 
-	return outputBuf.String(), nil
+	// Build help script and execute
+	script := "help"
+	if len(keys) > 0 {
+		script = script + " " + strings.Join(keys, " ")
+	}
+	cmd := exec.Command(resolvedPath, "-c", script)
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+	cmd.Env = os.Environ()
+	if err := cmd.Run(); err != nil {
+		// Return stderr as part of error to aid debugging
+		e.stats.ErrorCount++
+		msg := strings.TrimSpace(stderrBuf.String())
+		if msg == "" { msg = err.Error() }
+		return "", fmt.Errorf("help: %s", msg)
+	}
+	return stdoutBuf.String(), nil
 }

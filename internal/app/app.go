@@ -14,15 +14,9 @@ import (
 	"github.com/mako10k/llmcmd/internal/cli"
 	"github.com/mako10k/llmcmd/internal/openai"
 	"github.com/mako10k/llmcmd/internal/tools"
-	"github.com/mako10k/llmcmd/internal/tools/builtin"
 )
 
-// Adapter to satisfy builtin.VFS using a tools.VirtualFileSystem
-type builtinVFSAdapter struct{ vfs tools.VirtualFileSystem }
-
-func (b builtinVFSAdapter) OpenFileSession(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
-	return b.vfs.OpenFile(name, flag, perm)
-}
+// (Rust migration) Go builtin adapter removed; llmsh handles built-ins now.
 
 // App represents the main application
 type App struct {
@@ -174,9 +168,6 @@ func (a *App) initializeToolEngine() error {
 
 	// Configure shell executor with VFS for redirect support
 	shellExecutor.SetVFS(virtualFS)
-
-	// Configure builtin commands with VFS for file operations: adapt to expected interface
-	builtin.SetVFS(builtinVFSAdapter{vfs: virtualFS})
 
 	config := tools.EngineConfig{
 		InputFiles:    a.config.InputFiles,
