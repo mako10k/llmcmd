@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -191,32 +190,21 @@ type RunningCommand struct {
 	commandName string
 }
 
-// FdDependency represents a file descriptor dependency relationship
-type FdDependency struct {
-	Source   int    // Source fd (input)
-	Targets  []int  // Target fds (outputs) - supports 1:many for tee
-	ToolType string // "spawn" or "tee"
-}
-
 // Engine handles tool execution for llmcmd
 type Engine struct {
 	inputFiles      []*os.File
-	outputFile      *os.File
 	fileDescriptors []interface{}           // Can hold io.Reader, io.Writer, or io.ReadWriter
 	runningCommands map[int]*RunningCommand // Maps fd to running command
 	commandsMutex   sync.RWMutex
-	fdDependencies  []FdDependency // Tracks fd dependencies for spawns and tees
-	closedFds       map[int]bool   // Tracks which fds have been closed
-	chainMutex      sync.RWMutex   // Protects fdDependencies and closedFds
-	nextFd          int            // Next available file descriptor number
-	maxFileSize     int64
+	closedFds       map[int]bool // Tracks which fds have been closed
+	chainMutex      sync.RWMutex // Protects closedFds
+	nextFd          int          // Next available file descriptor number
 	bufferSize      int
 	stats           ExecutionStats
-	noStdin         bool // Skip reading from stdin
 	// New components for llmsh integration
-	shellExecutor      ShellExecutor
-	virtualFS          VirtualFileSystem
-	internalPidCounter *int64
+	virtualFS VirtualFileSystem
+	// FD attach propagation for child llmsh
+	vfsMuxFDs string
 }
 
 // ExecutionStats tracks tool execution statistics
@@ -240,34 +228,28 @@ type EngineConfig struct {
 	NoStdin       bool // Skip reading from stdin
 	ShellExecutor ShellExecutor
 	VirtualFS     VirtualFileSystem
+	// Optional attach FD spec to propagate to child llmsh ("fd" or "rfd,wfd")
+	VFSMuxFDs string
 }
 
 // NewEngine creates a new tool execution engine
 func NewEngine(config EngineConfig) (*Engine, error) {
 	engine := &Engine{
-		maxFileSize:     config.MaxFileSize,
 		bufferSize:      config.BufferSize,
-		noStdin:         config.NoStdin,
 		runningCommands: make(map[int]*RunningCommand),
-		fdDependencies:  []FdDependency{},
 		closedFds:       make(map[int]bool),
 		nextFd:          10, // Start at 10, reserving 0-9 for standard fds
-		shellExecutor:   config.ShellExecutor,
 		virtualFS:       config.VirtualFS,
+		vfsMuxFDs:       config.VFSMuxFDs,
 	}
 
 	// Initialize file descriptors array
 	// 0=stdin, 1=stdout, 2=stderr, 3+=input files
 	engine.fileDescriptors = make([]interface{}, 3)
-	if !config.NoStdin {
-		engine.fileDescriptors[0] = os.Stdin
-	}
+	// Always wire stdin; --no-stdin is advisory for LLM planning only
+	engine.fileDescriptors[0] = os.Stdin
 	// Add stdout and stderr to fd management
-	if engine.outputFile != nil {
-		engine.fileDescriptors[1] = engine.outputFile
-	} else {
-		engine.fileDescriptors[1] = os.Stdout
-	}
+	engine.fileDescriptors[1] = os.Stdout
 	engine.fileDescriptors[2] = os.Stderr
 
 	// Open input files and add to file descriptors
@@ -290,7 +272,7 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 		}
 	}
 
-	// Output files are now handled through VirtualFS, not directly in engine
+	// Output files are handled through VirtualFS, not directly in engine
 
 	return engine, nil
 }
@@ -345,34 +327,7 @@ func (e *Engine) traverseChainRecursive(fd int, visited map[int]bool, results *[
 		return
 	}
 
-	// Find dependencies where this fd is a target (reverse lookup)
-	for _, dep := range e.fdDependencies {
-		for _, targetFd := range dep.Targets {
-			if targetFd == fd {
-				// Found upstream dependency, get command info and exit code
-				var result ChainResult
-				result.Fd = dep.Source
-
-				// Get command information
-				e.commandsMutex.RLock()
-				if runningCmd, exists := e.runningCommands[dep.Source]; exists {
-					result.ExitCode = 0
-					result.Command = runningCmd.commandName
-					result.Message = fmt.Sprintf("Command '%s' on fd %d (exit code not tracked)", runningCmd.commandName, dep.Source)
-				} else {
-					result.ExitCode = 0
-					result.Command = "unknown"
-					result.Message = fmt.Sprintf("No command information for fd %d", dep.Source)
-				}
-				e.commandsMutex.RUnlock()
-
-				*results = append(*results, result)
-
-				// Continue traversing upstream
-				e.traverseChainRecursive(dep.Source, visited, results)
-			}
-		}
-	}
+	// Dependency tracking removed: no further traversal
 }
 
 // allocateFd allocates a new file descriptor number
@@ -569,12 +524,7 @@ func (e *Engine) Close() error {
 		}
 	}
 
-	// Close output file (this might overlap with fd 1, but Close() is idempotent)
-	if e.outputFile != nil {
-		if err := e.outputFile.Close(); err != nil {
-			errors = append(errors, err)
-		}
-	}
+	// No dedicated output file to close; stdout/stderr are managed by the parent process
 
 	if len(errors) > 0 {
 		return fmt.Errorf("errors closing files: %v", errors)
@@ -845,9 +795,19 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	}
 
 	// Allocate pipes for child process
-	prIn, pwIn := io.Pipe()   // parent writes -> child stdin
-	prOut, pwOut := io.Pipe() // child stdout -> parent reads
-	prErr, pwErr := io.Pipe() // child stderr -> parent reads
+	prIn, pwIn := io.Pipe() // parent writes -> child stdin
+	// Use OS pipes for stdout/stderr to get kernel buffering and avoid zero-buffer deadlocks
+	prOut, pwOut, err := os.Pipe() // child stdout -> parent reads
+	if err != nil {
+		e.stats.ErrorCount++
+		return "", fmt.Errorf("spawn: failed to create stdout pipe: %w", err)
+	}
+	prErr, pwErr, err := os.Pipe() // child stderr -> parent reads
+	if err != nil {
+		e.stats.ErrorCount++
+		pwOut.Close(); prOut.Close()
+		return "", fmt.Errorf("spawn: failed to create stderr pipe: %w", err)
+	}
 
 	stdinFd := e.allocateFd()
 	stdoutFd := e.allocateFd()
@@ -873,6 +833,15 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 			resolvedPath = cand
 		}
 	}
+	// 1b. current working directory (useful in dev/test runs)
+	if resolvedPath == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			cand := filepath.Join(cwd, exeName)
+			if fi, err2 := os.Stat(cand); err2 == nil && fi.Mode()&0111 != 0 {
+				resolvedPath = cand
+			}
+		}
+	}
 	// 2. fallback to PATH
 	if resolvedPath == "" {
 		if lp, err := exec.LookPath(exeName); err == nil {
@@ -894,14 +863,9 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	// Prepare command arguments (B1: single process via -c)
 	argsList := []string{"-c", script}
 
-	// VFS FD reuse (D): if engine has a notion of existing VFS fd passed via env (LLM_VFS_FD)
-	// We read os.Getenv; parent (llmcmd) should have set when initial shell launched.
-	vfsFdEnv := os.Getenv("LLM_VFS_FD")
-	if vfsFdEnv != "" {
-		if _, err := strconv.Atoi(vfsFdEnv); err == nil {
-			// pass through using --vfs-fd flag; child side enforces mutual exclusion.
-			argsList = append([]string{"--vfs-fd", vfsFdEnv}, argsList...)
-		}
+	// VFS FD reuse (D): if parent provided attach FD(s), propagate via --vfs-fds to child llmsh
+	if e.vfsMuxFDs != "" {
+		argsList = append([]string{"--vfs-fds", e.vfsMuxFDs}, argsList...)
 	}
 
 	cmd := exec.Command(resolvedPath, argsList...)
@@ -909,22 +873,26 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	cmd.Stdout = pwOut
 	cmd.Stderr = pwErr
 
-	// Environment: propagate existing plus LLM_VFS_FD if present
+	// Environment: propagate existing only
 	cmd.Env = os.Environ()
 
 	// Launch process
 	if err := cmd.Start(); err != nil {
 		e.stats.ErrorCount++
 		pwIn.Close()
-		pwOut.Close()
-		pwErr.Close()
+		pwOut.Close(); prOut.Close()
+		pwErr.Close(); prErr.Close()
 		prIn.Close()
-		prOut.Close()
-		prErr.Close()
 		return "", fmt.Errorf("spawn: process_spawn_error: failed to start llmsh: %w", err)
 	}
 
+	// Parent does not need the write ends for stdout/stderr; close them immediately so EOF depends only on the child lifecycle
+	_ = pwOut.Close()
+	_ = pwErr.Close()
+
 	pid := cmd.Process.Pid
+
+	// Do not force-close child's stdin; --no-stdin is advisory for LLM planning only.
 
 	// Track command minimal info for traversal (associate all three fds)
 	running := &RunningCommand{commandName: fmt.Sprintf("%s -c", exeName)}
@@ -937,18 +905,17 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	// Goroutine to wait and close writers when process exits
 	go func() {
 		err := cmd.Wait()
-		// Close write ends so readers see EOF
-		pwOut.Close()
-		pwErr.Close()
+		// Write ends were already closed in parent; child close will drive EOF on read ends.
 		// stdin reader close (child side) triggers here after process exit; ensure parent writer closed when done externally via close tool.
 		if err != nil {
 			// Write error to stderr pipe if still open
 			var exitErr *exec.ExitError
 			if errors.As(err, &exitErr) {
 				// Provide exit code message
-				fmt.Fprintf(pwErr, "process exited with code %d\n", exitErr.ExitCode())
+				// Best-effort write; ignore if already closed
+				// (skipped) pwErr is closed in parent; child already exited
 			} else {
-				fmt.Fprintf(pwErr, "process wait error: %v\n", err)
+				// (skipped)
 			}
 		}
 	}()

@@ -19,6 +19,7 @@ import (
 
 // Adapter to satisfy builtin.VFS using a tools.VirtualFileSystem
 type builtinVFSAdapter struct{ vfs tools.VirtualFileSystem }
+
 func (b builtinVFSAdapter) OpenFileSession(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
 	return b.vfs.OpenFile(name, flag, perm)
 }
@@ -163,9 +164,10 @@ func (a *App) initializeToolEngine() error {
 	// Build allow-lists for vfsd server from -i/-o
 	allowRead := append([]string{}, a.config.InputFiles...)
 	allowWrite := append([]string{}, a.config.OutputFiles...)
-	// Spawn vfsd and create client-backed VFS for tools engine
+	// Create VFS: attach to existing mux FD if provided via --vfs-fds; otherwise spawn vfsd
 	vfsdPath := os.Getenv("LLMSH_VFSD_BIN")
-	virtualFS, errVFSD := newVFSDClient(vfsdPath, allowRead, allowWrite)
+	// Attach directly using CLI-provided FD spec (single fd or rfd,wfd). No env propagation.
+	virtualFS, errVFSD := newVFSDClient(vfsdPath, allowRead, allowWrite, a.config.VFSMuxFDs)
 	if errVFSD != nil {
 		return fmt.Errorf("failed to start vfsd client: %w", errVFSD)
 	}
@@ -184,6 +186,7 @@ func (a *App) initializeToolEngine() error {
 		NoStdin:       a.config.NoStdin,
 		ShellExecutor: shellExecutor,
 		VirtualFS:     virtualFS,
+		VFSMuxFDs:     a.config.VFSMuxFDs,
 	}
 
 	var err error
@@ -228,6 +231,14 @@ func (a *App) executeTask() error {
 		quotaStatus,
 		false, // Initial call is never the last call
 	)
+
+	// Advisory: If --no-stdin, append a short instruction for the LLM to avoid stdin usage.
+	if a.config.NoStdin {
+		messages = append(messages, openai.ChatMessage{
+			Role:    "user",
+			Content: "Advisory: Please avoid using standard input (stdin). If you need data, use the provided input files or explain the required inputs.",
+		})
+	}
 
 	if a.config.Verbose {
 		log.Printf("Starting LLM interaction with %d initial messages", len(messages))

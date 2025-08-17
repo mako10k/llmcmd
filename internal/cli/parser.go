@@ -30,6 +30,7 @@ type Config struct {
 	ConfigFile  string   // -c: Configuration file path
 	NoStdin     bool     // --no-stdin: Skip reading from stdin
 	Virtual     bool     // --virtual: Restrict real file access to injected (-i/-o) only
+	VFSMuxFDs   string   // --vfs-fds: FD(s) for mux attach (single FD or "rfd,wfd")
 
 	// Positional arguments
 	Instructions string // Remaining arguments as instructions
@@ -76,6 +77,7 @@ func ParseArgs(args []string) (*Config, error) {
 	fs.BoolVar(&config.NoStdin, "no-stdin", false, "Skip reading from stdin")
 
 	fs.BoolVar(&config.Virtual, "virtual", false, "Virtual mode: only -i/-o injected files are real; other opens are virtual")
+	fs.StringVar(&config.VFSMuxFDs, "vfs-fds", "", "FD(s) for mux attach (single FD or 'rfd,wfd')")
 
 	// Handle help and version flags
 	var showHelp, showVersion, installSystem bool
@@ -110,10 +112,7 @@ func ParseArgs(args []string) (*Config, error) {
 	config.InputFiles = []string(inputFiles)
 	config.OutputFiles = []string(outputFiles)
 
-	// If no input files specified, default to stdin
-	if len(config.InputFiles) == 0 {
-		config.InputFiles = []string{"-"}
-	}
+	// Do not auto-default input files; keep exactly as user specified
 
 	// Remaining arguments become instructions
 	remaining := fs.Args()
@@ -215,6 +214,7 @@ OPTIONS:
     -v, --verbose           Enable verbose logging
     -s, --stats             Show detailed statistics after execution
     -n, --no-stdin          Skip reading from stdin
+	--vfs-fds <fds>         Attach to existing VFS mux via FD(s) (single FD or 'rfd,wfd')
     -h, --help              Show this help message
     -V, --version           Show version information
 

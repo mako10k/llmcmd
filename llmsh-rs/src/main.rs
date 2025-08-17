@@ -123,33 +123,10 @@ fn spawn_pipeline(units:&[ExecUnit], allow_read:&[String], allow_write:&[String]
                         }; 
                         std::process::exit(code); 
                     }
-                    ExecUnit::External { argv, redir } => {
-                        // Apply simple allowlist-based redirections (local FS) BEFORE exec.
-                        // Security: only permit paths explicitly listed in allow_read/allow_write.
-                        // NOTE: Future enhancement could route through VFS daemon for stricter control.
-                        let check_allowed = |p: &str, allow: &[String]| -> bool { allow.iter().any(|a| a == p) };
-                        if let Some(in_path) = &redir.in_file {
-                            if !check_allowed(in_path, allow_read) {
-                                eprintln!("redir input not allowed: {in_path}");
-                                std::process::exit(13);
-                            }
-                            match std::fs::File::open(in_path) { Ok(f)=> { let fd = f.into_raw_fd(); dup2(fd, 0)?; }, Err(e)=> { eprintln!("failed to open input {in_path}: {e}"); std::process::exit(14); } }
-                        }
-                        if let Some((out_path, append)) = &redir.out_file {
-                            if !check_allowed(out_path, allow_write) {
-                                eprintln!("redir output not allowed: {out_path}");
-                                std::process::exit(15);
-                            }
-                            let mut opts = std::fs::OpenOptions::new();
-                            opts.create(true).write(true);
-                            if *append { opts.append(true); } else { opts.truncate(true); }
-                            match opts.open(out_path) { Ok(f)=> { let fd = f.into_raw_fd(); dup2(fd, 1)?; }, Err(e)=> { eprintln!("failed to open output {out_path}: {e}"); std::process::exit(16); } }
-                        }
-                        let cstrs: Vec<CString> = argv.iter().map(|s| CString::new(s.as_str()).unwrap()).collect();
-                        if cstrs.is_empty() { std::process::exit(127); }
-                        let argv_refs: Vec<&CString> = cstrs.iter().collect();
-                        let prog = argv_refs[0];
-                        execvp(prog, &argv_refs)?; unreachable!();
+                    ExecUnit::External { argv, .. } => {
+                        // Security policy: external command execution is disabled
+                        eprintln!("error: external commands are disabled: {}", argv.join(" "));
+                        std::process::exit(12);
                     }
                 }
             }

@@ -18,7 +18,7 @@ func TestParseArgs(t *testing.T) {
 			args: []string{"-p", "test prompt"},
 			want: &Config{
 				Prompt:       "test prompt",
-				InputFiles:   []string{"-"}, // Default to stdin when no input files specified
+				InputFiles:   []string{}, // No implicit stdin; user must opt-in via -i "-"
 				Instructions: "",
 			},
 		},

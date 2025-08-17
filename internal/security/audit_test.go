@@ -51,21 +51,21 @@ func TestAuditEvent_CriticalFactors(t *testing.T) {
 			Success:   true,
 		}
 
-			if err := logger.LogEvent(event); err != nil {
-				t.Fatalf("Failed to log event: %v", err)
-			}
+		if err := logger.LogEvent(event); err != nil {
+			t.Fatalf("Failed to log event: %v", err)
+		}
 
 		// Verify log file was created and contains expected data
 		if _, err := os.Stat(logPath); os.IsNotExist(err) {
 			t.Fatal("Audit log file was not created")
 		}
 
-	lines := readLogLines(t, logPath)
-	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "test_user") {
+		lines := readLogLines(t, logPath)
+		joined := strings.Join(lines, "\n")
+		if !strings.Contains(joined, "test_user") {
 			t.Error("Log does not contain expected user ID")
 		}
-	if !strings.Contains(joined, EventTypeAPIKeyUsage) {
+		if !strings.Contains(joined, EventTypeAPIKeyUsage) {
 			t.Error("Log does not contain expected event type")
 		}
 	})
@@ -113,7 +113,7 @@ func TestAuditEvent_CriticalFactors(t *testing.T) {
 		}
 
 		// Read and parse the log entry as JSON
-	lines := readLogLines(t, logPath)
+		lines := readLogLines(t, logPath)
 		if len(lines) == 0 {
 			t.Fatal("No log entries found")
 		}
@@ -144,7 +144,7 @@ func TestAuditEvent_CriticalFactors(t *testing.T) {
 
 	// Factor 4: Performance and Security - File permissions and concurrent access
 	t.Run("Factor4_PerformanceAndSecurity", func(t *testing.T) {
-	logger, logPath := newTempLogger(t)
+		logger, logPath := newTempLogger(t)
 		defer logger.Close()
 
 		// Check file permissions (should be 0600 - owner read/write only)
@@ -192,7 +192,7 @@ func TestAuditEvent_CriticalFactors(t *testing.T) {
 		<-done
 
 		// Verify that all events were logged (20 total)
-	lines := readLogLines(t, logPath)
+		lines := readLogLines(t, logPath)
 		if len(lines) != 20 {
 			t.Errorf("Expected 20 log entries, got %d", len(lines))
 		}

@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"syscall"
-	
+
 	// shared helpers
 	"github.com/mako10k/llmcmd/internal/utils"
 )

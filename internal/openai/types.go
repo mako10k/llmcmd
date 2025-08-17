@@ -259,7 +259,7 @@ func ToolDefinitions() []Tool {
 			Type: "function",
 			Function: ToolFunction{
 				Name:        "spawn",
-				Description: "Execute shell scripts using the full shell execution environment. Supports complete shell syntax including pipes, redirects, and complex commands. Pattern 1: spawn({script}) returns new file descriptors. Pattern 2: spawn({script,in_fd}) reads from existing fd. Pattern 3: spawn({script,out_fd}) writes to existing fd. Pattern 4: spawn({script,in_fd,out_fd}) for pipeline middle.",
+				Description: "Execute shell scripts using the full shell execution environment. Supports complete shell syntax including pipes, redirects, and complex commands. Pattern 1: spawn({script}) returns new fds (stdin_fd, stdout_fd, stderr_fd). Pattern 2: spawn({script, stdin_fd}) reads from an existing fd. Pattern 3: spawn({script, stdout_fd}) writes to an existing fd (use 1 to stream to STDOUT). Pattern 4: spawn({script, stdin_fd, stdout_fd}) for pipeline middle.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -364,7 +364,7 @@ func ToolDefinitions() []Tool {
 
 // ExitToolDefinition returns only the exit tool definition for final API calls
 func ExitToolDefinition() []Tool {
-	return []Tool{ exitTool() }
+	return []Tool{exitTool()}
 }
 
 // exitTool returns the shared exit tool definition to avoid duplication

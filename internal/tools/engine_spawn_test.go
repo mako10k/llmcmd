@@ -2,11 +2,36 @@ package tools
 
 import (
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
 // TestExecuteSpawnEcho verifies the internal spawn stub echoes script text.
 func TestExecuteSpawnEcho(t *testing.T) {
+	// Ensure llmsh is discoverable: add repo root to PATH if it contains ./llmsh
+	// Find repo root by walking up to go.mod
+	cwd, _ := os.Getwd()
+	root := cwd
+	for {
+		if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+			break
+		}
+		parent := filepath.Dir(root)
+		if parent == root { // reached filesystem root
+			break
+		}
+		root = parent
+	}
+	llmshPath := filepath.Join(root, "llmsh")
+	if fi, err := os.Stat(llmshPath); err == nil && fi.Mode()&0111 != 0 {
+		_ = os.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	if _, err := exec.LookPath("llmsh"); err != nil {
+		t.Skip("llmsh not found on PATH; skipping spawn test")
+	}
+
 	eng, err := NewEngine(EngineConfig{MaxFileSize: 1024 * 1024, BufferSize: 4096})
 	if err != nil {
 		t.Fatalf("new engine: %v", err)
@@ -45,8 +70,8 @@ func TestExecuteSpawnEcho(t *testing.T) {
 		t.Fatalf("read failed: %v", err)
 	}
 
-	if want := "echo test stub"; !containsLine(readRes, want) {
-		t.Fatalf("expected echoed script line %q, got: %q", want, readRes)
+	if want := "test stub"; !containsLine(readRes, want) {
+		t.Fatalf("expected command output %q, got: %q", want, readRes)
 	}
 }
 

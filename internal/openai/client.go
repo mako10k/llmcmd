@@ -558,6 +558,10 @@ OUTPUT RULES:
   - If -o option was used: open("output_file", "w") → get new_fd → write(new_fd, result)
   - If no -o option: write(1, result) (standard output)
   - fd=1 is ALWAYS standard output, regardless of -o option
+	- For short/structured answers (facts, definitions, small summaries): prefer direct write(1, result) without spawn/read pipelines.
+	- Use spawn only when you need to run multi-step text processing with built-in commands over input streams.
+	- Optimization: If your plan is spawn → read(stdout_fd) → write(1), instead call spawn with stdout_fd=1 and skip the read/write hop.
+		Example: spawn("grep ERROR | head -10", {"stdin_fd": input_fd, "stdout_fd": 1}) → exit(0)
 COMMANDS: Built-in only (cat,grep,sed,head,tail,sort,wc,tr,cut,uniq) - no external tools
 PIPES: spawn("cmd1 | cmd2") for multi-stage processing
 FILES: Virtual filesystem - files consumed after read (PIPE behavior)
@@ -578,6 +582,11 @@ C) Virtual File Operations:
    open("temp.txt", "w") → get fd → write(fd, data) → read from files → exit(0)
 
 `
+	}
+
+	// Minimal locale guidance: show only relevant environment variables and instruct to follow them
+	if localeBlock := buildLocaleEnvBlock(); localeBlock != "" {
+		systemContent += "\n\nLOCALE SETTINGS (read-only):\n" + localeBlock + "\nInstruction: Align your response language and formatting (dates, numbers) to these settings. Do not print the values unless explicitly asked."
 	}
 
 	// Add special instructions for last API call
@@ -858,9 +867,9 @@ C) Virtual File Operations:
 			fdMappingContent += fmt.Sprintf("\n- fd=%d: %s (input file #%d) %s",
 				i+3, file, i+1, infoDisplay)
 		}
-	fdMappingContent += buildInputSourcesSection(stdinInfo["type"], true)
+		fdMappingContent += buildInputSourcesSection(stdinInfo["type"], true)
 	} else {
-	fdMappingContent += buildInputSourcesSection(stdinInfo["type"], false)
+		fdMappingContent += buildInputSourcesSection(stdinInfo["type"], false)
 	}
 
 	messages = append(messages, ChatMessage{
@@ -886,13 +895,13 @@ C) Virtual File Operations:
 			userContent = fmt.Sprintf("Process the input files according to this request:\n\n%s%s", instructions, fileRefs)
 		}
 	} else {
-		// 標準入力の場合
+		// 入力ファイル未指定の場合は中立的に（stdinを前提にしない）
 		if prompt != "" && instructions != "" {
-			userContent = fmt.Sprintf("Process the input data from stdin according to this request:\n\nPrompt: %s\n\nInstructions: %s", prompt, instructions)
+			userContent = fmt.Sprintf("Process this request:\n\nPrompt: %s\n\nInstructions: %s", prompt, instructions)
 		} else if prompt != "" {
-			userContent = fmt.Sprintf("Process the input data from stdin according to this request:\n\n%s", prompt)
+			userContent = prompt
 		} else {
-			userContent = fmt.Sprintf("Process the input data from stdin according to this request:\n\n%s", instructions)
+			userContent = instructions
 		}
 	}
 
@@ -907,6 +916,32 @@ C) Virtual File Operations:
 	})
 
 	return messages
+}
+
+// buildLocaleEnvBlock returns a compact list of locale-related env vars that are set.
+func buildLocaleEnvBlock() string {
+	keys := []string{
+		"LC_ALL", "LANG", "LANGUAGE", "LC_MESSAGES", "LC_TIME", "LC_NUMERIC", "LC_MONETARY", "LC_COLLATE", "LC_CTYPE",
+	}
+	var b strings.Builder
+	wrote := false
+	for _, k := range keys {
+		if v := os.Getenv(k); v != "" {
+			if !wrote {
+				wrote = true
+			}
+			// bullet list to keep it readable and minimal
+			b.WriteString("- ")
+			b.WriteString(k)
+			b.WriteString("=")
+			b.WriteString(v)
+			b.WriteString("\n")
+		}
+	}
+	if !wrote {
+		return ""
+	}
+	return b.String()
 }
 
 // CreateToolResponseMessage creates a message from tool execution results

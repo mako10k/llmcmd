@@ -72,7 +72,7 @@ open(path, [mode]) - Open virtual file
   mode: "r", "w", "a", "r+", "w+", "a+"
   return: New file descriptor
 
-spawn(script, [in_fd], [out_fd]) - Execute shell script
+spawn(script, [stdin_fd], [stdout_fd]) - Execute shell script
   script: Shell script to execute
   in_fd: Input fd (optional)
   out_fd: Output fd (optional)
@@ -148,7 +148,9 @@ process_combined(all_data)`
 
 	u.Subsections["error_handling"] = `GRACEFUL CONTINUATION:
 try:
-  result = spawn("command")
+	result = spawn("command")
+	# Optimization: To avoid extra read/write, direct output to stdout
+	spawn("grep ERROR | head -10", input_fd, 1)
   if result == "":
     write(2, "Warning: no output from command\n")
     continue
@@ -226,6 +228,7 @@ Solution: Use only built-in commands`
 	u.Subsections["debug_techniques"] = `OUTPUT VERIFICATION:
 1. write(2, "Debug: starting process\n")
 2. result = spawn("command")
+3. Optimization: spawn("pipeline", input_fd, 1)  # stream directly to stdout
 3. write(2, "Result length: " + len(result) + "\n")
 
 STEP-BY-STEP DEBUGGING:
