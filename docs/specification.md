@@ -178,7 +178,7 @@ Execute built-in command or create data transfer pipe.
 **Built-in Commands**:
 - `cat` - Copy input to output (default when cmd is not specified)
 - `grep <pattern>` - Filter lines matching pattern (basic regex support)
-- `sed s/<pattern>/<replacement>/[g]` - Text substitution (basic sed functionality)
+- `sed [-n] [-e script]... [script]` - Stream editor (subset): supports `s<delim>pat<delim>repl<delim>[gip]` with addresses (`N`, `$`, `/re/`), ranges (`addr1,addr2`), negation (`!`), multi-commands via `-e` or `;`, backreferences (`&`, `\1..\9`), custom delimiters and escaping. 
 - `head [-n <num>]` - Output first N lines (default: 10)
 - `tail [-n <num>]` - Output last N lines (default: 10)
 - `sort` - Sort lines alphabetically

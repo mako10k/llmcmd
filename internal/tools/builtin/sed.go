@@ -14,23 +14,42 @@ func Sed(args []string, stdin io.Reader, stdout io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("sed: missing expression")
 	}
-	if handled, _, err := HandleHelp(args, stdout, `sed - Stream editor for basic text substitution (subset)
+		if handled, _, err := HandleHelp(args, stdout, `sed - Stream editor (subset)
 
-Usage: sed [-n] s<delim>pattern<delim>replacement<delim>[flags] [file...]
+Usage:
+	sed [-n] [-e script]... [script] [file...]
 
-Flags:
-	g                 Replace all occurrences (global)
-	i                 Case insensitive matching
-	p                 Print the line if a substitution occurred (with -n prints only those lines)
+Script syntax supported:
+	[addr1][,[addr2]] [!] s<delim>pattern<delim>replacement<delim>[flags]
+
+Addresses:
+	N      line number (1-based)
+	$      last line
+	/re/   regex address
+	Ranges supported: addr1,addr2
+	Negation: add '!' after address or range
+
+Flags for s///:
+	g      replace all occurrences (global)
+	i      case-insensitive matching
+	p      print if a substitution occurred (with -n prints only those lines)
 
 Options:
-	--help, -h        Show this help message
-	-n                Suppress automatic printing (use with s///p)
+	-n     suppress automatic printing
+	-e     add an additional script (can repeat)
+	--help, -h  show this help
+
+Notes:
+	- Delimiter is arbitrary (/, #, |, ...). Use backslash to escape the delimiter.
+	- Replacement supports &, \\1..\\9, and \\n.
 
 Examples:
-	sed s/old/new/g                Replace all "old" with "new"
-	sed s#error/error_fixed#i      Case-insensitive with custom delimiter
-	sed -n 's/foo/bar/p'           Print only lines where substitution occurred
+	sed 's/old/new/g'                Replace all "old" with "new"
+	sed '2,5s/x/X/'                  Replace only on lines 2..5
+	sed '/err/!s/foo/bar/'           Replace on lines not matching /err/
+	sed -e 's/a/A/' -e 's/b/B/'      Multiple commands via -e
+	sed 's#/#:#g'                    Custom delimiter and escaping
+	sed -n 's/foo/bar/p'             Print only lines where substitution occurred
 `); handled {
 		return err
 	}
