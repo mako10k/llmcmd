@@ -11,7 +11,7 @@
 - [ ] **sort** - internal/tools/builtin/commands.go:Sort
 - [ ] **wc** - internal/tools/builtin/commands.go:Wc
 - [ ] **tr** - internal/tools/builtin/commands.go:Tr
-- [ ] **sed** - internal/tools/builtin/commands.go:Sed
+ - [x] **sed** - internal/tools/builtin/sed.go ✅ 基本置換(s///) 実装済み（g/i フラグ対応・first-only デフォルト）
 
 #### extended コマンド
 - [ ] **cut** - internal/tools/builtin/extended.go:Cut

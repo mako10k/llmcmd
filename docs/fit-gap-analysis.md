@@ -205,7 +205,7 @@ type EnhancedVFS struct {
 **Current Implementation**: 40+ commands in `internal/tools/builtin/`
 ```go
 // Comprehensive command set already available
-cat, grep, sed, head, tail, sort, wc, tr, cut, uniq, 
+cat, grep, sed (subset: s/// with g/i flags), head, tail, sort, wc, tr, cut, uniq, 
 diff, patch, join, split, expand, unexpand, nl, fmt, 
 fold, rev, tac, shuf, comm, od, hexdump, base64, 
 md5sum, sha256sum, yes, seq, factor, expr, test, 
