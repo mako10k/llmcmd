@@ -1,8 +1,6 @@
 package openai
 
-import (
-	"time"
-)
+import "time"
 
 // ChatCompletionRequest represents an OpenAI ChatCompletion API request
 type ChatCompletionRequest struct {
@@ -234,9 +232,8 @@ func ToolDefinitions() []Tool {
 					"properties": map[string]interface{}{
 						"fd": map[string]interface{}{
 							"type":        "integer",
-							"description": "File descriptor number (1=stdout, 2=stderr)",
+							"description": "File descriptor number (1=stdout, 2=stderr, or a write-only fd returned by spawn for child stdin)",
 							"minimum":     1,
-							"maximum":     2,
 						},
 						"data": map[string]interface{}{
 							"type":        "string",
@@ -259,7 +256,7 @@ func ToolDefinitions() []Tool {
 			Type: "function",
 			Function: ToolFunction{
 				Name:        "spawn",
-				Description: "Execute shell scripts using the full shell execution environment. Supports complete shell syntax including pipes, redirects, and complex commands. Pattern 1: spawn({script}) returns new fds (stdin_fd, stdout_fd, stderr_fd). Pattern 2: spawn({script, stdin_fd}) reads from an existing fd. Pattern 3: spawn({script, stdout_fd}) writes to an existing fd (use 1 to stream to STDOUT). Pattern 4: spawn({script, stdin_fd, stdout_fd}) for pipeline middle.",
+				Description: "Execute shell scripts using the full shell execution environment. Supports complete shell syntax including pipes, redirects, and complex commands. Patterns: (1) spawn({script}) returns new fds (stdin_fd, stdout_fd, stderr_fd). (2) spawn({script, stdin_fd}) reads from an existing fd. (3) spawn({script, stdout_fd}) writes to an existing fd (use 1 to stream to STDOUT). (4) spawn({script, stdin_fd, stdout_fd}) for pipeline middle.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -267,14 +264,14 @@ func ToolDefinitions() []Tool {
 							"type":        "string",
 							"description": "Shell script/command to execute. Supports full shell syntax: pipes (|), redirects (>, >>), command substitution, etc. Examples: 'grep ERROR | sort', 'ls -la *.log | wc -l', 'cat file1 file2 | sort > output'",
 						},
-						"in_fd": map[string]interface{}{
+						"stdin_fd": map[string]interface{}{
 							"type":        "integer",
-							"description": "Input file descriptor for script (optional). When provided with out_fd, runs synchronously.",
+							"description": "Existing input fd to connect to child stdin (optional)",
 							"minimum":     0,
 						},
-						"out_fd": map[string]interface{}{
+						"stdout_fd": map[string]interface{}{
 							"type":        "integer",
-							"description": "Output file descriptor for script (optional). When provided with in_fd, runs synchronously.",
+							"description": "Existing output fd to connect child stdout (optional). Use 1 to stream directly to STDOUT.",
 							"minimum":     1,
 						},
 					},

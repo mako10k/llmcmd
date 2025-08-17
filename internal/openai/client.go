@@ -763,7 +763,7 @@ C) Virtual File Operations:
 				b.WriteString("\n✗ stdin (fd=0) - ignore, no input data here")
 			}
 			b.WriteString("\nWORKFLOW: read(fd=3+) → spawn(commands) → write(fd=1) → exit(0)")
-			b.WriteString("\n\nFILE REFERENCES: Use $1 for first file, $2 for second file, etc.")
+			b.WriteString("\n\nFILE REFERENCES: Input files are mapped to fds starting at 3 (first=fd3, second=fd4, ...). Use read(3), read(4), etc.")
 		} else {
 			if stdinType == "file" {
 				b.WriteString("\n✓ stdin (fd=0) - redirected from file, contains input data to process")

@@ -61,7 +61,7 @@ echo
 
 echo "=== spawn tool pattern equivalent ==="
 echo "For LLM usage, this would be:"
-echo "1. spawn({cmd:'patch', args:['-p0', 'target_file']}) → {in_fd: N, out_fd: M}"
+echo "1. spawn({cmd:'patch', args:['-p0', 'target_file']}) → {stdin_fd: N, stdout_fd: M}"
 echo "2. write(N, patch_content, {eof: true})"
 echo "3. read(M) → get patch application results"
 echo

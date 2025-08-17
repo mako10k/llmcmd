@@ -794,30 +794,124 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("spawn: deprecated / forbidden parameter 'out_fd'")
 	}
 
-	// Allocate pipes for child process
-	prIn, pwIn := io.Pipe() // parent writes -> child stdin
-	// Use OS pipes for stdout/stderr to get kernel buffering and avoid zero-buffer deadlocks
-	prOut, pwOut, err := os.Pipe() // child stdout -> parent reads
-	if err != nil {
-		e.stats.ErrorCount++
-		return "", fmt.Errorf("spawn: failed to create stdout pipe: %w", err)
-	}
-	prErr, pwErr, err := os.Pipe() // child stderr -> parent reads
-	if err != nil {
-		e.stats.ErrorCount++
-		pwOut.Close(); prOut.Close()
-		return "", fmt.Errorf("spawn: failed to create stderr pipe: %w", err)
+	// Determine IO wiring based on optional stdin_fd/stdout_fd
+	var (
+		// Child side endpoints
+		childStdin  io.Reader
+		childStdout io.Writer
+		childStderr io.Writer
+
+		// Pipes we create (if any)
+		prIn  *io.PipeReader
+		pwIn  *io.PipeWriter
+		prOut *os.File
+		pwOut *os.File
+		prErr *os.File
+		pwErr *os.File
+
+		// Exposed FDs only when we create them
+		stdinFdCreated  = -1
+		stdoutFdCreated = -1
+		stderrFdCreated = -1
+	)
+
+	// stdout_fd handling (may be provided to stream to existing fd, e.g., 1)
+	if v, ok := args["stdout_fd"]; ok {
+		if f, ok2 := v.(float64); ok2 {
+			target := int(f)
+			switch target {
+			case 1:
+				childStdout = os.Stdout
+			case 2:
+				childStdout = os.Stderr
+			default:
+				if target >= 0 && target < len(e.fileDescriptors) {
+					if w, ok := e.fileDescriptors[target].(io.Writer); ok {
+						childStdout = w
+					} else {
+						e.stats.ErrorCount++
+						return "", fmt.Errorf("spawn: stdout_fd %d is not writable", target)
+					}
+				} else {
+					e.stats.ErrorCount++
+					return "", fmt.Errorf("spawn: invalid stdout_fd %d", target)
+				}
+			}
+		} else {
+			e.stats.ErrorCount++
+			return "", fmt.Errorf("spawn: stdout_fd must be a number")
+		}
 	}
 
-	stdinFd := e.allocateFd()
-	stdoutFd := e.allocateFd()
-	stderrFd := e.allocateFd()
-	for len(e.fileDescriptors) <= stderrFd {
+	// stdin_fd handling (may be provided to feed existing fd to child stdin)
+	if v, ok := args["stdin_fd"]; ok {
+		if f, ok2 := v.(float64); ok2 {
+			src := int(f)
+			if src >= 0 && src < len(e.fileDescriptors) {
+				if r, ok := e.fileDescriptors[src].(io.Reader); ok {
+					childStdin = r
+				} else {
+					e.stats.ErrorCount++
+					return "", fmt.Errorf("spawn: stdin_fd %d is not readable", src)
+				}
+			} else {
+				e.stats.ErrorCount++
+				return "", fmt.Errorf("spawn: invalid stdin_fd %d", src)
+			}
+		} else {
+			e.stats.ErrorCount++
+			return "", fmt.Errorf("spawn: stdin_fd must be a number")
+		}
+	}
+
+	// If childStdin not provided, create a pipe and expose writable end to caller
+	if childStdin == nil {
+		prIn, pwIn = io.Pipe()
+		childStdin = prIn
+		stdinFdCreated = e.allocateFd()
+	}
+
+	// If childStdout not provided, create a pipe and expose readable end to caller
+	if childStdout == nil {
+		var err error
+		prOut, pwOut, err = os.Pipe()
+		if err != nil {
+			e.stats.ErrorCount++
+			if prIn != nil { _ = prIn.Close() }
+			if pwIn != nil { _ = pwIn.Close() }
+			return "", fmt.Errorf("spawn: failed to create stdout pipe: %w", err)
+		}
+		childStdout = pwOut
+		stdoutFdCreated = e.allocateFd()
+	}
+
+	// Always capture stderr to a pipe for debugging context
+	{
+		var err error
+		prErr, pwErr, err = os.Pipe()
+		if err != nil {
+			e.stats.ErrorCount++
+			if prIn != nil { _ = prIn.Close() }
+			if pwIn != nil { _ = pwIn.Close() }
+			if prOut != nil { _ = prOut.Close() }
+			if pwOut != nil { _ = pwOut.Close() }
+			return "", fmt.Errorf("spawn: failed to create stderr pipe: %w", err)
+		}
+		childStderr = pwErr
+		stderrFdCreated = e.allocateFd()
+	}
+
+	// Ensure fileDescriptors slice is large enough for any created fds
+	maxCreated := -1
+	for _, fd := range []int{stdinFdCreated, stdoutFdCreated, stderrFdCreated} {
+		if fd > maxCreated { maxCreated = fd }
+	}
+	for len(e.fileDescriptors) <= maxCreated {
 		e.fileDescriptors = append(e.fileDescriptors, nil)
 	}
-	e.fileDescriptors[stdinFd] = pwIn
-	e.fileDescriptors[stdoutFd] = prOut
-	e.fileDescriptors[stderrFd] = prErr
+	if stdinFdCreated != -1 { e.fileDescriptors[stdinFdCreated] = pwIn }
+	if stdoutFdCreated != -1 { e.fileDescriptors[stdoutFdCreated] = prOut }
+	if stderrFdCreated != -1 { e.fileDescriptors[stderrFdCreated] = prErr }
 
 	// Resolve llmsh executable path (C2 -> C1)
 	exeName := "llmsh"
@@ -869,9 +963,9 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	}
 
 	cmd := exec.Command(resolvedPath, argsList...)
-	cmd.Stdin = prIn
-	cmd.Stdout = pwOut
-	cmd.Stderr = pwErr
+	cmd.Stdin = childStdin
+	cmd.Stdout = childStdout
+	cmd.Stderr = childStderr
 
 	// Environment: propagate existing only
 	cmd.Env = os.Environ()
@@ -879,27 +973,29 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	// Launch process
 	if err := cmd.Start(); err != nil {
 		e.stats.ErrorCount++
-		pwIn.Close()
-		pwOut.Close(); prOut.Close()
-		pwErr.Close(); prErr.Close()
-		prIn.Close()
+		if pwIn != nil { _ = pwIn.Close() }
+		if prIn != nil { _ = prIn.Close() }
+		if pwOut != nil { _ = pwOut.Close() }
+		if prOut != nil { _ = prOut.Close() }
+		if pwErr != nil { _ = pwErr.Close() }
+		if prErr != nil { _ = prErr.Close() }
 		return "", fmt.Errorf("spawn: process_spawn_error: failed to start llmsh: %w", err)
 	}
 
-	// Parent does not need the write ends for stdout/stderr; close them immediately so EOF depends only on the child lifecycle
-	_ = pwOut.Close()
-	_ = pwErr.Close()
+	// If we created stdout/stderr pipes, parent does not need the write ends; close them immediately
+	if pwOut != nil { _ = pwOut.Close() }
+	if pwErr != nil { _ = pwErr.Close() }
 
 	pid := cmd.Process.Pid
 
 	// Do not force-close child's stdin; --no-stdin is advisory for LLM planning only.
 
-	// Track command minimal info for traversal (associate all three fds)
+	// Track command minimal info for traversal (associate created fds)
 	running := &RunningCommand{commandName: fmt.Sprintf("%s -c", exeName)}
 	e.commandsMutex.Lock()
-	e.runningCommands[stdinFd] = running
-	e.runningCommands[stdoutFd] = running
-	e.runningCommands[stderrFd] = running
+	if stdinFdCreated != -1 { e.runningCommands[stdinFdCreated] = running }
+	if stdoutFdCreated != -1 { e.runningCommands[stdoutFdCreated] = running }
+	if stderrFdCreated != -1 { e.runningCommands[stderrFdCreated] = running }
 	e.commandsMutex.Unlock()
 
 	// Goroutine to wait and close writers when process exits
@@ -922,12 +1018,12 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 
 	result := map[string]interface{}{
 		"success":    true,
-		"stdin_fd":   stdinFd,
-		"stdout_fd":  stdoutFd,
-		"stderr_fd":  stderrFd,
 		"pid":        pid,
 		"script_len": len(script),
 	}
+	if stdinFdCreated != -1 { result["stdin_fd"] = stdinFdCreated }
+	if stdoutFdCreated != -1 { result["stdout_fd"] = stdoutFdCreated }
+	if stderrFdCreated != -1 { result["stderr_fd"] = stderrFdCreated }
 	return e.spawnSuccess(result)
 }
 

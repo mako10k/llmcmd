@@ -100,3 +100,4 @@ data/chroma_db/
 
 jscpd-report/
 code-analysis-reports/vfsd/target/
+vfsd.bin

@@ -97,7 +97,7 @@ Open file descriptors:
 Available tools:
 1. read(fd, offset, max_size) - Read data from file descriptor
 2. write(fd, data) - Write data to file descriptor
-3. pipe(cmd, in_fd, out_fd) - Execute built-in command or transfer data
+3. pipe(cmd, stdin_fd, stdout_fd) - Execute built-in command or transfer data
 4. exit(code) - Exit program
 
 For detailed specifications, refer to the tool definitions below.
@@ -172,8 +172,8 @@ Execute built-in command or create data transfer pipe.
 
 **Parameters**:
 - `cmd` (string, optional): Built-in command to execute (if not specified, creates a simple data transfer pipe like cat)
-- `in_fd` (integer, optional): Input file descriptor
-- `out_fd` (integer, optional): Output file descriptor
+- `stdin_fd` (integer, optional): Input file descriptor to connect as stdin
+- `stdout_fd` (integer, optional): Output file descriptor to connect as stdout (use 1 to stream to STDOUT)
 
 **Built-in Commands**:
 - `cat` - Copy input to output (default when cmd is not specified)
@@ -187,7 +187,7 @@ Execute built-in command or create data transfer pipe.
 
 **Return value**:
 
-When both `in_fd` and `out_fd` are specified (data transfer):
+When both `stdin_fd` and `stdout_fd` are specified (data transfer):
 ```json
 {
   "success": true,
@@ -200,17 +200,17 @@ When creating new pipe or executing command:
 ```json
 {
   "success": true,
-  "in_fd": 5,
-  "out_fd": 6,
+  "stdin_fd": 5,
+  "stdout_fd": 6,
   "error": null
 }
 ```
 
 **Description**:
-- When `cmd` is not specified, creates a simple data transfer from `in_fd` to `out_fd` (like cat)
+- When `cmd` is not specified, creates a simple data transfer from `stdin_fd` to `stdout_fd` (like cat)
 - Built-in commands are implemented internally for security
-- When new pipes are created, returned `in_fd` and `out_fd` can be used for subsequent operations
-- When both `in_fd` and `out_fd` are specified, returns the number of bytes transferred
+- When new pipes are created, returned `stdin_fd` and `stdout_fd` can be used for subsequent operations
+- When both `stdin_fd` and `stdout_fd` are specified, returns the number of bytes transferred
 
 **Usage Examples**:
 ```bash
@@ -226,7 +226,7 @@ exit(0)
 llmcmd "Filter and count lines containing 'error'" access.log
 
 # LLM response:
-pipe("grep error", 3, 5) -> {"success": true, "in_fd": 5, "out_fd": 6}
+pipe("grep error", 3, 5) -> {"success": true, "stdin_fd": 5, "stdout_fd": 6}
 pipe("wc -l", 6, 1) -> {"success": true, "size": 25}
 exit(0)
 ```

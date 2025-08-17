@@ -86,7 +86,7 @@ MINIMAL PATTERN:
 STANDARD WORKFLOW:
 1. read(fd) - Get input data
 2. spawn("command") - Execute processing
-3. read(out_fd) - Get processing result
+3. read(stdout_fd) - Get processing result
 4. write(1, processed_data) - Final output
 5. exit(0) - Complete
 ```
@@ -97,7 +97,7 @@ FD MAPPING:
 - fd=0: stdin (standard input)
 - fd=1: stdout (result output)
 - fd=2: stderr (error/debug output)
-- fd=3+: input files ($1, $2, $3...)
+- fd=3+: input files (first=fd3, second=fd4, ...)
 
 USAGE PATTERNS:
 - read(0): Read from standard input
@@ -124,11 +124,11 @@ open(path, [mode]) - Open virtual file
   mode: "r", "w", "a", "r+", "w+", "a+"
   return: New file descriptor
 
-spawn(script, [in_fd], [out_fd]) - Execute shell script
+spawn(script, [stdin_fd], [stdout_fd]) - Execute shell script
   script: Shell script to execute
-  in_fd: Input fd (optional)
-  out_fd: Output fd (optional)
-  return: {in_fd, out_fd} or {out_fd}
+  stdin_fd: Input fd (optional)
+  stdout_fd: Output fd (optional). Use 1 to stream directly to STDOUT.
+  return: {stdin_fd, stdout_fd, stderr_fd} (only fds created by spawn)
 
 close(fd) - Close file descriptor
 exit(code) - Terminate program (0=success, 1=error)

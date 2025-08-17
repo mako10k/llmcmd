@@ -48,7 +48,7 @@ STANDARD WORKFLOW:
 - fd=0: stdin (standard input)
 - fd=1: stdout (result output)
 - fd=2: stderr (error/debug output)
-- fd=3+: input files ($1, $2, $3...)
+- fd=3+: input files (first input is fd=3, second is fd=4, ...)
 
 USAGE PATTERNS:
 - read(0): Read from standard input
@@ -73,10 +73,10 @@ open(path, [mode]) - Open virtual file
   return: New file descriptor
 
 spawn(script, [stdin_fd], [stdout_fd]) - Execute shell script
-  script: Shell script to execute
-  in_fd: Input fd (optional)
-  out_fd: Output fd (optional)
-  return: {in_fd, out_fd} or {out_fd}
+	script: Shell script to execute
+	stdin_fd: Existing input fd to connect to child stdin (optional)
+	stdout_fd: Existing output fd to connect child stdout (optional). Use 1 to stream directly to STDOUT.
+	return: {stdin_fd, stdout_fd, stderr_fd} (only the fds created by spawn will be present; if you supply stdout_fd=1, stdout_fd will be omitted)
 
 close(fd) - Close file descriptor
 exit(code) - Terminate program (0=success, 1=error)`

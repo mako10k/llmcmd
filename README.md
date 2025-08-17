@@ -388,19 +388,19 @@ Writes data to file descriptors or output streams.
 }
 ```
 
-### spawn(script, [in_fd], [out_fd])
+### spawn(script, [stdin_fd], [stdout_fd])
 Executes shell scripts with full shell syntax support.
 
 **Parameters**:
 - `script`: Shell script/command to execute. Supports full shell syntax including pipes, redirects, command substitution
-- `in_fd`: Input file descriptor (optional)
-- `out_fd`: Output file descriptor (optional)
+- `stdin_fd`: Existing input file descriptor to connect to child stdin (optional)
+- `stdout_fd`: Existing output file descriptor to connect child stdout (optional). Use 1 to stream directly to STDOUT.
 
-**Four Execution Patterns**:
-1. `spawn({script})` → `{in_fd, out_fd}` - Background execution with new file descriptors
-2. `spawn({script, in_fd})` → `{out_fd}` - Background with input from existing fd
-3. `spawn({script, out_fd})` → `{in_fd}` - Background with output to existing fd
-4. `spawn({script, in_fd, out_fd})` → `{exit_code}` - Foreground synchronous execution
+**Patterns**:
+1. `spawn({script})` → `{stdin_fd, stdout_fd, stderr_fd}` - Creates new pipes and returns created fds
+2. `spawn({script, stdin_fd})` → `{stdout_fd, stderr_fd}` - Reads from an existing fd
+3. `spawn({script, stdout_fd})` → `{stdin_fd, stderr_fd}` - Writes to an existing fd (use `stdout_fd: 1` to stream to STDOUT)
+4. `spawn({script, stdin_fd, stdout_fd})` → `{stderr_fd}` - Connects both ends to existing fds (typically used for pipeline middles)
 
 **Script Examples**:
 ```json
@@ -420,10 +420,10 @@ spawn({script: "find . -name '*.log' | xargs grep 'warning' | wc -l"})
 **Response examples**:
 ```json
 // Pattern 1: Background with new fds
-{"success": true, "in_fd": 10, "out_fd": 11}
+{"success": true, "stdin_fd": 10, "stdout_fd": 11, "stderr_fd": 12}
 
-// Pattern 4: Foreground execution
-{"success": true, "exit_code": 0}
+// When streaming directly to STDOUT (stdout_fd=1), stdout_fd will be omitted
+{"success": true, "stdin_fd": 10, "stderr_fd": 12}
 ```
 
 ### exit(code)
