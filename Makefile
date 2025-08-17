@@ -149,7 +149,8 @@ test-coverage: ## Run tests with coverage
 install: build ## Install binaries system-wide (requires sudo)
 	@echo "Installing $(BINARY_NAME) system-wide..."
 	sudo ./$(BINARY_NAME) --install
-	@if [ "$(INSTALL_LLMSH)" = "1" ]; then \
+	@val_llmsh='$(INSTALL_LLMSH)'; val_llmsh_trim=$$(printf '%s' "$$val_llmsh" | tr -d '[:space:]'); \
+	if [ "$$val_llmsh_trim" = "1" ]; then \
 		if [ -f ./$(LLMSH_NAME) ]; then \
 			echo "Installing $(LLMSH_NAME) to /usr/local/bin..."; \
 			sudo cp ./$(LLMSH_NAME) /usr/local/bin/$(LLMSH_NAME); \
@@ -159,9 +160,10 @@ install: build ## Install binaries system-wide (requires sudo)
 			exit 1; \
 		fi; \
 	else \
-		echo "Skipping $(LLMSH_NAME) install: INSTALL_LLMSH=$(INSTALL_LLMSH) (explicit opt-out)"; \
+		echo "Skipping $(LLMSH_NAME) install: INSTALL_LLMSH='$$val_llmsh' (trimmed='$$val_llmsh_trim') (explicit opt-out)"; \
 	fi
-	@if [ "$(INSTALL_VFSD)" = "1" ]; then \
+	@val_vfsd='$(INSTALL_VFSD)'; val_vfsd_trim=$$(printf '%s' "$$val_vfsd" | tr -d '[:space:]'); \
+	if [ "$$val_vfsd_trim" = "1" ]; then \
 		if [ -f ./$(VFSD_RS_BIN) ]; then \
 			echo "Installing $(VFSD_RS_BIN) to /usr/local/bin..."; \
 			sudo cp ./$(VFSD_RS_BIN) /usr/local/bin/$(VFSD_RS_BIN); \
@@ -171,7 +173,7 @@ install: build ## Install binaries system-wide (requires sudo)
 			exit 1; \
 		fi; \
 	else \
-		echo "Skipping $(VFSD_RS_BIN) install: INSTALL_VFSD=$(INSTALL_VFSD) (explicit opt-out)"; \
+		echo "Skipping $(VFSD_RS_BIN) install: INSTALL_VFSD='$$val_vfsd' (trimmed='$$val_vfsd_trim') (explicit opt-out)"; \
 	fi
 
 .PHONY: install-core
