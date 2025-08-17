@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -30,6 +31,16 @@ func TestExecuteSpawnEcho(t *testing.T) {
 	}
 	if _, err := exec.LookPath("llmsh"); err != nil {
 		t.Skip("llmsh not found on PATH; skipping spawn test")
+	}
+
+	// Detect if llmsh forbids external commands (common in secure mode)
+	// Run a quick probe: llmsh -c 'echo test'
+	probe := exec.Command("llmsh", "-c", "echo test")
+	var perr bytes.Buffer
+	probe.Stderr = &perr
+	_ = probe.Run()
+	if bytes.Contains(perr.Bytes(), []byte("external commands are disabled")) {
+		t.Skip("llmsh external commands disabled; skipping spawn echo test")
 	}
 
 	eng, err := NewEngine(EngineConfig{MaxFileSize: 1024 * 1024, BufferSize: 4096})

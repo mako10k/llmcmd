@@ -167,7 +167,7 @@ llmcmd は OpenAI ChatCompletion (Function Calling) を中核に「LLM←→ツ�
 |--------|-------------------|------|----------------------------------|
 | read  | read(fd [,count|lines]) -> data | FD からチャンク / 行読み込みし会話コンテキストへ追加 | fd 範囲 / readable 性 / 上限値 |
 | write | write(fd, data[, newline][, eof]) -> status | FD へ書き込み (パイプ/子 stdin/出力集約) | fd 範囲 / writable 性 / 書き込み失敗 |
-| spawn | spawn(script[, stdin_fd, stdout_fd]) -> {stdin_fd, stdout_fd, stderr_fd} | llmsh サブプロセス起動 / 既存 FD 直結 (dup2) / 未指定は新規 pipe | スクリプト検証 / 上限プロセス数 / FD 検証 |
+| spawn | spawn(script[, stdin_fd, stdout_fd]) -> {stdin_fd, stdout_fd, stderr_fd} | llmsh サブプロセス起動 / 既存論理 FD を stdio mux 経由で接続 / 未指定は新規 pipe | スクリプト検証 / 上限プロセス数 / FD 検証 |
 | close | close(fd) -> status | 明示的クローズ (書き込みパイプ終端や再利用防止) | fd 範囲 / 既に閉鎖済み判定 |
 | exit  | exit(status) -> terminate | ループ終了 (最終結果確定) | 実行中リソースクリーンアップ |
 
@@ -195,12 +195,12 @@ ChatCompletion (LLM 応答: content または function_call)
 
 #### spawn における FD 直結 / 新規生成仕様 (実装準拠)
 `spawn(script[, stdin_fd, stdout_fd])`:
-1. `stdin_fd` 指定: 指定 FD を llmsh 子プロセス stdin に接続 (dup2 相当)。 fd!=0 なら親側はクローズし FD テーブルで closed マーク。
-2. `stdout_fd` 指定: 指定 FD を llmsh 子プロセス stdout に接続。 fd!=1 なら親側で適切に所有権解放 (書込み/読取り方向に応じてクローズ)。
+1. `stdin_fd` 指定: 指定の論理 FD を llmsh 子プロセス stdin に接続（engine の stdio mux を介して接続）。fd!=0 の場合は親側の所有権・方向性に従い適切にクローズ。
+2. `stdout_fd` 指定: 指定の論理 FD を llmsh 子プロセス stdout に接続（engine の stdio mux を介して接続）。fd!=1 の場合は親側で適切に所有権解放。
 3. 未指定の場合:
      - stdin: 親→子 pipe を生成し親書き込み端の新 FD を割当 (戻り `stdin_fd`).
      - stdout: 子→親 pipe を生成し親読取り端の新 FD を割当 (戻り `stdout_fd`).
-4. stderr: 常に新規 pipe を生成し `stderr_fd` を返す (将来オプション化予定)。
+4. stderr: 常に新規 pipe を生成し `stderr_fd` を返す（将来オプション化予定）。
 5. 後方互換: 旧 `in_fd` / `out_fd` は削除 (非互換変更)。
 
 安全 / Fail-First チェック:

@@ -86,10 +86,10 @@ You are an assistant that executes specified tasks. Use the following tools to c
 
 Task: {prompt}
 
-Open file descriptors:
-- fd 0: stdin
-- fd 1: stdout (or {output_filename})
-- fd 2: stderr
+Open file descriptors (all fd0/1/2 are routed via stdio mux):
+- fd 0: stdin (through mux)
+- fd 1: stdout (through mux, or {output_filename})
+- fd 2: stderr (through mux)
 - fd 3: {filename_3} ({file_size_3} bytes)
 - fd 4: {filename_4} ({file_size_4} bytes)
 ...
@@ -97,7 +97,7 @@ Open file descriptors:
 Available tools:
 1. read(fd, offset, max_size) - Read data from file descriptor
 2. write(fd, data) - Write data to file descriptor
-3. pipe(cmd, stdin_fd, stdout_fd) - Execute built-in command or transfer data
+3. pipe(cmd, stdin_fd, stdout_fd) - Execute built-in command or transfer data (stdio uses mux)
 4. exit(code) - Exit program
 
 For detailed specifications, refer to the tool definitions below.
@@ -211,6 +211,7 @@ When creating new pipe or executing command:
 - Built-in commands are implemented internally for security
 - When new pipes are created, returned `stdin_fd` and `stdout_fd` can be used for subsequent operations
 - When both `stdin_fd` and `stdout_fd` are specified, returns the number of bytes transferred
+ - Standard descriptors (0,1,2) are provided via the engine’s stdio mux; raw OS stdio is not exposed directly.
 
 **Usage Examples**:
 ```bash

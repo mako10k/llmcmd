@@ -188,6 +188,9 @@ func isBinaryFile(filename string) bool {
 type RunningCommand struct {
 	// Simplified placeholder for future richer tracking (kept minimal to avoid unused lints)
 	commandName string
+	// Process handle and completion signal
+	cmd   *exec.Cmd
+	done  chan struct{}
 }
 
 // Engine handles tool execution for llmcmd
@@ -196,6 +199,14 @@ type Engine struct {
 	fileDescriptors []interface{}           // Can hold io.Reader, io.Writer, or io.ReadWriter
 	runningCommands map[int]*RunningCommand // Maps fd to running command
 	commandsMutex   sync.RWMutex
+	// Engine-managed stdio bridge endpoints (now via mux)
+	stdinPipeWriter  *io.PipeWriter // paired with fileDescriptors[0] (io.PipeReader)
+	stdoutPipeReader *io.PipeReader // paired with fileDescriptors[1] (io.PipeWriter)
+	stderrPipeReader *io.PipeReader // paired with fileDescriptors[2] (io.PipeWriter)
+	stdioMux *StdioMux
+	// Track all running commands (even when no fd is returned, e.g., stdout_fd=1)
+	runningAll      []*RunningCommand
+	procsMutex      sync.RWMutex
 	closedFds       map[int]bool // Tracks which fds have been closed
 	chainMutex      sync.RWMutex // Protects closedFds
 	nextFd          int          // Next available file descriptor number
@@ -237,6 +248,7 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 	engine := &Engine{
 		bufferSize:      config.BufferSize,
 		runningCommands: make(map[int]*RunningCommand),
+	runningAll:      make([]*RunningCommand, 0, 4),
 		closedFds:       make(map[int]bool),
 		nextFd:          10, // Start at 10, reserving 0-9 for standard fds
 		virtualFS:       config.VirtualFS,
@@ -246,11 +258,35 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 	// Initialize file descriptors array
 	// 0=stdin, 1=stdout, 2=stderr, 3+=input files
 	engine.fileDescriptors = make([]interface{}, 3)
-	// Always wire stdin; --no-stdin is advisory for LLM planning only
-	engine.fileDescriptors[0] = os.Stdin
-	// Add stdout and stderr to fd management
-	engine.fileDescriptors[1] = os.Stdout
-	engine.fileDescriptors[2] = os.Stderr
+	// STDIO via mux: create StdioMux and expose engine endpoints
+	sm := NewStdioMux(engine.bufferSize)
+	engine.stdioMux = sm
+	// fd0 = stdin reader, fd1/2 = writers
+	if config.NoStdin {
+		pr, pw := io.Pipe()
+		_ = pw.Close() // immediate EOF
+		engine.fileDescriptors[0] = pr
+		engine.stdinPipeWriter = nil
+	} else {
+		if r, ok := sm.StdinReader().(*io.PipeReader); ok {
+			// Keep paired writer to allow Close on exit
+			engine.fileDescriptors[0] = r
+			// We don't have direct access to writer from StdinReader; use CloseStdinToEngine in exit
+		} else {
+			// Fallback minimal pipe EOF
+			pr, pw := io.Pipe(); _ = pw.Close(); engine.fileDescriptors[0] = pr
+		}
+	}
+	if w, ok := sm.StdoutWriter().(*io.PipeWriter); ok {
+		engine.fileDescriptors[1] = w
+	} else {
+		pr, pw := io.Pipe(); engine.fileDescriptors[1] = pw; engine.stdoutPipeReader = pr
+	}
+	if w, ok := sm.StderrWriter().(*io.PipeWriter); ok {
+		engine.fileDescriptors[2] = w
+	} else {
+		pr, pw := io.Pipe(); engine.fileDescriptors[2] = pw; engine.stderrPipeReader = pr
+	}
 
 	// Open input files and add to file descriptors
 	for _, filename := range config.InputFiles {
@@ -502,12 +538,8 @@ func (e *Engine) startBackgroundCommandWithOutput(cmd string, args []string, out
 func (e *Engine) Close() error {
 	var errors []error
 
-	// Close file descriptors (skip fd 0 as it's managed by the parent process)
+	// Close file descriptors (engine-managed, including fd0/1/2 bridges)
 	for i, fdObj := range e.fileDescriptors {
-		if i == 0 {
-			// Skip stdin (fd 0) - managed by parent process
-			continue
-		}
 		if fdObj != nil {
 			if closer, ok := fdObj.(io.Closer); ok {
 				if err := closer.Close(); err != nil {
@@ -516,6 +548,8 @@ func (e *Engine) Close() error {
 			}
 		}
 	}
+
+	if e.stdioMux != nil { _ = e.stdioMux.Close() }
 
 	// Close input files (these might overlap with fileDescriptors, but Close() is idempotent)
 	for _, file := range e.inputFiles {
@@ -821,9 +855,9 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 			target := int(f)
 			switch target {
 			case 1:
-				childStdout = os.Stdout
+				if w, ok := e.fileDescriptors[1].(io.Writer); ok { childStdout = w } else { e.stats.ErrorCount++; return "", fmt.Errorf("spawn: fd1 not writable") }
 			case 2:
-				childStdout = os.Stderr
+				if w, ok := e.fileDescriptors[2].(io.Writer); ok { childStdout = w } else { e.stats.ErrorCount++; return "", fmt.Errorf("spawn: fd2 not writable") }
 			default:
 				if target >= 0 && target < len(e.fileDescriptors) {
 					if w, ok := e.fileDescriptors[target].(io.Writer); ok {
@@ -990,17 +1024,22 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 
 	// Do not force-close child's stdin; --no-stdin is advisory for LLM planning only.
 
-	// Track command minimal info for traversal (associate created fds)
-	running := &RunningCommand{commandName: fmt.Sprintf("%s -c", exeName)}
+	// Track command info and completion (associate created fds)
+	running := &RunningCommand{commandName: fmt.Sprintf("%s -c", exeName), cmd: cmd, done: make(chan struct{})}
 	e.commandsMutex.Lock()
 	if stdinFdCreated != -1 { e.runningCommands[stdinFdCreated] = running }
 	if stdoutFdCreated != -1 { e.runningCommands[stdoutFdCreated] = running }
 	if stderrFdCreated != -1 { e.runningCommands[stderrFdCreated] = running }
 	e.commandsMutex.Unlock()
 
+	// Also track globally (even when no fds were created)
+	e.procsMutex.Lock()
+	e.runningAll = append(e.runningAll, running)
+	e.procsMutex.Unlock()
+
 	// Goroutine to wait and close writers when process exits
-	go func() {
-		err := cmd.Wait()
+	go func(rc *RunningCommand) {
+		err := rc.cmd.Wait()
 		// Write ends were already closed in parent; child close will drive EOF on read ends.
 		// stdin reader close (child side) triggers here after process exit; ensure parent writer closed when done externally via close tool.
 		if err != nil {
@@ -1014,7 +1053,9 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 				// (skipped)
 			}
 		}
-	}()
+		// Signal completion
+		close(rc.done)
+	}(running)
 
 	result := map[string]interface{}{
 		"success":    true,
@@ -1115,8 +1156,49 @@ func (e *Engine) executeExit(args map[string]interface{}) (string, error) {
 		fmt.Fprintf(os.Stderr, "%s\n", message)
 	}
 
+	// New semantics: on exit, close writer endpoints we own to propagate EOF, then wait for all spawned processes to finish
+	e.closeWritableFds()
+	// Signal EOF on fd0 via mux
+	if e.stdioMux != nil { e.stdioMux.CloseStdinToEngine() }
+	e.waitAllSpawned()
+
 	// Return a special error to indicate exit request instead of calling os.Exit directly
 	return fmt.Sprintf("Exit requested with code %d", code), fmt.Errorf("EXIT_REQUESTED:%d", code)
+}
+
+// closeWritableFds closes all writable file descriptors managed by the engine (fd>=3),
+// excluding standard stdout/stderr, to ensure children receive EOF before waiting.
+func (e *Engine) closeWritableFds() {
+	e.chainMutex.RLock()
+	fds := make([]interface{}, len(e.fileDescriptors))
+	copy(fds, e.fileDescriptors)
+	e.chainMutex.RUnlock()
+
+	for fd, obj := range fds {
+		if fd < 3 || obj == nil {
+			continue // skip 0,1,2 and nils
+		}
+		if wc, ok := obj.(io.WriteCloser); ok {
+			// Best-effort close; ignore errors here
+			_ = wc.Close()
+		}
+	}
+}
+
+// waitAllSpawned waits for all tracked spawned processes to complete.
+func (e *Engine) waitAllSpawned() {
+	e.procsMutex.RLock()
+	procs := make([]*RunningCommand, len(e.runningAll))
+	copy(procs, e.runningAll)
+	e.procsMutex.RUnlock()
+
+	for _, rc := range procs {
+		if rc == nil || rc.done == nil {
+			continue
+		}
+		// Block until the process signals completion
+		<-rc.done
+	}
 }
 
 // executeOpen handles virtual file operations using the VFS

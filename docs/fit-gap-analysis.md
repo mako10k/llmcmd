@@ -31,7 +31,7 @@
 **🎉 Critical Finding**: VFS Server/Client implementation **EXISTS and is ADVANCED**
 - Previous assessment: "Non-existent, complete rewrite needed"
 - **Reality**: Complete VFS foundation with O_TMPFILE support
-- **Files**: `internal/app/vfs.go` (in-memory virtual), `internal/app/vfsd_client.go` (vfsd client), `internal/app/mux_codec.go` (length-prefixed framing)
+- **Files**: `internal/app/vfs.go` (in-memory virtual), `internal/app/vfsd_client.go` (vfsd client), `internal/mux/mux.go` (unified length-prefixed framing)
 
 ### Implementation Maturity Level
 
@@ -39,7 +39,7 @@
 Implementation Quality Assessment:
 ┌─────────────────────────────────────────┐
 │ VFS Server Foundation:     ████████ 95% │ ← Production quality
-│ vfsd Communication:       ███████  85% │ ← stdio mux framing client integrated
+│ vfsd Communication:       ███████  85% │ ← stdio mux framing client integrated (via internal/mux.Conn)
 │ Resource Management:      ███      40% │ ← Partial implementation  
 │ LLM Integration:          █        10% │ ← Missing critical commands
 │ Error Handling:           ███████  85% │ ← Comprehensive coverage
@@ -72,8 +72,8 @@ type vfsdResponse struct { ID string; OK bool; Result json.RawMessage; Error *st
 ### 🟡 **GAPS - Needs Completion**
 
 #### Phase 2 Implementation Gaps
-1. **WRITE Command**: Only placeholder implementation
-2. **CLOSE Command**: Only placeholder implementation  
+1. **WRITE Command**: Verify end-to-end behavior and complete remaining edge cases
+2. **CLOSE Command**: Verify resource cleanup and finalize edge cases  
 3. **File Descriptor Management**: Basic tracking exists, needs enhancement
 4. **Binary Data Handling**: READ response handles text only
 
@@ -110,18 +110,10 @@ internal/openai/client.go:
 ### Implementation Strategy for LLM Commands
 
 #### LLM_CHAT Command Implementation
-```go
-// REQUIRED: Add to FSProxyManager.processRequest()
-func (proxy *FSProxyManager) handleLLMChat(
-    isTopLevel bool, 
-    inputFiles, outputFiles, prompt, preset string) FSResponse {
-    
-    // 🔄 REUSE existing OpenAI client code:
-    // - internal/openai/client.go:ChatCompletionWithRetry()
-    // - internal/cli/config.go:configuration handling  
-    // - internal/app/app.go:message creation logic
-}
-```
+実装方針（fsproxy ではなく vfsd サーバ側に実装）:
+1) 既存 OpenAI クライアント（internal/openai）を vfsd に組み込み
+2) JSON-RPC 互換の request/response を追加（length-prefixed, internal/mux.Conn）
+3) Quota/Config をサーバへ伝播し、統一経路で課金管理
 
 #### Integration Points
 1. **Quota Manager**: Existing `SharedQuotaManager` can be reused
@@ -138,22 +130,7 @@ func (proxy *FSProxyManager) handleLLMChat(
 #### Current Resource Management Status
 
 **✅ Basic Cleanup Exists**:
-```go
-// internal/app/vfsd_client.go: open/read/write/close handlers
-func (proxy *FSProxyManager) cleanup() {
-    proxy.fdMutex.Lock()
-    defer proxy.fdMutex.Unlock()
-    
-    log.Printf("FS Proxy: Cleaning up %d open files", len(proxy.openFiles))
-    for fd, file := range proxy.openFiles {
-        if file != nil {
-            if err := file.Close(); err != nil {
-                log.Printf("FS Proxy: Error closing fd %d: %v", fd, err)
-            }
-        }
-    }
-}
-```
+親プロセス（llmcmd）側では、エンジンが FD/子プロセスを追跡し exit 時に確実に Close/Wait を実施します（Fail-First）。vfsd 側もハンドルのライフサイクル管理を強化対象とします。
 
 **🔄 Enhancement Required**:
 
@@ -211,12 +188,12 @@ type EnhancedVFS struct {
 
 ### Multiple VFS Implementations Analysis
 
-**🔍 Architecture Consistency Issue**: 3 VFS implementations exist
-1. (Deprecated) `internal/llmsh/*` - legacy Go llmsh-specific code (removed). The active shell is implemented in Rust under `llmsh-rs/`.
+**🔍 Architecture Consistency Issue**: 複数の VFS 実装の併存
+1. (Deprecated) `internal/llmsh/*` - legacy Go 実装（廃止済み、llmsh は Rust 実装に一本化）。
 2. `internal/app/app.go` - SimpleVirtualFS (PIPE behavior)  
 3. `internal/app/vfs.go` - EnhancedVFS (most advanced)
 
-**📝 Recommendation**: Consolidate around EnhancedVFS - most complete implementation
+**📝 Recommendation**: EnhancedVFS を中核にしつつ、I/O 経路は `internal/mux.Conn` に統一し、fsproxy 系は撤去済みのため参照しない。
 
 ---
 

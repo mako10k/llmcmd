@@ -12,14 +12,14 @@
 | Architecture Analysis | ✅ Complete | ARCHITECTURE_REVIEW_v3.1.1.md - comprehensive system understanding |
 | Strategic Direction | ✅ Complete | STRATEGIC_DIRECTION_v3.1.1.md - clear roadmap established |
 | Implementation Gap Analysis | ✅ Complete | Current vs target design understanding |
-| **VFS Server Rediscovery** | ✅ **Critical Find** | **vfs.go (in-memory) + vfsd_client.go/mux_codec.go integrated** |
+| **VFS Server Rediscovery** | ✅ **Critical Find** | **vfs.go (in-memory) + vfsd_client.go + internal/mux.Conn integrated** |
 
 ### 🔍 Key Discoveries
 
 **Major Technical Discovery:**
 - **VFS Server Implementation Found**: Initially assessed as "non-existent", actually fully implemented
   - `internal/app/vfs.go` - Complete VFS with O_TMPFILE support (525 lines)
-   - `internal/app/vfsd_client.go` - vfsd client over stdio mux
+   - `internal/app/vfsd_client.go` - vfsd client over stdio mux (via internal/mux.Conn)
   - O_TMPFILE implementation complete with kernel cleanup
   - 3-layer architecture foundation exists, needs integration
 

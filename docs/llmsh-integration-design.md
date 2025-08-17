@@ -1,124 +1,15 @@
-# llmsh Integration Design Document
+# llmsh Integration Design Document (Updated)
 
-## Phase 3.1: llmsh-FSProxy Integration Architecture
+本書の旧版は FSProxy 前提の設計でしたが、現在は fsproxy を撤去し、I/O は `internal/mux.Conn` による stdio MUX と vfsd クライアントで統一されています。llmsh 連携は以下の方針に置き換えます。
 
-### 概要
-FSProxy Protocolとllmshを統合し、llmsh側でfd管理テーブルとFSProxy機能を活用できるようにする。
+## 統一方針（現行）
+- VFS: `internal/app/vfsd_client.go` を通じて vfsd と通信（length‑prefixed JSON over stdio、`internal/mux.Conn`）。
+- STDIO: 親エンジンが fd0/1/2 を stdio MUX で管理し、子プロセス（llmsh）は mux 経由の論理 FD を継承。
+- Broker/Quota: LLM Broker はアプリ層でオプトイン。I/O 経路には関与しない（直列化と会計のみ担当）。
 
-### 設計目標
-1. **API互換性維持**: 既存llmshコマンドのAPIを変更せずに統合
-2. **透明な統合**: ユーザーは統合を意識せずに使用可能
-3. **パフォーマンス向上**: fd管理によるリソース効率化
-4. **拡張性確保**: Pipeline supportへの準備
-
-### アーキテクチャ設計
-
-#### 1. VFS-FSProxy Adapter Layer
-```go
-// VFSFSProxyAdapter provides FSProxy functionality through VFS interface
-type VFSFSProxyAdapter struct {
-    fsProxy     *FSProxyManager
-    vfs         *VirtualFileSystem  // Legacy VFS for compatibility
-    fdTable     *FileDescriptorTable
-    clientID    string
-}
-
-// Implement tools.VirtualFileSystem interface
-func (adapter *VFSFSProxyAdapter) OpenFile(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error)
-func (adapter *VFSFSProxyAdapter) CreateTemp(dir, pattern string) (io.ReadWriteCloser, string, error)
-func (adapter *VFSFSProxyAdapter) RemoveFile(name string) error
-func (adapter *VFSFSProxyAdapter) Exists(name string) bool
-```
-
-#### 2. Enhanced VirtualFileSystem Integration
-```go
-// Enhanced VirtualFileSystem with FSProxy support
-type VirtualFileSystem struct {
-    // Legacy fields (maintained for compatibility)
-    mu          sync.RWMutex
-    files       map[string]*VirtualFile
-    realFiles   map[string]io.ReadWriteCloser
-    fileAccess  map[string]FileAccess
-    
-    // New FSProxy integration
-    fsProxy     *FSProxyManager
-    adapter     *VFSFSProxyAdapter
-    useProxy    bool  // Enable/disable FSProxy integration
-}
-```
-
-#### 3. File Operation Methods Enhancement
-```go
-// Enhanced OpenFile with FSProxy support
-func (vfs *VirtualFileSystem) OpenFile(name string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
-    if vfs.useProxy && vfs.fsProxy != nil {
-        // Use FSProxy for file operations
-        return vfs.adapter.OpenFile(name, flag, perm)
-    }
-    
-    // Fallback to legacy VFS implementation
-    return vfs.openFileLegacy(name, flag, perm)
-}
-```
-
-### 統合フェーズ計画
-
-#### Week 1: 設計・PoC
-- [ ] VFSFSProxyAdapter interface design
-- [ ] Legacy VFS compatibility layer
-- [ ] Basic integration PoC with simple read/write operations
-- [ ] Unit test framework for adapter layer
-
-#### Week 2: 本実装・テスト
-- [ ] Complete VFSFSProxyAdapter implementation
-- [ ] Enhanced VirtualFileSystem with FSProxy integration
-- [ ] Migration of existing llmsh commands to use adapter
-- [ ] Comprehensive unit tests and integration tests
-
-#### Week 3: 統合テスト・最適化
-- [ ] E2E testing with existing llmsh command suite
-- [ ] Performance benchmarking (legacy vs FSProxy)
-- [ ] Error handling and edge case validation
-- [ ] Documentation and code review
-
-### 実装詳細
-
-#### Configuration Extension
-```go
-// Enhanced Config with FSProxy support
-type Config struct {
-    // Existing fields
-    InputFiles   []string
-    OutputFiles  []string
-    VirtualMode  bool
-    QuotaManager interface{}
-    Debug        bool
-    
-    // New FSProxy configuration
-    EnableFSProxy     bool
-    FSProxyMode       bool  // VFS-only mode for restriction
-    FSProxyPipeFile   string // Communication pipe path
-}
-```
-
-#### Shell Enhancement
-```go
-// Enhanced Shell initialization
-func NewShell(config *Config) (*Shell, error) {
-    // Create enhanced VFS with optional FSProxy support
-    vfs := NewVirtualFileSystemWithFSProxy(
-        config.InputFiles, 
-        config.OutputFiles,
-        config.EnableFSProxy,
-        config.FSProxyMode,
-        config.FSProxyPipeFile,
-    )
-    
-    // Rest of initialization remains the same
-    executor := NewExecutor(vfs, nil, config.QuotaManager)
-    
-    return &Shell{
-        config:   config,
+## 今後の作業
+- 既存ドキュメントの FSProxy 記述は参照しないこと。
+- テスト/例示は `stdin_fd`/`stdout_fd` の論理 FD と MUX 前提に更新すること。
         vfs:      vfs,
         executor: executor,
         parser:   parser.NewParser(),

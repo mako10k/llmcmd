@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	imux "github.com/mako10k/llmcmd/internal/mux"
 )
 
 // vfsdClient implements tools.VirtualFileSystem backed by vfsd over stdio mux
@@ -19,7 +20,7 @@ import (
 
 type vfsdClient struct {
 	cmd   *exec.Cmd
-	conn  *muxConn
+	conn  *imux.Conn
 	mu    sync.Mutex
 	reqID int
 	// Track open logical names for ListFiles/RemoveFile
@@ -109,7 +110,7 @@ func newVFSDClient(vfsdPath string, allowRead []string, allowWrite []string, att
 			}
 			rwc = f
 		}
-		conn := newMuxConn(rwc)
+	conn := imux.New(rwc)
 		c := &vfsdClient{cmd: nil, conn: conn, opened: make(map[string]bool)}
 		return c, nil
 	}
@@ -142,7 +143,7 @@ func newVFSDClient(vfsdPath string, allowRead []string, allowWrite []string, att
 		return nil, fmt.Errorf("vfsd: start failed: %w", err)
 	}
 
-	conn := newMuxConn(struct {
+	conn := imux.New(struct {
 		io.Reader
 		io.Writer
 		io.Closer

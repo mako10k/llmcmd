@@ -12,7 +12,6 @@ Date: 2025-08-16
 - Enforce serialized execution: API calls are not allowed to run in parallel
 
 ## Non-Goals
-- vfsd involvement in LLM logic (I/O-only)
 - Hard-stop throttling before requests (soft guidance only)
 
 ## API (logical)
@@ -104,12 +103,13 @@ This aligns accounting to the pricing catalog (unit: USD per 1M tokens) while st
 
 ## Implementation Notes (Phase B wiring)
 
-- FSProxy integration: Broker is feature-gated and opt-in to avoid regressions.
-  - New fields in `FSProxyManager`: `useBroker bool`, `broker *llm.Broker`.
-  - New method: `EnableLLMBroker(snapshot llm.QuotaSnapshot, cfg llm.BrokerConfig)` initializes a broker using the existing OpenAI client via an adapter.
-  - When enabled, `LLM_CHAT` path calls `broker.Chat(...)`; otherwise it uses the legacy direct OpenAI path.
-  - `LLM_QUOTA` prioritizes `broker.QuotaGet()`; falls back to shared quota manager or client stats when broker is disabled.
-- Backward compatibility: Default behavior remains unchanged until `EnableLLMBroker(...)` is called.
+- Integration: Broker is feature-gated and opt-in to avoid regressions.
+  - Application layerに `useBroker bool`, `broker *llm.Broker` を保持。
+  - `EnableLLMBroker(snapshot llm.QuotaSnapshot, cfg llm.BrokerConfig)` で OpenAI クライアントを利用するブローカを初期化。
+  - 有効化時は LLM 呼び出しが `broker.Chat(...)` を通過、無効時は従来の直接パス。
+  - `LLM_QUOTA` は `broker.QuotaGet()` を優先、無効時は共有クォータ or クライアント統計にフォールバック。
+  - I/O 経路は引き続き `internal/mux.Conn` と vfsd により統一される（ブローカは LLM API 呼出の直列化と会計のみ担当）。
+  - 後方互換: `EnableLLMBroker(...)` を呼び出さない限り既存動作は保持。
 - Response metadata: When soft trim is applied, `trim_applied=true` is attached in response metadata (provider-independent info channel).
 - Pricing weights: Resolved via a local catalog (config-first). Region pricing is ignored. Default model is `gpt-4o-mini`.
 - Error codes: Broker surfaces canonical codes defined above (e.g., `queue_timeout`, `provider_timeout`).
@@ -117,7 +117,7 @@ This aligns accounting to the pricing catalog (unit: USD per 1M tokens) while st
 ### Enabling the broker at runtime (example flow)
 1) Resolve weights (pricing resolver) and construct an initial `QuotaSnapshot` for the session.
 2) Build `BrokerConfig` (queue/timeouts/safety factor/default model).
-3) Call `FSProxyManager.EnableLLMBroker(snapshot, cfg)` after `SetLLMClient(...)`.
+3) Call `EnableLLMBroker(snapshot, cfg)` after `SetLLMClient(...)`.
 
 This preserves existing behavior by default and allows safe, incremental rollout of serialized LLM execution and quota accounting.
 
@@ -189,7 +189,7 @@ Source of truth: application configuration（config-first）; CLI/ENVの表面�
   - Soft trim: requested > safe bound → `trim_applied` set and `effective_max_tokens` reduced.
   - Error propagation: queue timeout, cancel before start, provider timeout map to canonical codes.
 - Integration tests:
-  - FSProxy `LLM_CHAT` routes through broker when enabled; legacy path otherwise。
+  - `LLM_CHAT` が有効時に broker を経由し、無効時は従来パスとなること。
   - `LLM_QUOTA` reflects broker snapshot and maintains backward-compatible string format.
 
 ## Rollout & Feature Flag
