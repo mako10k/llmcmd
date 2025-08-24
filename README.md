@@ -632,6 +632,7 @@ MIT License - 詳細は `LICENSE` ファイルを参照してください。
 ## ドキュメント
 
 - [仕様書](docs/specification.md)
+- [応用例集](docs/APPLICATION_EXAMPLES.md)
 - [技術選択](docs/technical-decisions.md)
 - [OpenAI API調査レポート](docs/openai-api-research.md)
 - [実装計画](docs/implementation-plan.md)
