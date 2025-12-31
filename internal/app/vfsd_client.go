@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+
 	imux "github.com/mako10k/llmcmd/internal/mux"
 )
 
@@ -110,7 +111,7 @@ func newVFSDClient(vfsdPath string, allowRead []string, allowWrite []string, att
 			}
 			rwc = f
 		}
-	conn := imux.New(rwc)
+		conn := imux.New(rwc)
 		c := &vfsdClient{cmd: nil, conn: conn, opened: make(map[string]bool)}
 		return c, nil
 	}

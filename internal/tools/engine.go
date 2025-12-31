@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
 	"github.com/mako10k/llmcmd/internal/utils"
 )
 
@@ -187,8 +188,8 @@ type RunningCommand struct {
 	// Simplified placeholder for future richer tracking (kept minimal to avoid unused lints)
 	commandName string
 	// Process handle and completion signal
-	cmd   *exec.Cmd
-	done  chan struct{}
+	cmd  *exec.Cmd
+	done chan struct{}
 }
 
 // Engine handles tool execution for llmcmd
@@ -201,15 +202,15 @@ type Engine struct {
 	stdinPipeWriter  *io.PipeWriter // paired with fileDescriptors[0] (io.PipeReader)
 	stdoutPipeReader *io.PipeReader // paired with fileDescriptors[1] (io.PipeWriter)
 	stderrPipeReader *io.PipeReader // paired with fileDescriptors[2] (io.PipeWriter)
-	stdioMux *StdioMux
+	stdioMux         *StdioMux
 	// Track all running commands (even when no fd is returned, e.g., stdout_fd=1)
-	runningAll      []*RunningCommand
-	procsMutex      sync.RWMutex
-	closedFds       map[int]bool // Tracks which fds have been closed
-	chainMutex      sync.RWMutex // Protects closedFds
-	nextFd          int          // Next available file descriptor number
-	bufferSize      int
-	stats           ExecutionStats
+	runningAll []*RunningCommand
+	procsMutex sync.RWMutex
+	closedFds  map[int]bool // Tracks which fds have been closed
+	chainMutex sync.RWMutex // Protects closedFds
+	nextFd     int          // Next available file descriptor number
+	bufferSize int
+	stats      ExecutionStats
 	// New components for llmsh integration
 	virtualFS VirtualFileSystem
 	// FD attach propagation for child llmsh
@@ -246,7 +247,7 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 	engine := &Engine{
 		bufferSize:      config.BufferSize,
 		runningCommands: make(map[int]*RunningCommand),
-	runningAll:      make([]*RunningCommand, 0, 4),
+		runningAll:      make([]*RunningCommand, 0, 4),
 		closedFds:       make(map[int]bool),
 		nextFd:          10, // Start at 10, reserving 0-9 for standard fds
 		virtualFS:       config.VirtualFS,
@@ -272,18 +273,24 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 			// We don't have direct access to writer from StdinReader; use CloseStdinToEngine in exit
 		} else {
 			// Fallback minimal pipe EOF
-			pr, pw := io.Pipe(); _ = pw.Close(); engine.fileDescriptors[0] = pr
+			pr, pw := io.Pipe()
+			_ = pw.Close()
+			engine.fileDescriptors[0] = pr
 		}
 	}
 	if w, ok := sm.StdoutWriter().(*io.PipeWriter); ok {
 		engine.fileDescriptors[1] = w
 	} else {
-		pr, pw := io.Pipe(); engine.fileDescriptors[1] = pw; engine.stdoutPipeReader = pr
+		pr, pw := io.Pipe()
+		engine.fileDescriptors[1] = pw
+		engine.stdoutPipeReader = pr
 	}
 	if w, ok := sm.StderrWriter().(*io.PipeWriter); ok {
 		engine.fileDescriptors[2] = w
 	} else {
-		pr, pw := io.Pipe(); engine.fileDescriptors[2] = pw; engine.stderrPipeReader = pr
+		pr, pw := io.Pipe()
+		engine.fileDescriptors[2] = pw
+		engine.stderrPipeReader = pr
 	}
 
 	// Open input files and add to file descriptors
@@ -547,7 +554,9 @@ func (e *Engine) Close() error {
 		}
 	}
 
-	if e.stdioMux != nil { _ = e.stdioMux.Close() }
+	if e.stdioMux != nil {
+		_ = e.stdioMux.Close()
+	}
 
 	// Close input files (these might overlap with fileDescriptors, but Close() is idempotent)
 	for _, file := range e.inputFiles {
@@ -853,9 +862,19 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 			target := int(f)
 			switch target {
 			case 1:
-				if w, ok := e.fileDescriptors[1].(io.Writer); ok { childStdout = w } else { e.stats.ErrorCount++; return "", fmt.Errorf("spawn: fd1 not writable") }
+				if w, ok := e.fileDescriptors[1].(io.Writer); ok {
+					childStdout = w
+				} else {
+					e.stats.ErrorCount++
+					return "", fmt.Errorf("spawn: fd1 not writable")
+				}
 			case 2:
-				if w, ok := e.fileDescriptors[2].(io.Writer); ok { childStdout = w } else { e.stats.ErrorCount++; return "", fmt.Errorf("spawn: fd2 not writable") }
+				if w, ok := e.fileDescriptors[2].(io.Writer); ok {
+					childStdout = w
+				} else {
+					e.stats.ErrorCount++
+					return "", fmt.Errorf("spawn: fd2 not writable")
+				}
 			default:
 				if target >= 0 && target < len(e.fileDescriptors) {
 					if w, ok := e.fileDescriptors[target].(io.Writer); ok {
@@ -909,8 +928,12 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 		prOut, pwOut, err = os.Pipe()
 		if err != nil {
 			e.stats.ErrorCount++
-			if prIn != nil { _ = prIn.Close() }
-			if pwIn != nil { _ = pwIn.Close() }
+			if prIn != nil {
+				_ = prIn.Close()
+			}
+			if pwIn != nil {
+				_ = pwIn.Close()
+			}
 			return "", fmt.Errorf("spawn: failed to create stdout pipe: %w", err)
 		}
 		childStdout = pwOut
@@ -923,10 +946,18 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 		prErr, pwErr, err = os.Pipe()
 		if err != nil {
 			e.stats.ErrorCount++
-			if prIn != nil { _ = prIn.Close() }
-			if pwIn != nil { _ = pwIn.Close() }
-			if prOut != nil { _ = prOut.Close() }
-			if pwOut != nil { _ = pwOut.Close() }
+			if prIn != nil {
+				_ = prIn.Close()
+			}
+			if pwIn != nil {
+				_ = pwIn.Close()
+			}
+			if prOut != nil {
+				_ = prOut.Close()
+			}
+			if pwOut != nil {
+				_ = pwOut.Close()
+			}
 			return "", fmt.Errorf("spawn: failed to create stderr pipe: %w", err)
 		}
 		childStderr = pwErr
@@ -936,14 +967,22 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	// Ensure fileDescriptors slice is large enough for any created fds
 	maxCreated := -1
 	for _, fd := range []int{stdinFdCreated, stdoutFdCreated, stderrFdCreated} {
-		if fd > maxCreated { maxCreated = fd }
+		if fd > maxCreated {
+			maxCreated = fd
+		}
 	}
 	for len(e.fileDescriptors) <= maxCreated {
 		e.fileDescriptors = append(e.fileDescriptors, nil)
 	}
-	if stdinFdCreated != -1 { e.fileDescriptors[stdinFdCreated] = pwIn }
-	if stdoutFdCreated != -1 { e.fileDescriptors[stdoutFdCreated] = prOut }
-	if stderrFdCreated != -1 { e.fileDescriptors[stderrFdCreated] = prErr }
+	if stdinFdCreated != -1 {
+		e.fileDescriptors[stdinFdCreated] = pwIn
+	}
+	if stdoutFdCreated != -1 {
+		e.fileDescriptors[stdoutFdCreated] = prOut
+	}
+	if stderrFdCreated != -1 {
+		e.fileDescriptors[stderrFdCreated] = prErr
+	}
 
 	// Resolve llmsh executable path (C2 -> C1)
 	exeName := "llmsh"
@@ -1005,18 +1044,34 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	// Launch process
 	if err := cmd.Start(); err != nil {
 		e.stats.ErrorCount++
-		if pwIn != nil { _ = pwIn.Close() }
-		if prIn != nil { _ = prIn.Close() }
-		if pwOut != nil { _ = pwOut.Close() }
-		if prOut != nil { _ = prOut.Close() }
-		if pwErr != nil { _ = pwErr.Close() }
-		if prErr != nil { _ = prErr.Close() }
+		if pwIn != nil {
+			_ = pwIn.Close()
+		}
+		if prIn != nil {
+			_ = prIn.Close()
+		}
+		if pwOut != nil {
+			_ = pwOut.Close()
+		}
+		if prOut != nil {
+			_ = prOut.Close()
+		}
+		if pwErr != nil {
+			_ = pwErr.Close()
+		}
+		if prErr != nil {
+			_ = prErr.Close()
+		}
 		return "", fmt.Errorf("spawn: process_spawn_error: failed to start llmsh: %w", err)
 	}
 
 	// If we created stdout/stderr pipes, parent does not need the write ends; close them immediately
-	if pwOut != nil { _ = pwOut.Close() }
-	if pwErr != nil { _ = pwErr.Close() }
+	if pwOut != nil {
+		_ = pwOut.Close()
+	}
+	if pwErr != nil {
+		_ = pwErr.Close()
+	}
 
 	pid := cmd.Process.Pid
 
@@ -1025,9 +1080,15 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 	// Track command info and completion (associate created fds)
 	running := &RunningCommand{commandName: fmt.Sprintf("%s -c", exeName), cmd: cmd, done: make(chan struct{})}
 	e.commandsMutex.Lock()
-	if stdinFdCreated != -1 { e.runningCommands[stdinFdCreated] = running }
-	if stdoutFdCreated != -1 { e.runningCommands[stdoutFdCreated] = running }
-	if stderrFdCreated != -1 { e.runningCommands[stderrFdCreated] = running }
+	if stdinFdCreated != -1 {
+		e.runningCommands[stdinFdCreated] = running
+	}
+	if stdoutFdCreated != -1 {
+		e.runningCommands[stdoutFdCreated] = running
+	}
+	if stderrFdCreated != -1 {
+		e.runningCommands[stderrFdCreated] = running
+	}
 	e.commandsMutex.Unlock()
 
 	// Also track globally (even when no fds were created)
@@ -1060,9 +1121,15 @@ func (e *Engine) executeSpawn(args map[string]interface{}) (string, error) {
 		"pid":        pid,
 		"script_len": len(script),
 	}
-	if stdinFdCreated != -1 { result["stdin_fd"] = stdinFdCreated }
-	if stdoutFdCreated != -1 { result["stdout_fd"] = stdoutFdCreated }
-	if stderrFdCreated != -1 { result["stderr_fd"] = stderrFdCreated }
+	if stdinFdCreated != -1 {
+		result["stdin_fd"] = stdinFdCreated
+	}
+	if stdoutFdCreated != -1 {
+		result["stdout_fd"] = stdoutFdCreated
+	}
+	if stderrFdCreated != -1 {
+		result["stderr_fd"] = stderrFdCreated
+	}
 	return e.spawnSuccess(result)
 }
 
@@ -1157,7 +1224,9 @@ func (e *Engine) executeExit(args map[string]interface{}) (string, error) {
 	// New semantics: on exit, close writer endpoints we own to propagate EOF, then wait for all spawned processes to finish
 	e.closeWritableFds()
 	// Signal EOF on fd0 via mux
-	if e.stdioMux != nil { e.stdioMux.CloseStdinToEngine() }
+	if e.stdioMux != nil {
+		e.stdioMux.CloseStdinToEngine()
+	}
 	e.waitAllSpawned()
 
 	// Return a special error to indicate exit request instead of calling os.Exit directly
@@ -1365,7 +1434,9 @@ func (e *Engine) executeHelp(args map[string]interface{}) (string, error) {
 		// Return stderr as part of error to aid debugging
 		e.stats.ErrorCount++
 		msg := strings.TrimSpace(stderrBuf.String())
-		if msg == "" { msg = err.Error() }
+		if msg == "" {
+			msg = err.Error()
+		}
 		return "", fmt.Errorf("help: %s", msg)
 	}
 	return stdoutBuf.String(), nil
